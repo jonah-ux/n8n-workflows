@@ -1,0 +1,406 @@
+{
+  "name": "🧠 Self-Improvement System",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 6
+            }
+          ]
+        }
+      },
+      "id": "improvement-trigger",
+      "name": "Every 6 Hours",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Get recent agent conversations and their outcomes\nSELECT \n  conversation_id,\n  user_message,\n  agent_response,\n  tools_used,\n  outcome,\n  user_feedback,\n  error_occurred,\n  created_at\nFROM agent_conversations\nWHERE created_at > NOW() - INTERVAL '6 hours'\nORDER BY created_at DESC\nLIMIT 100;",
+        "options": {}
+      },
+      "id": "get-conversations",
+      "name": "Get Recent Conversations",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [470, 300],
+      "credentials": {
+        "postgres": {
+          "id": "xogKD739Qe4gqWBU",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const conversations = $input.all().map(i => i.json);\n\nconst analysis = {\n  total_conversations: conversations.length,\n  successful: conversations.filter(c => c.outcome === 'success').length,\n  failed: conversations.filter(c => c.error_occurred).length,\n  with_feedback: conversations.filter(c => c.user_feedback).length,\n  patterns: {\n    common_requests: {},\n    successful_tool_combinations: {},\n    error_patterns: {},\n    user_preferences: []\n  },\n  improvements_identified: [],\n  new_patterns_learned: []\n};\n\n// Analyze common requests\nconversations.forEach(conv => {\n  const request = conv.user_message?.toLowerCase() || '';\n  \n  // Categorize request types\n  if (request.includes('build') && request.includes('workflow')) {\n    analysis.patterns.common_requests['workflow_building'] = \n      (analysis.patterns.common_requests['workflow_building'] || 0) + 1;\n  }\n  if (request.includes('fix') || request.includes('error') || request.includes('debug')) {\n    analysis.patterns.common_requests['debugging'] = \n      (analysis.patterns.common_requests['debugging'] || 0) + 1;\n  }\n  if (request.includes('optimize') || request.includes('improve')) {\n    analysis.patterns.common_requests['optimization'] = \n      (analysis.patterns.common_requests['optimization'] || 0) + 1;\n  }\n  \n  // Track successful tool combinations\n  if (conv.outcome === 'success' && conv.tools_used) {\n    const toolCombo = Array.isArray(conv.tools_used) ? conv.tools_used.sort().join('+') : conv.tools_used;\n    analysis.patterns.successful_tool_combinations[toolCombo] = \n      (analysis.patterns.successful_tool_combinations[toolCombo] || 0) + 1;\n  }\n  \n  // Track error patterns\n  if (conv.error_occurred && conv.agent_response) {\n    const errorType = conv.agent_response.match(/error[:\\s]+([\\w\\s]+)/i)?.[1] || 'unknown';\n    analysis.patterns.error_patterns[errorType] = \n      (analysis.patterns.error_patterns[errorType] || 0) + 1;\n  }\n  \n  // Learn user preferences from feedback\n  if (conv.user_feedback) {\n    const feedback = conv.user_feedback.toLowerCase();\n    if (feedback.includes('good') || feedback.includes('perfect') || feedback.includes('great')) {\n      analysis.patterns.user_preferences.push({\n        request_type: conv.user_message,\n        tools_used: conv.tools_used,\n        response_pattern: conv.agent_response?.substring(0, 200),\n        rating: 'positive'\n      });\n    }\n  }\n});\n\n// Identify improvements\nconst topRequest = Object.entries(analysis.patterns.common_requests)\n  .sort((a, b) => b[1] - a[1])[0];\n\nif (topRequest && topRequest[1] > 5) {\n  analysis.improvements_identified.push({\n    type: 'optimize_for_common_request',\n    priority: 'high',\n    request_type: topRequest[0],\n    frequency: topRequest[1],\n    suggestion: `Optimize handling of ${topRequest[0]} requests - appeared ${topRequest[1]} times`,\n    action: 'Create specialized prompt template'\n  });\n}\n\n// Learn from errors\nconst topError = Object.entries(analysis.patterns.error_patterns)\n  .sort((a, b) => b[1] - a[1])[0];\n\nif (topError && topError[1] > 3) {\n  analysis.improvements_identified.push({\n    type: 'error_prevention',\n    priority: 'high',\n    error_type: topError[0],\n    frequency: topError[1],\n    suggestion: `Add proactive checks for ${topError[0]} - occurred ${topError[1]} times`,\n    action: 'Add validation step to prevent this error'\n  });\n}\n\n// Learn successful patterns\nconst topToolCombo = Object.entries(analysis.patterns.successful_tool_combinations)\n  .sort((a, b) => b[1] - a[1])[0];\n\nif (topToolCombo && topToolCombo[1] > 3) {\n  analysis.new_patterns_learned.push({\n    type: 'successful_tool_combination',\n    tools: topToolCombo[0],\n    success_count: topToolCombo[1],\n    lesson: `Tool combination \"${topToolCombo[0]}\" is highly effective`,\n    action: 'Suggest this combination proactively for similar requests'\n  });\n}\n\n// Calculate improvement score\nconst successRate = analysis.successful / Math.max(analysis.total_conversations, 1);\nanalysis.current_performance = {\n  success_rate: (successRate * 100).toFixed(1) + '%',\n  error_rate: ((analysis.failed / Math.max(analysis.total_conversations, 1)) * 100).toFixed(1) + '%',\n  feedback_rate: ((analysis.with_feedback / Math.max(analysis.total_conversations, 1)) * 100).toFixed(1) + '%'\n};\n\nreturn [{ json: analysis }];"
+      },
+      "id": "analyze-patterns",
+      "name": "Analyze Patterns & Learn",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [690, 300]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "analysis-summary",
+              "name": "analysis",
+              "value": "={{ JSON.stringify($json) }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "prepare-prompt",
+      "name": "Prepare for AI Analysis",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.3,
+      "position": [910, 300]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=Analyze this agent performance data and generate improvements:\n\n{{ $json.analysis }}\n\nGenerate:\n1. System prompt enhancements (specific additions/modifications)\n2. New tool suggestions\n3. Workflow optimization recommendations\n4. User experience improvements\n\nBe specific and actionable.",
+        "hasOutputParser": true,
+        "options": {
+          "systemMessage": "You are an AI agent improvement specialist. Analyze agent performance data and generate specific, actionable improvements.\n\nFocus on:\n1. Identifying patterns in user requests\n2. Learning from successful interactions\n3. Preventing recurring errors\n4. Optimizing tool usage\n5. Improving response quality\n\nGenerate concrete improvements that can be implemented immediately.\n\nReturn JSON format:\n{\n  \"prompt_additions\": [\"specific text to add to system prompt\"],\n  \"new_tools_needed\": [{\"name\": \"tool name\", \"purpose\": \"what it does\"}],\n  \"workflow_optimizations\": [\"specific optimization\"],\n  \"ux_improvements\": [\"specific UX enhancement\"],\n  \"immediate_actions\": [\"action to take now\"]\n}"
+        }
+      },
+      "id": "generate-improvements",
+      "name": "Generate Improvements",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.6,
+      "position": [1130, 300],
+      "credentials": {
+        "anthropicApi": {
+          "id": "qMSVDiuomuTzBLLX",
+          "name": "Anthropic account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "model": "claude-sonnet-4-20250514",
+        "options": {
+          "temperature": 0.3
+        }
+      },
+      "id": "claude-improve",
+      "name": "Claude Sonnet 4.5",
+      "type": "@n8n/n8n-nodes-langchain.lmChatAnthropic",
+      "typeVersion": 1.7,
+      "position": [1130, 500],
+      "credentials": {
+        "anthropicApi": {
+          "id": "qMSVDiuomuTzBLLX",
+          "name": "Anthropic account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsonSchema": "{\"type\":\"object\",\"properties\":{\"prompt_additions\":{\"type\":\"array\",\"items\":{\"type\":\"string\"}},\"new_tools_needed\":{\"type\":\"array\",\"items\":{\"type\":\"object\",\"properties\":{\"name\":{\"type\":\"string\"},\"purpose\":{\"type\":\"string\"}}}},\"workflow_optimizations\":{\"type\":\"array\",\"items\":{\"type\":\"string\"}},\"ux_improvements\":{\"type\":\"array\",\"items\":{\"type\":\"string\"}},\"immediate_actions\":{\"type\":\"array\",\"items\":{\"type\":\"string\"}}},\"required\":[\"prompt_additions\",\"immediate_actions\"],\"additionalProperties\":false}"
+      },
+      "id": "json-parser-improve",
+      "name": "JSON Output Parser",
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1.2,
+      "position": [1130, 700]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "=-- Store learned improvements\nINSERT INTO agent_improvements (\n  analysis_date,\n  total_conversations,\n  success_rate,\n  improvements_identified,\n  prompt_additions,\n  new_tools_needed,\n  immediate_actions,\n  applied\n) VALUES (\n  NOW(),\n  {{ $('Analyze Patterns & Learn').item.json.total_conversations }},\n  '{{ $('Analyze Patterns & Learn').item.json.current_performance.success_rate }}',\n  {{ $('Analyze Patterns & Learn').item.json.improvements_identified.length }},\n  '{{ JSON.stringify($json.prompt_additions) }}',\n  '{{ JSON.stringify($json.new_tools_needed) }}',\n  '{{ JSON.stringify($json.immediate_actions) }}',\n  false\n) RETURNING *;",
+        "options": {}
+      },
+      "id": "store-improvements",
+      "name": "Store Improvements",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [1350, 300],
+      "credentials": {
+        "postgres": {
+          "id": "xogKD739Qe4gqWBU",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "has-additions",
+              "leftValue": "={{ $('Generate Improvements').item.json.prompt_additions.length }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "has-improvements",
+      "name": "Has Improvements?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1570, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://jonahautoshopmedia.app.n8n.cloud/api/v1/workflows?name=🤖%20Personal%20Chat%20Agent",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "n8nApi",
+        "options": {}
+      },
+      "id": "get-agent-workflow",
+      "name": "Get Agent Workflow",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1790, 200],
+      "credentials": {
+        "n8nApi": {
+          "id": "BfmmuCL4hhYYZq4w",
+          "name": "n8n account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const workflow = Array.isArray($input.first().json) ? $input.first().json[0] : $input.first().json;\nconst improvements = $('Generate Improvements').item.json;\n\n// Find the AI Agent node\nconst agentNode = workflow.nodes.find(n => \n  n.type === '@n8n/n8n-nodes-langchain.agent' || \n  n.name.includes('Agent')\n);\n\nif (!agentNode) {\n  return [{ json: { error: 'Agent node not found' } }];\n}\n\n// Get current system message\nlet currentPrompt = agentNode.parameters?.options?.systemMessage || '';\n\n// Add improvements to prompt\nconst newSections = [];\nif (improvements.prompt_additions.length > 0) {\n  newSections.push('\\n\\n## Recent Improvements\\n');\n  improvements.prompt_additions.forEach(addition => {\n    newSections.push(`- ${addition}\\n`);\n  });\n}\n\n// Update the system message\nagentNode.parameters.options.systemMessage = currentPrompt + newSections.join('');\n\nreturn [{ \n  json: { \n    updated_workflow: workflow,\n    improvements_added: improvements.prompt_additions.length\n  } \n}];"
+      },
+      "id": "update-prompt",
+      "name": "Update Agent Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2010, 200]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://jonahautoshopmedia.app.n8n.cloud/api/v1/workflows/{{ $json.updated_workflow.id }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "n8nApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.updated_workflow) }}",
+        "options": {}
+      },
+      "id": "apply-update",
+      "name": "Apply Update to Agent",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2230, 200],
+      "credentials": {
+        "n8nApi": {
+          "id": "BfmmuCL4hhYYZq4w",
+          "name": "n8n account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "=-- Mark improvements as applied\nUPDATE agent_improvements \nSET applied = true, applied_at = NOW()\nWHERE id = {{ $('Store Improvements').item.json.id }};",
+        "options": {}
+      },
+      "id": "mark-applied",
+      "name": "Mark as Applied",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [2450, 200],
+      "credentials": {
+        "postgres": {
+          "id": "xogKD739Qe4gqWBU",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const improvements = $('Generate Improvements').item.json;\nconst analysis = $('Analyze Patterns & Learn').item.json;\n\nlet summary = `🧠 **Self-Improvement Report**\\n\\n`;\nsummary += `**Analysis Period:** Last 6 hours\\n`;\nsummary += `**Conversations Analyzed:** ${analysis.total_conversations}\\n`;\nsummary += `**Success Rate:** ${analysis.current_performance.success_rate}\\n\\n`;\n\nsummary += `---\\n\\n`;\n\nif (improvements.prompt_additions?.length > 0) {\n  summary += `✅ **Prompt Enhancements (${improvements.prompt_additions.length})**\\n`;\n  improvements.prompt_additions.forEach((add, i) => {\n    summary += `${i + 1}. ${add}\\n`;\n  });\n  summary += `\\n`;\n}\n\nif (improvements.new_tools_needed?.length > 0) {\n  summary += `🛠️ **New Tools Identified (${improvements.new_tools_needed.length})**\\n`;\n  improvements.new_tools_needed.forEach((tool, i) => {\n    summary += `${i + 1}. **${tool.name}** - ${tool.purpose}\\n`;\n  });\n  summary += `\\n`;\n}\n\nif (improvements.workflow_optimizations?.length > 0) {\n  summary += `⚡ **Workflow Optimizations (${improvements.workflow_optimizations.length})**\\n`;\n  improvements.workflow_optimizations.forEach((opt, i) => {\n    summary += `${i + 1}. ${opt}\\n`;\n  });\n  summary += `\\n`;\n}\n\nif (improvements.immediate_actions?.length > 0) {\n  summary += `🎯 **Immediate Actions (${improvements.immediate_actions.length})**\\n`;\n  improvements.immediate_actions.forEach((action, i) => {\n    summary += `${i + 1}. ${action}\\n`;\n  });\n  summary += `\\n`;\n}\n\nsummary += `---\\n\\n`;\nsummary += `📈 **Status:** Agent has been automatically updated with ${improvements.prompt_additions?.length || 0} improvements!\\n`;\nsummary += `🔄 **Next Analysis:** In 6 hours\\n`;\n\nreturn [{ json: { summary, improvements, analysis } }];"
+      },
+      "id": "format-report",
+      "name": "Format Report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2670, 200]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Every 6 Hours": {
+      "main": [
+        [
+          {
+            "node": "Get Recent Conversations",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Recent Conversations": {
+      "main": [
+        [
+          {
+            "node": "Analyze Patterns & Learn",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Analyze Patterns & Learn": {
+      "main": [
+        [
+          {
+            "node": "Prepare for AI Analysis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare for AI Analysis": {
+      "main": [
+        [
+          {
+            "node": "Generate Improvements",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Improvements": {
+      "main": [
+        [
+          {
+            "node": "Store Improvements",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claude Sonnet 4.5": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Generate Improvements",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "JSON Output Parser": {
+      "ai_outputParser": [
+        [
+          {
+            "node": "Generate Improvements",
+            "type": "ai_outputParser",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Store Improvements": {
+      "main": [
+        [
+          {
+            "node": "Has Improvements?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Improvements?": {
+      "main": [
+        [
+          {
+            "node": "Get Agent Workflow",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Get Agent Workflow": {
+      "main": [
+        [
+          {
+            "node": "Update Agent Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Agent Prompt": {
+      "main": [
+        [
+          {
+            "node": "Apply Update to Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Apply Update to Agent": {
+      "main": [
+        [
+          {
+            "node": "Mark as Applied",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark as Applied": {
+      "main": [
+        [
+          {
+            "node": "Format Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "initial",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "eb47830968c19640d461725e22e2e82f18382dcdabd1739e2b75698b31e1a0c9"
+  },
+  "id": "self-improvement-system",
+  "tags": []
+}

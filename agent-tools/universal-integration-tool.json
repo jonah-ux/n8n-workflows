@@ -1,0 +1,272 @@
+{
+  "name": "🌐 Universal Integration Tool",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "universal-trigger",
+      "name": "When called by another workflow",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "service-name",
+              "name": "service",
+              "value": "={{ $json.service }}",
+              "type": "string"
+            },
+            {
+              "id": "action-name",
+              "name": "action",
+              "value": "={{ $json.action }}",
+              "type": "string"
+            },
+            {
+              "id": "params",
+              "name": "parameters",
+              "value": "={{ $json.parameters || {} }}",
+              "type": "object"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "extract-params-uni",
+      "name": "Extract Parameters",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.3,
+      "position": [470, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "=SELECT \n  integration_config\nFROM universal_integrations\nWHERE service_name = '{{ $json.service }}'\nAND active = true\nLIMIT 1;",
+        "options": {}
+      },
+      "id": "get-integration-config",
+      "name": "Get Integration Config",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [690, 300],
+      "credentials": {
+        "postgres": {
+          "id": "xogKD739Qe4gqWBU",
+          "name": "Postgres account"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "has-config",
+              "leftValue": "={{ $json.integration_config !== undefined }}",
+              "rightValue": "true",
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "has-config",
+      "name": "Has Config?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [910, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const service = $('Extract Parameters').item.json.service;\nconst action = $('Extract Parameters').item.json.action;\nconst params = $('Extract Parameters').item.json.parameters;\nconst config = $input.first().json.integration_config;\n\n// Execute the integration\nconst result = {\n  service,\n  action,\n  success: false,\n  data: null,\n  error: null\n};\n\ntry {\n  // Build request based on config\n  const endpoint = config.endpoints[action];\n  \n  if (!endpoint) {\n    throw new Error(`Action \"${action}\" not found for service \"${service}\"`);\n  }\n  \n  // Prepare request\n  const requestConfig = {\n    method: endpoint.method || 'GET',\n    url: config.base_url + endpoint.path,\n    headers: config.headers || {},\n    auth: config.auth || {}\n  };\n  \n  // Replace path parameters\n  Object.entries(params).forEach(([key, value]) => {\n    requestConfig.url = requestConfig.url.replace(`{${key}}`, value);\n  });\n  \n  // Add query parameters or body\n  if (requestConfig.method === 'GET') {\n    const queryString = Object.entries(params)\n      .map(([k, v]) => `${k}=${encodeURIComponent(v)}`)\n      .join('&');\n    if (queryString) {\n      requestConfig.url += (requestConfig.url.includes('?') ? '&' : '?') + queryString;\n    }\n  } else {\n    requestConfig.body = params;\n  }\n  \n  result.request_config = requestConfig;\n  result.success = true;\n  \n} catch (error) {\n  result.error = error.message;\n}\n\nreturn [{ json: result }];"
+      },
+      "id": "prepare-request",
+      "name": "Prepare Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1130, 200]
+    },
+    {
+      "parameters": {
+        "method": "={{ $json.request_config.method }}",
+        "url": "={{ $json.request_config.url }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": "={{ Object.entries($json.request_config.headers).map(([name, value]) => ({ name, value })) }}"
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.request_config.body || {}) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "execute-request",
+      "name": "Execute API Request",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1350, 200],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const service = $('Extract Parameters').item.json.service;\nconst action = $('Extract Parameters').item.json.action;\n\n// Generate integration config using AI\nconst generatedConfig = {\n  service_name: service,\n  base_url: `https://api.${service.toLowerCase()}.com`,\n  auth: {\n    type: 'bearer',\n    token_env: `${service.toUpperCase()}_API_KEY`\n  },\n  headers: {\n    'Content-Type': 'application/json',\n    'Accept': 'application/json'\n  },\n  endpoints: {\n    [action]: {\n      method: 'GET',\n      path: `/${action}`,\n      description: `Perform ${action} action`\n    }\n  },\n  rate_limits: {\n    requests_per_minute: 60\n  },\n  needs_configuration: true\n};\n\nreturn [{ json: { \n  generated_config: generatedConfig,\n  message: `No configuration found for ${service}. Generated template config. Please configure properly before using.`\n} }];"
+      },
+      "id": "generate-config",
+      "name": "Generate Config Template",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1130, 400]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "=INSERT INTO universal_integrations (\n  service_name,\n  integration_config,\n  active,\n  needs_configuration\n) VALUES (\n  '{{ $('Extract Parameters').item.json.service }}',\n  '{{ JSON.stringify($json.generated_config) }}',\n  false,\n  true\n) RETURNING *;",
+        "options": {}
+      },
+      "id": "save-template",
+      "name": "Save Template",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [1350, 400],
+      "credentials": {
+        "postgres": {
+          "id": "xogKD739Qe4gqWBU",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const prepareData = $('Prepare Request').item?.json;\nconst apiResponse = $input.first().json;\n\nconst service = $('Extract Parameters').item.json.service;\nconst action = $('Extract Parameters').item.json.action;\n\nlet output = `🌐 **Universal Integration Result**\\n\\n`;\noutput += `**Service:** ${service}\\n`;\noutput += `**Action:** ${action}\\n\\n`;\n\nif (apiResponse.error) {\n  output += `❌ **Error**\\n${apiResponse.error}\\n\\n`;\n} else {\n  output += `✅ **Success**\\n\\n`;\n  output += `**Response:**\\n\\`\\`\\`json\\n${JSON.stringify(apiResponse, null, 2).substring(0, 500)}\\n\\`\\`\\`\\n`;\n}\n\nreturn [{\n  json: {\n    formatted_output: output,\n    service,\n    action,\n    success: !apiResponse.error,\n    data: apiResponse,\n    error: apiResponse.error\n  }\n}];"
+      },
+      "id": "format-output-uni",
+      "name": "Format Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1570, 300]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "When called by another workflow": {
+      "main": [
+        [
+          {
+            "node": "Extract Parameters",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Parameters": {
+      "main": [
+        [
+          {
+            "node": "Get Integration Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Integration Config": {
+      "main": [
+        [
+          {
+            "node": "Has Config?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Config?": {
+      "main": [
+        [
+          {
+            "node": "Prepare Request",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Generate Config Template",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Request": {
+      "main": [
+        [
+          {
+            "node": "Execute API Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute API Request": {
+      "main": [
+        [
+          {
+            "node": "Format Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Config Template": {
+      "main": [
+        [
+          {
+            "node": "Save Template",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Template": {
+      "main": [
+        [
+          {
+            "node": "Format Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "initial",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "eb47830968c19640d461725e22e2e82f18382dcdabd1739e2b75698b31e1a0c9"
+  },
+  "id": "universal-integration-tool",
+  "tags": []
+}

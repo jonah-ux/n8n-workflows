@@ -1,0 +1,369 @@
+{
+  "name": "📞 Communication Hub Tool",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "comm-trigger",
+      "name": "When called by another workflow",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1,
+      "position": [250, 500]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "comm-type",
+              "name": "communication_type",
+              "value": "={{ $json.communication_type }}",
+              "type": "string"
+            },
+            {
+              "id": "to-contact",
+              "name": "to",
+              "value": "={{ $json.to || 'Jonah' }}",
+              "type": "string"
+            },
+            {
+              "id": "message-content",
+              "name": "message",
+              "value": "={{ $json.message }}",
+              "type": "string"
+            },
+            {
+              "id": "priority",
+              "name": "priority",
+              "value": "={{ $json.priority || 'normal' }}",
+              "type": "string"
+            },
+            {
+              "id": "attachments",
+              "name": "attachments",
+              "value": "={{ $json.attachments || [] }}",
+              "type": "object"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "extract-params-comm",
+      "name": "Extract Parameters",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.3,
+      "position": [470, 500]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "=SELECT \n  contact_name,\n  phone_number,\n  email,\n  preferred_method,\n  timezone\nFROM contacts\nWHERE contact_name = '{{ $json.to }}'\nLIMIT 1;",
+        "options": {}
+      },
+      "id": "get-contact-info",
+      "name": "Get Contact Info",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [690, 500],
+      "credentials": {
+        "postgres": {
+          "id": "xogKD739Qe4gqWBU",
+          "name": "Postgres account"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "mode": "chooseBranch",
+        "output": "={{ $('Extract Parameters').item.json.communication_type }}"
+      },
+      "id": "route-by-type",
+      "name": "Route by Type",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [910, 500]
+    },
+    {
+      "parameters": {
+        "operation": "sendMessage",
+        "fromPhoneNumber": "+1234567890",
+        "toPhoneNumber": "={{ $('Get Contact Info').item.json.phone_number }}",
+        "message": "=🤖 AI Agent:\n\n{{ $('Extract Parameters').item.json.message }}\n\n---\nPriority: {{ $('Extract Parameters').item.json.priority.toUpperCase() }}\nSent: {{ new Date().toLocaleString() }}",
+        "options": {}
+      },
+      "id": "send-sms",
+      "name": "Send SMS",
+      "type": "n8n-nodes-base.twilio",
+      "typeVersion": 1,
+      "position": [1130, 200],
+      "credentials": {
+        "twilioApi": {
+          "id": "twilioCredentialId",
+          "name": "Twilio account"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "operation": "makeCall",
+        "from": "+1234567890",
+        "to": "={{ $('Get Contact Info').item.json.phone_number }}",
+        "url": "https://your-server.com/twiml/agent-call",
+        "options": {
+          "method": "POST"
+        }
+      },
+      "id": "make-call",
+      "name": "Make Phone Call",
+      "type": "n8n-nodes-base.twilio",
+      "typeVersion": 1,
+      "position": [1130, 400],
+      "credentials": {
+        "twilioApi": {
+          "id": "twilioCredentialId",
+          "name": "Twilio account"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "fromEmail": "ai-agent@autoshopmedia.com",
+        "toEmail": "={{ $('Get Contact Info').item.json.email }}",
+        "subject": "=🤖 AI Agent Notification - {{ $('Extract Parameters').item.json.priority === 'urgent' ? '⚠️ URGENT' : '' }}",
+        "emailType": "html",
+        "message": "=<html>\n<head>\n  <style>\n    body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }\n    .container { max-width: 600px; margin: 0 auto; padding: 20px; }\n    .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; border-radius: 10px 10px 0 0; }\n    .content { background: #f9f9f9; padding: 30px; border-radius: 0 0 10px 10px; }\n    .message { background: white; padding: 20px; border-left: 4px solid #667eea; margin: 20px 0; }\n    .priority { display: inline-block; padding: 5px 15px; border-radius: 20px; font-size: 12px; font-weight: bold; }\n    .urgent { background: #ff4444; color: white; }\n    .high { background: #ff9944; color: white; }\n    .normal { background: #44ff44; color: #333; }\n    .footer { text-align: center; padding: 20px; color: #999; font-size: 12px; }\n  </style>\n</head>\n<body>\n  <div class=\"container\">\n    <div class=\"header\">\n      <h1>🤖 AI Agent Notification</h1>\n      <span class=\"priority {{ $('Extract Parameters').item.json.priority }}\">{{ $('Extract Parameters').item.json.priority.toUpperCase() }}</span>\n    </div>\n    <div class=\"content\">\n      <div class=\"message\">\n        <p>{{ $('Extract Parameters').item.json.message }}</p>\n      </div>\n      <p><strong>Sent:</strong> {{ new Date().toLocaleString() }}</p>\n      <p><strong>From:</strong> Your AI Agent</p>\n    </div>\n    <div class=\"footer\">\n      <p>This is an automated message from your AI Agent</p>\n      <p>Auto Shop Media | AI-Powered Automation</p>\n    </div>\n  </div>\n</body>\n</html>",
+        "options": {}
+      },
+      "id": "send-email",
+      "name": "Send Email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2,
+      "position": [1130, 600],
+      "credentials": {
+        "smtp": {
+          "id": "smtpCredentialId",
+          "name": "SMTP account"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ $('Get Contact Info').item.json.slack_id || 'JONAH_USER_ID' }}",
+        "text": "=🤖 *AI Agent Notification*\n\n{{ $('Extract Parameters').item.json.message }}\n\n---\n*Priority:* {{ $('Extract Parameters').item.json.priority.toUpperCase() }}\n*Sent:* {{ new Date().toLocaleString() }}",
+        "options": {}
+      },
+      "id": "send-slack",
+      "name": "Send Slack Message",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.1,
+      "position": [1130, 800],
+      "credentials": {
+        "slackApi": {
+          "id": "slackCredentialId",
+          "name": "Slack account"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "operation": "sendMessage",
+        "chatId": "={{ $('Get Contact Info').item.json.whatsapp_number }}",
+        "text": "=🤖 *AI Agent*\n\n{{ $('Extract Parameters').item.json.message }}\n\n_Priority: {{ $('Extract Parameters').item.json.priority }}_\n_Sent: {{ new Date().toLocaleString() }}_",
+        "additionalFields": {}
+      },
+      "id": "send-whatsapp",
+      "name": "Send WhatsApp",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.1,
+      "position": [1130, 1000],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const commType = $('Extract Parameters').item.json.communication_type;\nconst to = $('Extract Parameters').item.json.to;\nconst message = $('Extract Parameters').item.json.message;\nconst priority = $('Extract Parameters').item.json.priority;\n\nconst response = $input.first().json;\n\nlet output = `📞 **Communication Sent**\\n\\n`;\noutput += `**Type:** ${commType.toUpperCase()}\\n`;\noutput += `**To:** ${to}\\n`;\noutput += `**Priority:** ${priority.toUpperCase()}\\n\\n`;\n\nif (response.error) {\n  output += `❌ **Failed to send**\\n${response.error}\\n`;\n} else {\n  output += `✅ **Successfully delivered**\\n`;\n  \n  if (commType === 'sms' && response.sid) {\n    output += `SMS ID: ${response.sid}\\n`;\n  } else if (commType === 'call' && response.sid) {\n    output += `Call ID: ${response.sid}\\nStatus: ${response.status}\\n`;\n  } else if (commType === 'email') {\n    output += `Email sent successfully\\n`;\n  }\n}\n\noutput += `\\n**Message:**\\n${message.substring(0, 200)}${message.length > 200 ? '...' : ''}\\n`;\n\nreturn [{\n  json: {\n    formatted_output: output,\n    communication_type: commType,\n    to,\n    success: !response.error,\n    response,\n    timestamp: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "format-output-comm",
+      "name": "Format Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1350, 500]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "=-- Log communication\nINSERT INTO communication_log (\n  communication_type,\n  to_contact,\n  message,\n  priority,\n  success,\n  response_data,\n  sent_at\n) VALUES (\n  '{{ $json.communication_type }}',\n  '{{ $json.to }}',\n  '{{ $('Extract Parameters').item.json.message }}',\n  '{{ $('Extract Parameters').item.json.priority }}',\n  {{ $json.success }},\n  '{{ JSON.stringify($json.response) }}',\n  NOW()\n);",
+        "options": {}
+      },
+      "id": "log-communication",
+      "name": "Log Communication",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [1570, 500],
+      "credentials": {
+        "postgres": {
+          "id": "xogKD739Qe4gqWBU",
+          "name": "Postgres account"
+        }
+      },
+      "continueOnFail": true
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "When called by another workflow": {
+      "main": [
+        [
+          {
+            "node": "Extract Parameters",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Parameters": {
+      "main": [
+        [
+          {
+            "node": "Get Contact Info",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Contact Info": {
+      "main": [
+        [
+          {
+            "node": "Route by Type",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route by Type": {
+      "main": [
+        [
+          {
+            "node": "Send SMS",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Make Phone Call",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Email",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Slack Message",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send WhatsApp",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send SMS": {
+      "main": [
+        [
+          {
+            "node": "Format Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Make Phone Call": {
+      "main": [
+        [
+          {
+            "node": "Format Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Email": {
+      "main": [
+        [
+          {
+            "node": "Format Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Slack Message": {
+      "main": [
+        [
+          {
+            "node": "Format Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send WhatsApp": {
+      "main": [
+        [
+          {
+            "node": "Format Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Output": {
+      "main": [
+        [
+          {
+            "node": "Log Communication",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "initial",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "eb47830968c19640d461725e22e2e82f18382dcdabd1739e2b75698b31e1a0c9"
+  },
+  "id": "communication-hub-tool",
+  "tags": []
+}

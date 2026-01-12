@@ -1,0 +1,261 @@
+{
+  "name": "✏️ Workflow Updater Tool",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [240, 500],
+      "id": "trigger-1",
+      "name": "When Called by AI Agent"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "workflow_id",
+              "name": "workflow_id",
+              "type": "string",
+              "value": "={{ $json.workflow_id || $json.id || '' }}"
+            },
+            {
+              "id": "workflow_name",
+              "name": "workflow_name",
+              "type": "string",
+              "value": "={{ $json.workflow_name || $json.name || '' }}"
+            },
+            {
+              "id": "action",
+              "name": "action",
+              "type": "string",
+              "value": "={{ $json.action || 'update' }}"
+            },
+            {
+              "id": "changes",
+              "name": "changes",
+              "type": "string",
+              "value": "={{ JSON.stringify($json.changes || $json.modifications || {}) }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [460, 500],
+      "id": "set-1",
+      "name": "📋 Extract Parameters"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {"value1": "={{ $json.workflow_id }}", "operation": "isNotEmpty"},
+            {"value1": "={{ $json.workflow_name }}", "operation": "isNotEmpty"}
+          ]
+        },
+        "combineOperation": "any"
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [680, 500],
+      "id": "if-1",
+      "name": "❓ Has ID or Name?"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.workflow_id ? 'https://jonahautoshopmedia.app.n8n.cloud/api/v1/workflows/' + $json.workflow_id : 'https://jonahautoshopmedia.app.n8n.cloud/api/v1/workflows' }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "n8nApi",
+        "sendQuery": "={{ !$json.workflow_id }}",
+        "queryParameters": {
+          "parameters": [
+            {"name": "filter", "value": "={{ !$json.workflow_id ? JSON.stringify({name: $json.workflow_name}) : '' }}"}
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [900, 400],
+      "id": "http-1",
+      "name": "🔍 Fetch Workflow",
+      "credentials": {
+        "n8nApi": {
+          "id": "1",
+          "name": "n8n API"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ADVANCED WORKFLOW EDITOR\nconst response = $input.first().json;\nconst params = $('📋 Extract Parameters').first().json;\n\n// Get workflow (handle both single workflow and array response)\nlet workflow;\nif (Array.isArray(response.data)) {\n  workflow = response.data.find(w => w.name === params.workflow_name);\n} else if (Array.isArray(response)) {\n  workflow = response.find(w => w.name === params.workflow_name);\n} else {\n  workflow = response;\n}\n\nif (!workflow || !workflow.nodes) {\n  return [{\n    json: {\n      success: false,\n      error: 'Workflow not found'\n    }\n  }];\n}\n\n// Parse requested changes\nlet changes;\ntry {\n  changes = typeof params.changes === 'string' ? JSON.parse(params.changes) : params.changes;\n} catch {\n  changes = {};\n}\n\nconst action = params.action;\nconst errors = [];\nconst modifications = [];\n\ntry {\n  // ============================================\n  // ADD NODE\n  // ============================================\n  if (action === 'add_node' && changes.node) {\n    const newNode = changes.node;\n    \n    // Generate ID if missing\n    if (!newNode.id) {\n      newNode.id = `node-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;\n    }\n    \n    // Set default position if missing\n    if (!newNode.position) {\n      const lastNode = workflow.nodes[workflow.nodes.length - 1];\n      newNode.position = lastNode ? [lastNode.position[0] + 220, lastNode.position[1]] : [460, 300];\n    }\n    \n    // Add node\n    workflow.nodes.push(newNode);\n    modifications.push(`Added node: ${newNode.name}`);\n    \n    // Add connection if specified\n    if (changes.connect_to) {\n      const sourceNode = workflow.nodes.find(n => n.name === changes.connect_to);\n      if (sourceNode) {\n        if (!workflow.connections[sourceNode.name]) {\n          workflow.connections[sourceNode.name] = { main: [[]] };\n        }\n        if (!workflow.connections[sourceNode.name].main[0]) {\n          workflow.connections[sourceNode.name].main[0] = [];\n        }\n        workflow.connections[sourceNode.name].main[0].push({\n          node: newNode.name,\n          type: 'main',\n          index: 0\n        });\n        modifications.push(`Connected ${sourceNode.name} → ${newNode.name}`);\n      }\n    }\n  }\n  \n  // ============================================\n  // REMOVE NODE\n  // ============================================\n  else if (action === 'remove_node' && (changes.node_id || changes.node_name)) {\n    const nodeToRemove = workflow.nodes.find(n => \n      n.id === changes.node_id || n.name === changes.node_name\n    );\n    \n    if (nodeToRemove) {\n      // Remove from nodes array\n      workflow.nodes = workflow.nodes.filter(n => n.id !== nodeToRemove.id);\n      \n      // Remove from connections\n      delete workflow.connections[nodeToRemove.name];\n      \n      // Remove connections TO this node\n      Object.keys(workflow.connections).forEach(source => {\n        if (workflow.connections[source].main) {\n          workflow.connections[source].main = workflow.connections[source].main.map(branch => \n            branch.filter(conn => conn.node !== nodeToRemove.name)\n          );\n        }\n      });\n      \n      modifications.push(`Removed node: ${nodeToRemove.name}`);\n    } else {\n      errors.push('Node not found');\n    }\n  }\n  \n  // ============================================\n  // UPDATE NODE\n  // ============================================\n  else if (action === 'update_node' && (changes.node_id || changes.node_name)) {\n    const nodeToUpdate = workflow.nodes.find(n => \n      n.id === changes.node_id || n.name === changes.node_name\n    );\n    \n    if (nodeToUpdate) {\n      // Update parameters\n      if (changes.parameters) {\n        nodeToUpdate.parameters = {\n          ...nodeToUpdate.parameters,\n          ...changes.parameters\n        };\n        modifications.push(`Updated parameters for: ${nodeToUpdate.name}`);\n      }\n      \n      // Update credentials\n      if (changes.credentials) {\n        nodeToUpdate.credentials = {\n          ...nodeToUpdate.credentials,\n          ...changes.credentials\n        };\n        modifications.push(`Updated credentials for: ${nodeToUpdate.name}`);\n      }\n      \n      // Update name\n      if (changes.new_name && changes.new_name !== nodeToUpdate.name) {\n        const oldName = nodeToUpdate.name;\n        nodeToUpdate.name = changes.new_name;\n        \n        // Update connections\n        if (workflow.connections[oldName]) {\n          workflow.connections[changes.new_name] = workflow.connections[oldName];\n          delete workflow.connections[oldName];\n        }\n        \n        // Update connections TO this node\n        Object.values(workflow.connections).forEach(conns => {\n          if (conns.main) {\n            conns.main.forEach(branch => {\n              branch.forEach(conn => {\n                if (conn.node === oldName) {\n                  conn.node = changes.new_name;\n                }\n              });\n            });\n          }\n        });\n        \n        modifications.push(`Renamed: ${oldName} → ${changes.new_name}`);\n      }\n      \n      // Add error handling\n      if (changes.add_error_handling) {\n        nodeToUpdate.onError = 'continueRegularOutput';\n        nodeToUpdate.retryOnFail = true;\n        nodeToUpdate.maxTries = 3;\n        nodeToUpdate.waitBetweenTries = 2000;\n        modifications.push(`Added error handling to: ${nodeToUpdate.name}`);\n      }\n    } else {\n      errors.push('Node not found');\n    }\n  }\n  \n  // ============================================\n  // ADD ERROR HANDLING TO ALL\n  // ============================================\n  else if (action === 'add_error_handling') {\n    let count = 0;\n    workflow.nodes.forEach(node => {\n      const isExternalCall = ['httpRequest', 'postgres', 'airtable'].some(t => \n        node.type.includes(t)\n      );\n      \n      if (isExternalCall && !node.onError) {\n        node.onError = 'continueRegularOutput';\n        node.retryOnFail = true;\n        node.maxTries = 3;\n        node.waitBetweenTries = 2000;\n        count++;\n      }\n    });\n    modifications.push(`Added error handling to ${count} nodes`);\n  }\n  \n  // ============================================\n  // FIX CREDENTIALS\n  // ============================================\n  else if (action === 'fix_credentials' && changes.credential_mapping) {\n    const mapping = changes.credential_mapping;\n    let count = 0;\n    \n    workflow.nodes.forEach(node => {\n      if (node.credentials) {\n        Object.keys(node.credentials).forEach(credType => {\n          if (mapping[credType]) {\n            node.credentials[credType] = {\n              id: mapping[credType].id,\n              name: mapping[credType].name\n            };\n            count++;\n          }\n        });\n      }\n    });\n    \n    modifications.push(`Fixed credentials for ${count} nodes`);\n  }\n  \n  // ============================================\n  // OPTIMIZE WORKFLOW\n  // ============================================\n  else if (action === 'optimize') {\n    // Remove duplicate nodes (same type, same params)\n    const seen = new Map();\n    const nodesToKeep = new Set();\n    const duplicates = [];\n    \n    workflow.nodes.forEach(node => {\n      const key = `${node.type}-${JSON.stringify(node.parameters)}`;\n      if (seen.has(key)) {\n        duplicates.push({ original: seen.get(key), duplicate: node.name });\n      } else {\n        seen.set(key, node.name);\n        nodesToKeep.add(node.id);\n      }\n    });\n    \n    if (duplicates.length > 0) {\n      // Rewire connections from duplicates to originals\n      duplicates.forEach(({ original, duplicate }) => {\n        Object.values(workflow.connections).forEach(conns => {\n          if (conns.main) {\n            conns.main.forEach(branch => {\n              branch.forEach(conn => {\n                if (conn.node === duplicate) {\n                  conn.node = original;\n                }\n              });\n            });\n          }\n        });\n        \n        // Remove duplicate connections\n        delete workflow.connections[duplicate];\n      });\n      \n      // Remove duplicate nodes\n      workflow.nodes = workflow.nodes.filter(n => nodesToKeep.has(n.id));\n      modifications.push(`Removed ${duplicates.length} duplicate nodes`);\n    }\n    \n    // Add missing error handling\n    let errorHandlingAdded = 0;\n    workflow.nodes.forEach(node => {\n      const isExternalCall = ['httpRequest', 'postgres'].some(t => node.type.includes(t));\n      if (isExternalCall && !node.onError) {\n        node.onError = 'continueRegularOutput';\n        errorHandlingAdded++;\n      }\n    });\n    \n    if (errorHandlingAdded > 0) {\n      modifications.push(`Added error handling to ${errorHandlingAdded} nodes`);\n    }\n  }\n  \n  // Return updated workflow\n  return [{\n    json: {\n      success: errors.length === 0,\n      workflow,\n      workflow_id: workflow.id,\n      workflow_name: workflow.name,\n      modifications,\n      errors,\n      changes_made: modifications.length\n    }\n  }];\n  \n} catch (error) {\n  return [{\n    json: {\n      success: false,\n      error: error.message,\n      workflow_id: workflow.id\n    }\n  }];\n}"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1120, 400],
+      "id": "code-1",
+      "name": "✏️ Apply Changes",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [{"value1": "={{ $json.success }}", "value2": true}]
+        }
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1340, 400],
+      "id": "if-2",
+      "name": "❓ Success?"
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "={{ 'https://jonahautoshopmedia.app.n8n.cloud/api/v1/workflows/' + $json.workflow_id }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "n8nApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.workflow) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1560, 300],
+      "id": "http-2",
+      "name": "💾 Save Workflow",
+      "credentials": {
+        "n8nApi": {
+          "id": "1",
+          "name": "n8n API"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "output",
+              "name": "output",
+              "type": "string",
+              "value": "={{ $('✏️ Apply Changes').first().json.success ? `✅ **Workflow Updated!**\\n\\n**Name:** ${$('✏️ Apply Changes').first().json.workflow_name}\\n**ID:** ${$('✏️ Apply Changes').first().json.workflow_id}\\n\\n**Changes Made (${$('✏️ Apply Changes').first().json.changes_made}):**\\n${$('✏️ Apply Changes').first().json.modifications.map(m => '- ' + m).join('\\n')}\\n\\nWorkflow has been saved.` : `❌ Update failed: ${$('✏️ Apply Changes').first().json.error}` }}"
+            },
+            {
+              "id": "success",
+              "name": "success",
+              "type": "boolean",
+              "value": "={{ $('✏️ Apply Changes').first().json.success }}"
+            },
+            {
+              "id": "modifications",
+              "name": "modifications",
+              "type": "array",
+              "value": "={{ $('✏️ Apply Changes').first().json.modifications || [] }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [1780, 300],
+      "id": "set-2",
+      "name": "📤 Prepare Output"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "output",
+              "name": "output",
+              "type": "string",
+              "value": "❌ Please provide either workflow_id or workflow_name"
+            },
+            {
+              "id": "success",
+              "name": "success",
+              "type": "boolean",
+              "value": false
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [900, 600],
+      "id": "set-error",
+      "name": "📤 Error Output"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "output",
+              "name": "output",
+              "type": "string",
+              "value": "={{ `❌ ${$('✏️ Apply Changes').first().json.error}\\n\\n${$('✏️ Apply Changes').first().json.errors ? $('✏️ Apply Changes').first().json.errors.join('\\n') : ''}` }}"
+            },
+            {
+              "id": "success",
+              "name": "success",
+              "type": "boolean",
+              "value": false
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [1560, 500],
+      "id": "set-3",
+      "name": "📤 Changes Error"
+    }
+  ],
+  "connections": {
+    "When Called by AI Agent": {
+      "main": [[{"node": "📋 Extract Parameters", "type": "main", "index": 0}]]
+    },
+    "📋 Extract Parameters": {
+      "main": [[{"node": "❓ Has ID or Name?", "type": "main", "index": 0}]]
+    },
+    "❓ Has ID or Name?": {
+      "main": [
+        [{"node": "🔍 Fetch Workflow", "type": "main", "index": 0}],
+        [{"node": "📤 Error Output", "type": "main", "index": 0}]
+      ]
+    },
+    "🔍 Fetch Workflow": {
+      "main": [[{"node": "✏️ Apply Changes", "type": "main", "index": 0}]]
+    },
+    "✏️ Apply Changes": {
+      "main": [[{"node": "❓ Success?", "type": "main", "index": 0}]]
+    },
+    "❓ Success?": {
+      "main": [
+        [{"node": "💾 Save Workflow", "type": "main", "index": 0}],
+        [{"node": "📤 Changes Error", "type": "main", "index": 0}]
+      ]
+    },
+    "💾 Save Workflow": {
+      "main": [[{"node": "📤 Prepare Output", "type": "main", "index": 0}]]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 0
+}

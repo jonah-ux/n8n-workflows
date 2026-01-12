@@ -1,0 +1,367 @@
+{
+  "name": "🚀 Workflow Deployment Tool",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [240, 400],
+      "id": "trigger-1",
+      "name": "When Called by AI Agent"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "workflow_json",
+              "name": "workflow_json",
+              "type": "string",
+              "value": "={{ $json.workflow_json || JSON.stringify($json.workflow || {}) }}"
+            },
+            {
+              "id": "workflow_name",
+              "name": "workflow_name",
+              "type": "string",
+              "value": "={{ $json.workflow_name || $json.name || 'New Workflow' }}"
+            },
+            {
+              "id": "activate",
+              "name": "activate",
+              "type": "boolean",
+              "value": "={{ $json.activate === undefined ? true : $json.activate }}"
+            },
+            {
+              "id": "update_if_exists",
+              "name": "update_if_exists",
+              "type": "boolean",
+              "value": "={{ $json.update_if_exists === undefined ? false : $json.update_if_exists }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [460, 400],
+      "id": "set-1",
+      "name": "📋 Extract Parameters"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse and validate workflow JSON\nconst params = $input.first().json;\nlet workflow;\n\ntry {\n  // Parse if string\n  if (typeof params.workflow_json === 'string') {\n    workflow = JSON.parse(params.workflow_json);\n  } else {\n    workflow = params.workflow_json;\n  }\n  \n  // Validate required fields\n  if (!workflow.name) {\n    workflow.name = params.workflow_name;\n  }\n  \n  if (!workflow.nodes || !Array.isArray(workflow.nodes)) {\n    throw new Error('Invalid workflow: missing nodes array');\n  }\n  \n  if (!workflow.connections) {\n    throw new Error('Invalid workflow: missing connections');\n  }\n  \n  // Clean up fields that shouldn't be in POST request\n  delete workflow.id;\n  delete workflow.createdAt;\n  delete workflow.updatedAt;\n  \n  return [{\n    json: {\n      workflow,\n      workflow_name: workflow.name,\n      activate: params.activate,\n      update_if_exists: params.update_if_exists,\n      valid: true\n    }\n  }];\n  \n} catch (error) {\n  return [{\n    json: {\n      valid: false,\n      error: error.message,\n      raw_input: params.workflow_json\n    }\n  }];\n}"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 400],
+      "id": "code-1",
+      "name": "✅ Validate Workflow",
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [{"value1": "={{ $json.valid }}", "value2": true}]
+        }
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [900, 400],
+      "id": "if-1",
+      "name": "❓ Valid?"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://jonahautoshopmedia.app.n8n.cloud/api/v1/workflows",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "n8nApi",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {"name": "filter", "value": "={{ JSON.stringify({name: $json.workflow_name}) }}"}
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1120, 300],
+      "id": "http-check",
+      "name": "🔍 Check if Exists",
+      "credentials": {
+        "n8nApi": {
+          "id": "1",
+          "name": "n8n API"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const response = $input.first().json;\nconst params = $('✅ Validate Workflow').first().json;\n\n// Check if workflow with same name exists\nconst workflows = Array.isArray(response.data) ? response.data : (Array.isArray(response) ? response : []);\nconst existing = workflows.find(w => w.name === params.workflow_name);\n\nreturn [{\n  json: {\n    ...params,\n    workflow_exists: !!existing,\n    existing_id: existing?.id,\n    should_update: existing && params.update_if_exists,\n    should_create: !existing || !params.update_if_exists\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1340, 300],
+      "id": "code-2",
+      "name": "🧠 Determine Action"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [{"value1": "={{ $json.should_update }}", "value2": true}]
+        }
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1560, 300],
+      "id": "if-2",
+      "name": "❓ Update or Create?"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://jonahautoshopmedia.app.n8n.cloud/api/v1/workflows",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "n8nApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.workflow) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1780, 200],
+      "id": "http-create",
+      "name": "➕ Create Workflow",
+      "credentials": {
+        "n8nApi": {
+          "id": "1",
+          "name": "n8n API"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "={{ 'https://jonahautoshopmedia.app.n8n.cloud/api/v1/workflows/' + $json.existing_id }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "n8nApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.workflow) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1780, 400],
+      "id": "http-update",
+      "name": "🔄 Update Workflow",
+      "credentials": {
+        "n8nApi": {
+          "id": "1",
+          "name": "n8n API"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "mode": "chooseBranch",
+        "output": "input1"
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [2000, 300],
+      "id": "merge-1",
+      "name": "🤝 Merge Results"
+    },
+    {
+      "parameters": {
+        "jsCode": "const response = $input.first().json;\nconst params = $('🧠 Determine Action').first().json;\n\n// Check if deployment succeeded\nconst success = response.id !== undefined;\nconst workflowId = response.id;\n\nif (!success) {\n  return [{\n    json: {\n      success: false,\n      error: response.message || 'Deployment failed',\n      action: params.should_update ? 'update' : 'create'\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    success: true,\n    workflow_id: workflowId,\n    workflow_name: response.name,\n    action: params.should_update ? 'updated' : 'created',\n    should_activate: params.activate,\n    workflow_url: `https://jonahautoshopmedia.app.n8n.cloud/workflow/${workflowId}`\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2220, 300],
+      "id": "code-3",
+      "name": "📊 Parse Result"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {"value1": "={{ $json.success }}", "value2": true},
+            {"value1": "={{ $json.should_activate }}", "value2": true}
+          ]
+        },
+        "combineOperation": "all"
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [2440, 300],
+      "id": "if-3",
+      "name": "❓ Activate?"
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{ 'https://jonahautoshopmedia.app.n8n.cloud/api/v1/workflows/' + $json.workflow_id }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "n8nApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"active\": true}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2660, 200],
+      "id": "http-activate",
+      "name": "⚡ Activate Workflow",
+      "credentials": {
+        "n8nApi": {
+          "id": "1",
+          "name": "n8n API"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "mode": "chooseBranch",
+        "output": "input1"
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [2880, 300],
+      "id": "merge-2",
+      "name": "🤝 Merge Activation"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "output",
+              "name": "output",
+              "type": "string",
+              "value": "={{ $('📊 Parse Result').first().json.success ? `✅ **Workflow ${$('📊 Parse Result').first().json.action}!**\\n\\n**Name:** ${$('📊 Parse Result').first().json.workflow_name}\\n**ID:** ${$('📊 Parse Result').first().json.workflow_id}\\n**Status:** ${$json.active ? 'Active ⚡' : 'Inactive'}\\n**URL:** ${$('📊 Parse Result').first().json.workflow_url}\\n\\nWorkflow is ready to use!` : `❌ Deployment failed: ${$('📊 Parse Result').first().json.error}` }}"
+            },
+            {
+              "id": "success",
+              "name": "success",
+              "type": "boolean",
+              "value": "={{ $('📊 Parse Result').first().json.success }}"
+            },
+            {
+              "id": "workflow_id",
+              "name": "workflow_id",
+              "type": "string",
+              "value": "={{ $('📊 Parse Result').first().json.workflow_id || '' }}"
+            },
+            {
+              "id": "workflow_url",
+              "name": "workflow_url",
+              "type": "string",
+              "value": "={{ $('📊 Parse Result').first().json.workflow_url || '' }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [3100, 300],
+      "id": "set-output",
+      "name": "📤 Prepare Success Output"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "output",
+              "name": "output",
+              "type": "string",
+              "value": "={{ `❌ **Validation Failed**\\n\\n${$json.error}\\n\\nPlease provide valid workflow JSON.` }}"
+            },
+            {
+              "id": "success",
+              "name": "success",
+              "type": "boolean",
+              "value": false
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [1120, 500],
+      "id": "set-error",
+      "name": "📤 Prepare Error Output"
+    }
+  ],
+  "connections": {
+    "When Called by AI Agent": {
+      "main": [[{"node": "📋 Extract Parameters", "type": "main", "index": 0}]]
+    },
+    "📋 Extract Parameters": {
+      "main": [[{"node": "✅ Validate Workflow", "type": "main", "index": 0}]]
+    },
+    "✅ Validate Workflow": {
+      "main": [[{"node": "❓ Valid?", "type": "main", "index": 0}]]
+    },
+    "❓ Valid?": {
+      "main": [
+        [{"node": "🔍 Check if Exists", "type": "main", "index": 0}],
+        [{"node": "📤 Prepare Error Output", "type": "main", "index": 0}]
+      ]
+    },
+    "🔍 Check if Exists": {
+      "main": [[{"node": "🧠 Determine Action", "type": "main", "index": 0}]]
+    },
+    "🧠 Determine Action": {
+      "main": [[{"node": "❓ Update or Create?", "type": "main", "index": 0}]]
+    },
+    "❓ Update or Create?": {
+      "main": [
+        [{"node": "🔄 Update Workflow", "type": "main", "index": 0}],
+        [{"node": "➕ Create Workflow", "type": "main", "index": 0}]
+      ]
+    },
+    "➕ Create Workflow": {
+      "main": [[{"node": "🤝 Merge Results", "type": "main", "index": 0}]]
+    },
+    "🔄 Update Workflow": {
+      "main": [[{"node": "🤝 Merge Results", "type": "main", "index": 1}]]
+    },
+    "🤝 Merge Results": {
+      "main": [[{"node": "📊 Parse Result", "type": "main", "index": 0}]]
+    },
+    "📊 Parse Result": {
+      "main": [[{"node": "❓ Activate?", "type": "main", "index": 0}]]
+    },
+    "❓ Activate?": {
+      "main": [
+        [{"node": "⚡ Activate Workflow", "type": "main", "index": 0}],
+        [{"node": "🤝 Merge Activation", "type": "main", "index": 1}]
+      ]
+    },
+    "⚡ Activate Workflow": {
+      "main": [[{"node": "🤝 Merge Activation", "type": "main", "index": 0}]]
+    },
+    "🤝 Merge Activation": {
+      "main": [[{"node": "📤 Prepare Success Output", "type": "main", "index": 0}]]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 0
+}

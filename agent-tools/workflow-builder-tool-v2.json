@@ -1,0 +1,258 @@
+{
+  "name": "🏗️ Ultimate Workflow Builder v2.0",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [240, 600],
+      "id": "trigger-1",
+      "name": "When Called by AI Agent"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "description",
+              "name": "description",
+              "type": "string",
+              "value": "={{ $json.description || $json.query || 'Build a workflow' }}"
+            },
+            {
+              "id": "workflow_type",
+              "name": "workflow_type",
+              "type": "string",
+              "value": "={{ $json.workflow_type || 'general' }}"
+            },
+            {
+              "id": "required_services",
+              "name": "required_services",
+              "type": "string",
+              "value": "={{ $json.required_services || $json.integrations || '' }}"
+            },
+            {
+              "id": "optimization_level",
+              "name": "optimization_level",
+              "type": "string",
+              "value": "={{ $json.optimization_level || 'balanced' }}"
+            },
+            {
+              "id": "existing_workflow_id",
+              "name": "existing_workflow_id",
+              "type": "string",
+              "value": "={{ $json.existing_workflow_id || '' }}"
+            },
+            {
+              "id": "mode",
+              "name": "mode",
+              "type": "string",
+              "value": "={{ $json.mode || 'create' }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [460, 600],
+      "id": "set-1",
+      "name": "📋 Extract Parameters"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://jonahautoshopmedia.app.n8n.cloud/api/v1/credentials",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "n8nApi",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [680, 400],
+      "id": "http-1",
+      "name": "🔐 Get Credentials",
+      "credentials": {
+        "n8nApi": {
+          "id": "1",
+          "name": "n8n API"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://jonahautoshopmedia.app.n8n.cloud/api/v1/workflows",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "n8nApi",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [680, 600],
+      "id": "http-2",
+      "name": "📚 Get Existing Workflows",
+      "credentials": {
+        "n8nApi": {
+          "id": "1",
+          "name": "n8n API"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build comprehensive context for workflow generation\nconst params = $('📋 Extract Parameters').first().json;\nconst credResponse = $('🔐 Get Credentials').first().json;\nconst workflowsResponse = $('📚 Get Existing Workflows').first().json;\n\n// Parse credentials\nconst credentials = Array.isArray(credResponse) ? credResponse : (credResponse.data || []);\nconst formattedCreds = credentials.map(c => ({\n  id: c.id,\n  name: c.name,\n  type: c.type,\n  credential_type: c.type?.replace(/Api|OAuth2/g, '').toLowerCase()\n}));\n\n// Group credentials by type\nconst credsByType = {};\nformattedCreds.forEach(c => {\n  const type = c.credential_type || 'unknown';\n  if (!credsByType[type]) credsByType[type] = [];\n  credsByType[type].push(c);\n});\n\n// Parse existing workflows for pattern analysis\nconst workflows = Array.isArray(workflowsResponse) ? workflowsResponse : (workflowsResponse.data || []);\nconst workflowPatterns = workflows.slice(0, 50).map(w => ({\n  name: w.name,\n  nodes: w.nodes?.length || 0,\n  node_types: w.nodes?.map(n => n.type) || [],\n  has_error_handling: w.nodes?.some(n => n.onError || n.continueOnFail) || false\n}));\n\n// Analyze common patterns\nconst commonNodeTypes = {};\nworkflowPatterns.forEach(w => {\n  w.node_types.forEach(type => {\n    commonNodeTypes[type] = (commonNodeTypes[type] || 0) + 1;\n  });\n});\n\nreturn [{\n  json: {\n    description: params.description,\n    workflow_type: params.workflow_type,\n    required_services: params.required_services,\n    optimization_level: params.optimization_level,\n    mode: params.mode,\n    \n    credentials: formattedCreds,\n    credentials_by_type: credsByType,\n    total_credentials: formattedCreds.length,\n    \n    existing_workflows_count: workflows.length,\n    workflow_patterns: workflowPatterns.slice(0, 10),\n    common_node_types: Object.entries(commonNodeTypes)\n      .sort((a, b) => b[1] - a[1])\n      .slice(0, 20)\n      .map(([type, count]) => ({ type, count })),\n    \n    error_handling_adoption: Math.round(\n      (workflowPatterns.filter(w => w.has_error_handling).length / workflowPatterns.length) * 100\n    )\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 600],
+      "id": "code-1",
+      "name": "🧠 Build Context",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ `# WORKFLOW GENERATION REQUEST\\n\\n## User Requirements\\n${$json.description}\\n\\n## Context\\n- Workflow Type: ${$json.workflow_type}\\n- Required Services: ${$json.required_services}\\n- Optimization Level: ${$json.optimization_level}\\n- Mode: ${$json.mode}\\n\\n## Available Credentials (${$json.total_credentials} total)\\n${Object.entries($json.credentials_by_type).map(([type, creds]) => `### ${type} (${creds.length})\\n${creds.map(c => `- ${c.name} (ID: ${c.id})`).join('\\n')}`).join('\\n\\n')}\\n\\n## Patterns from ${$json.existing_workflows_count} Existing Workflows\\n- Error handling adoption: ${$json.error_handling_adoption}%\\n- Common node types: ${$json.common_node_types.slice(0,10).map(n => n.type.replace('n8n-nodes-base.', '')).join(', ')}\\n\\n## Recent Workflow Examples\\n${$json.workflow_patterns.map(w => `- ${w.name}: ${w.nodes} nodes`).join('\\n')}` }}",
+        "options": {
+          "systemMessage": "You are an ELITE n8n workflow architect with deep knowledge of distributed systems, error handling, and production-grade automation.\n\n# CRITICAL RULES\n1. Return ONLY valid JSON - no markdown, no explanations\n2. Generate PRODUCTION-READY workflows with comprehensive error handling\n3. Use exact credential IDs from available_credentials\n4. Add retry logic with exponential backoff on critical nodes\n5. Include validation nodes before external API calls\n6. Add logging for debugging\n7. Use meaningful node names with emojis\n8. Position nodes: x += 220 between connected nodes, y = 300 baseline\n9. ALWAYS add onError: 'continueRegularOutput' to HTTP/API nodes\n10. Add continueOnFail: true to non-critical nodes\n\n# ADVANCED CAPABILITIES\n\n## Graph Structure Optimization\n- Detect parallelizable operations → use multiple branches\n- Batch operations where possible\n- Minimize sequential dependencies\n- Add merge nodes for fan-in patterns\n- Use IF nodes for conditional routing\n- Add Switch nodes for multi-way branching\n\n## Error Handling Patterns\n- Wrap critical operations in try-catch (Code nodes)\n- Add error notification branches\n- Log failures to database\n- Add retry mechanisms\n- Graceful degradation\n- Dead letter queue pattern for failed items\n\n## Data Validation\n- Add Set nodes to validate input data\n- Check required fields exist\n- Validate data types\n- Add default values\n- Sanitize inputs before external calls\n\n## Performance Optimization\n- Use SplitInBatches for large datasets\n- Add rate limiting for API calls\n- Cache frequently accessed data\n- Minimize data transformation steps\n- Use Code nodes for complex transformations (faster than multiple Set nodes)\n\n## Observability\n- Add timestamps\n- Log execution context\n- Track data lineage\n- Add metrics nodes\n- Include debug branches (can be disabled)\n\n# NODE TYPES & WHEN TO USE\n\n## Triggers\n- **manualTrigger**: Testing, ad-hoc execution\n- **scheduleTrigger**: Cron jobs, recurring tasks\n- **webhook**: External system integration, real-time events\n- **executeWorkflowTrigger**: Sub-workflows, reusable components\n\n## Data Transformation\n- **set**: Simple field mapping (< 5 fields)\n- **code**: Complex logic, loops, conditionals, API response parsing\n- **if**: Binary decisions\n- **switch**: Multi-way routing\n- **merge**: Combine multiple branches\n- **splitInBatches**: Process large datasets in chunks\n\n## External Integrations\n- **httpRequest**: REST APIs, webhooks, custom integrations\n- **postgres**: Database operations\n- **airtable**: Airtable CRUD\n- Use specific nodes when available (faster, more reliable)\n\n## AI & Advanced\n- **@n8n/n8n-nodes-langchain.agent**: AI-powered automation\n- **@n8n/n8n-nodes-langchain.toolWorkflow**: Call other workflows as tools\n\n# WORKFLOW STRUCTURE TEMPLATE\n\n```json\n{\n  \"name\": \"🔥 Descriptive Name with Emoji\",\n  \"nodes\": [\n    {\n      \"parameters\": {},\n      \"type\": \"n8n-nodes-base.manualTrigger\",\n      \"typeVersion\": 1,\n      \"position\": [240, 300],\n      \"id\": \"trigger-uuid\",\n      \"name\": \"▶️ Start Workflow\"\n    },\n    {\n      \"parameters\": {\n        \"assignments\": {\n          \"assignments\": [\n            {\"id\": \"field1\", \"name\": \"field1\", \"value\": \"={{ $json.input }}\", \"type\": \"string\"}\n          ]\n        }\n      },\n      \"type\": \"n8n-nodes-base.set\",\n      \"typeVersion\": 3.4,\n      \"position\": [460, 300],\n      \"id\": \"set-uuid\",\n      \"name\": \"✅ Validate Input\"\n    },\n    {\n      \"parameters\": {\n        \"method\": \"POST\",\n        \"url\": \"https://api.example.com/endpoint\",\n        \"authentication\": \"predefinedCredentialType\",\n        \"nodeCredentialType\": \"httpBasicAuth\",\n        \"sendBody\": true,\n        \"bodyParameters\": {\n          \"parameters\": [{\"name\": \"data\", \"value\": \"={{ $json.field1 }}\"}]\n        },\n        \"options\": {\n          \"retry\": {\n            \"maxRetries\": 3,\n            \"retryOnError\": true,\n            \"waitBetweenRetries\": 1000\n          },\n          \"timeout\": 30000\n        }\n      },\n      \"type\": \"n8n-nodes-base.httpRequest\",\n      \"typeVersion\": 4.2,\n      \"position\": [680, 300],\n      \"id\": \"http-uuid\",\n      \"name\": \"🌐 API Call\",\n      \"credentials\": {\n        \"httpBasicAuth\": {\n          \"id\": \"EXACT_CRED_ID_FROM_AVAILABLE\",\n          \"name\": \"EXACT_CRED_NAME_FROM_AVAILABLE\"\n        }\n      },\n      \"onError\": \"continueRegularOutput\",\n      \"retryOnFail\": true,\n      \"maxTries\": 3,\n      \"waitBetweenTries\": 2000\n    },\n    {\n      \"parameters\": {\n        \"jsCode\": \"const response = $input.first().json;\\n\\ntry {\\n  // Parse and validate\\n  const data = response.data || response;\\n  \\n  return [{\\n    json: {\\n      success: true,\\n      data: data,\\n      processed_at: new Date().toISOString()\\n    }\\n  }];\\n} catch (error) {\\n  return [{\\n    json: {\\n      success: false,\\n      error: error.message,\\n      raw: response\\n    }\\n  }];\\n}\"\n      },\n      \"type\": \"n8n-nodes-base.code\",\n      \"typeVersion\": 2,\n      \"position\": [900, 300],\n      \"id\": \"code-uuid\",\n      \"name\": \"⚙️ Parse Response\",\n      \"continueOnFail\": true\n    },\n    {\n      \"parameters\": {\n        \"conditions\": {\n          \"boolean\": [{\"value1\": \"={{ $json.success }}\", \"value2\": true}]\n        }\n      },\n      \"type\": \"n8n-nodes-base.if\",\n      \"typeVersion\": 2,\n      \"position\": [1120, 300],\n      \"id\": \"if-uuid\",\n      \"name\": \"❓ Success?\"\n    },\n    {\n      \"parameters\": {\n        \"operation\": \"executeQuery\",\n        \"query\": \"INSERT INTO logs (data, status, ts) VALUES ($1, 'success', NOW())\",\n        \"options\": {\n          \"queryReplacement\": \"={{ [JSON.stringify($json.data)] }}\"\n        }\n      },\n      \"type\": \"n8n-nodes-base.postgres\",\n      \"typeVersion\": 2.6,\n      \"position\": [1340, 200],\n      \"id\": \"db-success-uuid\",\n      \"name\": \"📊 Log Success\",\n      \"credentials\": {\n        \"postgres\": {\n          \"id\": \"POSTGRES_CRED_ID\",\n          \"name\": \"POSTGRES_CRED_NAME\"\n        }\n      },\n      \"onError\": \"continueRegularOutput\"\n    },\n    {\n      \"parameters\": {\n        \"operation\": \"executeQuery\",\n        \"query\": \"INSERT INTO logs (error, status, ts) VALUES ($1, 'error', NOW())\",\n        \"options\": {\n          \"queryReplacement\": \"={{ [$json.error] }}\"\n        }\n      },\n      \"type\": \"n8n-nodes-base.postgres\",\n      \"typeVersion\": 2.6,\n      \"position\": [1340, 400],\n      \"id\": \"db-error-uuid\",\n      \"name\": \"❌ Log Error\",\n      \"credentials\": {\n        \"postgres\": {\n          \"id\": \"POSTGRES_CRED_ID\",\n          \"name\": \"POSTGRES_CRED_NAME\"\n        }\n      },\n      \"onError\": \"continueRegularOutput\"\n    }\n  ],\n  \"connections\": {\n    \"▶️ Start Workflow\": {\"main\": [[{\"node\": \"✅ Validate Input\", \"type\": \"main\", \"index\": 0}]]},\n    \"✅ Validate Input\": {\"main\": [[{\"node\": \"🌐 API Call\", \"type\": \"main\", \"index\": 0}]]},\n    \"🌐 API Call\": {\"main\": [[{\"node\": \"⚙️ Parse Response\", \"type\": \"main\", \"index\": 0}]]},\n    \"⚙️ Parse Response\": {\"main\": [[{\"node\": \"❓ Success?\", \"type\": \"main\", \"index\": 0}]]},\n    \"❓ Success?\": {\n      \"main\": [\n        [{\"node\": \"📊 Log Success\", \"type\": \"main\", \"index\": 0}],\n        [{\"node\": \"❌ Log Error\", \"type\": \"main\", \"index\": 0}]\n      ]\n    }\n  },\n  \"pinData\": {},\n  \"settings\": {\n    \"executionOrder\": \"v1\",\n    \"saveManualExecutions\": true,\n    \"callerPolicy\": \"workflowsFromSameOwner\",\n    \"errorWorkflow\": \"\"\n  },\n  \"staticData\": null,\n  \"tags\": [],\n  \"triggerCount\": 1,\n  \"meta\": {\"instanceId\": \"generated-by-ai-agent\"}\n}\n```\n\n# BEST PRACTICES CHECKLIST\n\n✅ Trigger type appropriate for use case\n✅ Input validation early\n✅ Error handling on ALL external calls\n✅ Retry logic with backoff\n✅ Logging for debugging\n✅ Conditional logic for branching\n✅ Database operations have error handling\n✅ Code nodes have try-catch\n✅ Node names are clear and descriptive\n✅ Positions are readable (no overlaps)\n✅ Credentials use exact IDs from available list\n✅ Settings configured (executionOrder, etc.)\n✅ Meta field included\n\n# OPTIMIZATION LEVELS\n\n## balanced (default)\n- Standard error handling\n- Basic retry logic\n- Essential logging\n- Clear structure\n\n## performance\n- Minimize nodes\n- Use Code nodes for multiple operations\n- Batch processing\n- Parallel execution where possible\n- Minimal logging\n\n## robust\n- Maximum error handling\n- Multiple retry strategies\n- Comprehensive logging\n- Validation at every step\n- Dead letter queues\n- Circuit breakers\n\n# GENERATE THE WORKFLOW NOW\n\nBased on the requirements and context provided, generate a PRODUCTION-READY n8n workflow.\n\nReturn ONLY the JSON. NO markdown. NO explanations.\n\nSTART JSON:"
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.5,
+      "position": [1120, 600],
+      "id": "chain-1",
+      "name": "🤖 Generate Workflow",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "list",
+          "value": "claude-sonnet-4-5-20250929"
+        },
+        "options": {
+          "temperature": 0.1,
+          "maxTokens": 8000
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatAnthropic",
+      "typeVersion": 1.3,
+      "position": [1120, 420],
+      "id": "model-1",
+      "name": "Claude Sonnet 4.5",
+      "credentials": {
+        "anthropicApi": {
+          "id": "IyZK9I1O1ZjOcw3Z",
+          "name": "Anthropic API Key"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// COMPREHENSIVE WORKFLOW VALIDATION ENGINE\nconst output = $input.first().json.output || $input.first().json.text;\nconst context = $('🧠 Build Context').first().json;\n\nlet workflowJson;\nconst errors = [];\nconst warnings = [];\nconst suggestions = [];\n\ntry {\n  // Clean and parse JSON\n  let cleaned = output.trim();\n  if (cleaned.startsWith('```')) {\n    cleaned = cleaned.replace(/```json\\n?/g, '').replace(/```\\n?/g, '');\n  }\n  \n  // Remove any text before first {\n  const jsonStart = cleaned.indexOf('{');\n  if (jsonStart > 0) {\n    cleaned = cleaned.substring(jsonStart);\n  }\n  \n  workflowJson = JSON.parse(cleaned);\n  \n  // ============================================\n  // VALIDATION: REQUIRED FIELDS\n  // ============================================\n  if (!workflowJson.name) errors.push('Missing workflow name');\n  if (!workflowJson.nodes || !Array.isArray(workflowJson.nodes)) {\n    errors.push('Invalid or missing nodes array');\n  }\n  if (!workflowJson.connections) errors.push('Missing connections object');\n  \n  // ============================================\n  // VALIDATION: NODE STRUCTURE\n  // ============================================\n  const nodeIds = new Set();\n  const nodeNames = new Set();\n  const nodePosMap = {};\n  \n  workflowJson.nodes.forEach((node, idx) => {\n    const prefix = `Node ${idx + 1}`;\n    \n    // Required fields\n    if (!node.id) errors.push(`${prefix}: Missing node ID`);\n    if (!node.name) errors.push(`${prefix}: Missing node name`);\n    if (!node.type) errors.push(`${prefix}: Missing node type`);\n    if (!node.position) warnings.push(`${prefix}: Missing position`);\n    \n    // Duplicate checks\n    if (nodeIds.has(node.id)) errors.push(`${prefix}: Duplicate node ID: ${node.id}`);\n    if (nodeNames.has(node.name)) warnings.push(`${prefix}: Duplicate node name: ${node.name}`);\n    \n    nodeIds.add(node.id);\n    nodeNames.add(node.name);\n    \n    // Position tracking\n    if (node.position) {\n      const posKey = `${node.position[0]},${node.position[1]}`;\n      if (nodePosMap[posKey]) {\n        warnings.push(`Overlapping nodes: ${nodePosMap[posKey]} and ${node.name}`);\n      }\n      nodePosMap[posKey] = node.name;\n    }\n    \n    // Error handling checks\n    const isExternalCall = ['httpRequest', 'postgres', 'airtable'].some(t => node.type.includes(t));\n    if (isExternalCall && !node.onError && !node.continueOnFail && !node.retryOnFail) {\n      warnings.push(`${node.name}: No error handling on external call`);\n    }\n    \n    // Credential validation\n    if (node.credentials) {\n      Object.entries(node.credentials).forEach(([type, cred]) => {\n        if (!cred.id) {\n          errors.push(`${node.name}: Credential ${type} missing ID`);\n        } else {\n          // Check if credential exists\n          const credExists = context.credentials.some(c => c.id === cred.id);\n          if (!credExists) {\n            errors.push(`${node.name}: Credential ID ${cred.id} not found in available credentials`);\n          }\n        }\n      });\n    }\n  });\n  \n  // ============================================\n  // VALIDATION: CONNECTIONS\n  // ============================================\n  const connectedNodes = new Set();\n  \n  Object.entries(workflowJson.connections).forEach(([sourceName, conns]) => {\n    if (!nodeNames.has(sourceName)) {\n      errors.push(`Connection references non-existent node: ${sourceName}`);\n    }\n    \n    if (conns.main) {\n      conns.main.forEach((branch, branchIdx) => {\n        branch.forEach(conn => {\n          if (!nodeNames.has(conn.node)) {\n            errors.push(`Connection to non-existent node: ${conn.node}`);\n          }\n          connectedNodes.add(conn.node);\n        });\n      });\n    }\n  });\n  \n  // ============================================\n  // GRAPH ANALYSIS\n  // ============================================\n  const triggerNodes = workflowJson.nodes.filter(n => \n    n.type.includes('trigger') || n.type.includes('Trigger')\n  );\n  \n  if (triggerNodes.length === 0) {\n    errors.push('No trigger node found - workflow cannot start');\n  }\n  if (triggerNodes.length > 1) {\n    warnings.push(`Multiple triggers found (${triggerNodes.length}) - only one will execute`);\n  }\n  \n  // Detect orphaned nodes\n  const orphanedNodes = workflowJson.nodes.filter(n => \n    !triggerNodes.some(t => t.name === n.name) && \n    !connectedNodes.has(n.name)\n  );\n  \n  if (orphanedNodes.length > 0) {\n    warnings.push(`Orphaned nodes (unreachable): ${orphanedNodes.map(n => n.name).join(', ')}`);\n  }\n  \n  // ============================================\n  // PERFORMANCE ANALYSIS\n  // ============================================\n  const httpNodes = workflowJson.nodes.filter(n => n.type.includes('httpRequest'));\n  const sequentialHttpCalls = [];\n  \n  // Check for sequential HTTP calls that could be parallelized\n  Object.entries(workflowJson.connections).forEach(([source, conns]) => {\n    if (conns.main && conns.main[0] && conns.main[0].length > 0) {\n      const targetNode = workflowJson.nodes.find(n => n.name === conns.main[0][0].node);\n      const sourceNode = workflowJson.nodes.find(n => n.name === source);\n      \n      if (sourceNode?.type.includes('httpRequest') && targetNode?.type.includes('httpRequest')) {\n        sequentialHttpCalls.push(`${source} → ${conns.main[0][0].node}`);\n      }\n    }\n  });\n  \n  if (sequentialHttpCalls.length > 0) {\n    suggestions.push(\n      `Consider parallelizing these sequential API calls: ${sequentialHttpCalls.join(', ')}`\n    );\n  }\n  \n  // ============================================\n  // OPTIMIZATION SUGGESTIONS\n  // ============================================\n  \n  // Suggest batching for loops\n  const codeNodesWithLoops = workflowJson.nodes.filter(n => \n    n.type.includes('code') && \n    n.parameters?.jsCode?.includes('for (') || n.parameters?.jsCode?.includes('.forEach(')\n  );\n  \n  if (codeNodesWithLoops.length > 0) {\n    suggestions.push(\n      `Consider using SplitInBatches node for: ${codeNodesWithLoops.map(n => n.name).join(', ')}`\n    );\n  }\n  \n  // Check for missing logging\n  const hasLogging = workflowJson.nodes.some(n => \n    n.type.includes('postgres') && n.name.toLowerCase().includes('log')\n  );\n  \n  if (!hasLogging && workflowJson.nodes.length > 5) {\n    suggestions.push('Consider adding database logging for production debugging');\n  }\n  \n  // ============================================\n  // CALCULATE METRICS\n  // ============================================\n  const metrics = {\n    total_nodes: workflowJson.nodes.length,\n    trigger_nodes: triggerNodes.length,\n    http_nodes: httpNodes.length,\n    code_nodes: workflowJson.nodes.filter(n => n.type.includes('code')).length,\n    db_nodes: workflowJson.nodes.filter(n => n.type.includes('postgres')).length,\n    nodes_with_error_handling: workflowJson.nodes.filter(n => \n      n.onError || n.continueOnFail || n.retryOnFail\n    ).length,\n    error_handling_coverage: Math.round(\n      (workflowJson.nodes.filter(n => n.onError || n.continueOnFail).length / workflowJson.nodes.length) * 100\n    ),\n    estimated_execution_time: httpNodes.length * 2 + workflowJson.nodes.length * 0.1,\n    complexity_score: workflowJson.nodes.length + Object.keys(workflowJson.connections).length\n  };\n  \n  // ============================================\n  // GENERATE RECOMMENDATIONS\n  // ============================================\n  const recommendations = [];\n  \n  if (metrics.error_handling_coverage < 50) {\n    recommendations.push('⚠️  Add error handling to more nodes (current: ' + metrics.error_handling_coverage + '%)');\n  }\n  \n  if (metrics.http_nodes > 5 && !workflowJson.nodes.some(n => n.type.includes('splitInBatches'))) {\n    recommendations.push('💡 Consider using SplitInBatches for better API rate limit handling');\n  }\n  \n  if (metrics.total_nodes > 15) {\n    recommendations.push('♻️  Large workflow detected - consider breaking into sub-workflows');\n  }\n  \n  // ============================================\n  // ADD META IF MISSING\n  // ============================================\n  if (!workflowJson.meta) {\n    workflowJson.meta = { instanceId: \"generated-by-ultimate-builder\" };\n  }\n  \n  if (!workflowJson.settings) {\n    workflowJson.settings = {\n      executionOrder: \"v1\",\n      saveManualExecutions: true\n    };\n  }\n  \n  // ============================================\n  // RETURN COMPREHENSIVE RESULT\n  // ============================================\n  return [{\n    json: {\n      success: errors.length === 0,\n      workflow: workflowJson,\n      workflow_json: JSON.stringify(workflowJson, null, 2),\n      workflow_name: workflowJson.name,\n      \n      validation: {\n        errors,\n        warnings,\n        suggestions,\n        recommendations\n      },\n      \n      metrics,\n      \n      analysis: {\n        is_production_ready: errors.length === 0 && warnings.length < 3,\n        has_adequate_error_handling: metrics.error_handling_coverage >= 70,\n        is_well_structured: orphanedNodes.length === 0,\n        performance_concerns: sequentialHttpCalls.length > 2\n      }\n    }\n  }];\n  \n} catch (error) {\n  return [{\n    json: {\n      success: false,\n      error: `Validation error: ${error.message}`,\n      raw_output: output,\n      errors: [error.message],\n      warnings: [],\n      suggestions: ['Check if AI output is valid JSON'],\n      validation: { errors: [error.message], warnings: [], suggestions: [] },\n      metrics: {},\n      analysis: {}\n    }\n  }];\n}"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1340, 600],
+      "id": "code-2",
+      "name": "🔍 Validate & Analyze",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "output",
+              "name": "output",
+              "type": "string",
+              "value": "={{ $json.success ? \n`✅ **Workflow Created: ${$json.workflow_name}**\n\n📊 **Metrics:**\n- Nodes: ${$json.metrics.total_nodes}\n- HTTP Calls: ${$json.metrics.http_nodes}\n- Error Handling: ${$json.metrics.error_handling_coverage}%\n- Estimated Time: ~${Math.round($json.metrics.estimated_execution_time)}s\n- Complexity Score: ${$json.metrics.complexity_score}\n\n${$json.validation.errors.length > 0 ? '❌ **Errors:**\\n' + $json.validation.errors.map(e => '- ' + e).join('\\n') + '\\n\\n' : ''}\n${$json.validation.warnings.length > 0 ? '⚠️  **Warnings:**\\n' + $json.validation.warnings.map(w => '- ' + w).join('\\n') + '\\n\\n' : ''}\n${$json.validation.suggestions.length > 0 ? '💡 **Suggestions:**\\n' + $json.validation.suggestions.map(s => '- ' + s).join('\\n') + '\\n\\n' : ''}\n${$json.validation.recommendations.length > 0 ? '🎯 **Recommendations:**\\n' + $json.validation.recommendations.map(r => '- ' + r).join('\\n') + '\\n\\n' : ''}\n📈 **Analysis:**\n- Production Ready: ${$json.analysis.is_production_ready ? '✅' : '❌'}\n- Error Handling: ${$json.analysis.has_adequate_error_handling ? '✅' : '⚠️'}\n- Structure: ${$json.analysis.is_well_structured ? '✅' : '⚠️'}\n- Performance: ${$json.analysis.performance_concerns ? '⚠️  Needs optimization' : '✅ Good'}\n\n**Import this JSON:**\n\\`\\`\\`json\n${$json.workflow_json}\n\\`\\`\\`\n\nReady to import or want me to optimize further?` \n: \n`❌ **Workflow Generation Failed**\n\n**Errors:**\n${$json.errors.map(e => '- ' + e).join('\\n')}\n\n${$json.warnings.length > 0 ? '**Warnings:**\\n' + $json.warnings.map(w => '- ' + w).join('\\n') : ''}\n\nLet me try again with more specific requirements.` }}"
+            },
+            {
+              "id": "workflow_json",
+              "name": "workflow_json",
+              "type": "string",
+              "value": "={{ $json.workflow_json || '' }}"
+            },
+            {
+              "id": "success",
+              "name": "success",
+              "type": "boolean",
+              "value": "={{ $json.success }}"
+            },
+            {
+              "id": "metrics",
+              "name": "metrics",
+              "type": "object",
+              "value": "={{ $json.metrics }}"
+            },
+            {
+              "id": "validation",
+              "name": "validation",
+              "type": "object",
+              "value": "={{ $json.validation }}"
+            },
+            {
+              "id": "analysis",
+              "name": "analysis",
+              "type": "object",
+              "value": "={{ $json.analysis }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [1560, 600],
+      "id": "set-2",
+      "name": "📤 Prepare Output"
+    }
+  ],
+  "connections": {
+    "When Called by AI Agent": {
+      "main": [[
+        {"node": "📋 Extract Parameters", "type": "main", "index": 0},
+        {"node": "🔐 Get Credentials", "type": "main", "index": 0},
+        {"node": "📚 Get Existing Workflows", "type": "main", "index": 0}
+      ]]
+    },
+    "📋 Extract Parameters": {
+      "main": [[{"node": "🧠 Build Context", "type": "main", "index": 0}]]
+    },
+    "🔐 Get Credentials": {
+      "main": [[{"node": "🧠 Build Context", "type": "main", "index": 0}]]
+    },
+    "📚 Get Existing Workflows": {
+      "main": [[{"node": "🧠 Build Context", "type": "main", "index": 0}]]
+    },
+    "🧠 Build Context": {
+      "main": [[{"node": "🤖 Generate Workflow", "type": "main", "index": 0}]]
+    },
+    "🤖 Generate Workflow": {
+      "main": [[{"node": "🔍 Validate & Analyze", "type": "main", "index": 0}]]
+    },
+    "Claude Sonnet 4.5": {
+      "ai_languageModel": [[{"node": "🤖 Generate Workflow", "type": "ai_languageModel", "index": 0}]]
+    },
+    "🔍 Validate & Analyze": {
+      "main": [[{"node": "📤 Prepare Output", "type": "main", "index": 0}]]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 0,
+  "updatedAt": "2026-01-12T03:00:00.000Z",
+  "versionId": "2.0"
+}

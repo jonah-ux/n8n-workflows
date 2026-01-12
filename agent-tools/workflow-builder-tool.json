@@ -1,0 +1,189 @@
+{
+  "name": "🏗️ Workflow Builder Tool",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [240, 400],
+      "id": "trigger-1",
+      "name": "When Called by AI Agent"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "description",
+              "name": "description",
+              "type": "string",
+              "value": "={{ $json.description || $json.query || 'Build a simple workflow' }}"
+            },
+            {
+              "id": "workflow_type",
+              "name": "workflow_type",
+              "type": "string",
+              "value": "={{ $json.workflow_type || 'general' }}"
+            },
+            {
+              "id": "required_services",
+              "name": "required_services",
+              "type": "string",
+              "value": "={{ $json.required_services || $json.integrations || '' }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [460, 400],
+      "id": "set-1",
+      "name": "Extract Parameters"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://jonahautoshopmedia.app.n8n.cloud/api/v1/credentials",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "n8nApi",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [680, 300],
+      "id": "http-1",
+      "name": "Get Available Credentials",
+      "credentials": {
+        "n8nApi": {
+          "id": "1",
+          "name": "n8n API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Get available credentials\nconst creds = $input.all().map(item => ({\n  id: item.json.id,\n  name: item.json.name,\n  type: item.json.type\n}));\n\n// Get workflow description from earlier node\nconst description = $('Extract Parameters').first().json.description;\nconst workflowType = $('Extract Parameters').first().json.workflow_type;\nconst requiredServices = $('Extract Parameters').first().json.required_services;\n\nreturn [{\n  json: {\n    description,\n    workflow_type: workflowType,\n    required_services: requiredServices,\n    available_credentials: creds\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 400],
+      "id": "code-1",
+      "name": "Prepare Context"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ \"Generate a complete n8n workflow JSON for:\\n\\n\" + $json.description + \"\\n\\nWorkflow Type: \" + $json.workflow_type + \"\\nRequired Services: \" + $json.required_services + \"\\n\\nAvailable Credentials:\\n\" + JSON.stringify($json.available_credentials, null, 2) }}",
+        "options": {
+          "systemMessage": "You are an n8n workflow architect. Generate complete, working n8n workflow JSON.\n\n# CRITICAL RULES\n1. Return ONLY valid JSON - no markdown, no explanations\n2. Include ALL required fields: name, nodes, connections, pinData\n3. Every node must have: parameters, type, typeVersion, position, id, name\n4. Use proper credential references from available_credentials\n5. Add error handling: onError: 'continueRegularOutput' on critical nodes\n6. Use meaningful node names with emojis\n7. Position nodes properly: x += 220 between connected nodes\n\n# NODE TYPES YOU CAN USE\n- Triggers: manualTrigger, executeWorkflowTrigger, scheduleTrigger, webhook\n- Data: set, code, merge, if, switch, split\n- External: httpRequest, postgres, airtable\n- AI: @n8n/n8n-nodes-langchain.agent\n- Output: responseToWebhook\n\n# EXAMPLE STRUCTURE\n```json\n{\n  \"name\": \"🔥 Workflow Name\",\n  \"nodes\": [\n    {\n      \"parameters\": {},\n      \"type\": \"n8n-nodes-base.manualTrigger\",\n      \"typeVersion\": 1,\n      \"position\": [240, 300],\n      \"id\": \"unique-id-1\",\n      \"name\": \"When clicking 'Execute workflow'\"\n    },\n    {\n      \"parameters\": {\n        \"method\": \"GET\",\n        \"url\": \"https://api.example.com/data\",\n        \"authentication\": \"predefinedCredentialType\",\n        \"nodeCredentialType\": \"httpBasicAuth\"\n      },\n      \"type\": \"n8n-nodes-base.httpRequest\",\n      \"typeVersion\": 4.2,\n      \"position\": [460, 300],\n      \"id\": \"unique-id-2\",\n      \"name\": \"Fetch Data\",\n      \"credentials\": {\n        \"httpBasicAuth\": {\n          \"id\": \"CREDENTIAL_ID_FROM_AVAILABLE\",\n          \"name\": \"CREDENTIAL_NAME_FROM_AVAILABLE\"\n        }\n      },\n      \"onError\": \"continueRegularOutput\"\n    }\n  ],\n  \"connections\": {\n    \"When clicking 'Execute workflow'\": {\n      \"main\": [[{\"node\": \"Fetch Data\", \"type\": \"main\", \"index\": 0}]]\n    }\n  },\n  \"pinData\": {},\n  \"settings\": {\"executionOrder\": \"v1\"},\n  \"staticData\": null,\n  \"tags\": [],\n  \"triggerCount\": 0\n}\n```\n\n# BEST PRACTICES\n- Start with appropriate trigger\n- Add data validation/transformation nodes\n- Include error handling\n- Use clear, descriptive names\n- Add database logging if applicable\n- End with clear output\n\nGenerate the complete workflow JSON now. NO markdown, ONLY JSON."
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.5,
+      "position": [1120, 400],
+      "id": "chain-1",
+      "name": "Generate Workflow JSON"
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "list",
+          "value": "claude-sonnet-4-5-20250929"
+        },
+        "options": {
+          "temperature": 0.3
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatAnthropic",
+      "typeVersion": 1.3,
+      "position": [1120, 220],
+      "id": "model-1",
+      "name": "Claude Sonnet 4.5",
+      "credentials": {
+        "anthropicApi": {
+          "id": "YOUR_ANTHROPIC_CRED_ID",
+          "name": "Anthropic API Key"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract and validate the workflow JSON\nlet workflowJson;\ntry {\n  const output = $input.first().json.output || $input.first().json.text;\n  \n  // Remove markdown if present\n  let cleaned = output.trim();\n  if (cleaned.startsWith('```')) {\n    cleaned = cleaned.replace(/```json\\n?/g, '').replace(/```\\n?/g, '');\n  }\n  \n  workflowJson = JSON.parse(cleaned);\n  \n  // Validate required fields\n  if (!workflowJson.name) throw new Error('Missing workflow name');\n  if (!workflowJson.nodes || !Array.isArray(workflowJson.nodes)) {\n    throw new Error('Invalid nodes array');\n  }\n  if (!workflowJson.connections) throw new Error('Missing connections');\n  \n  // Add meta if missing\n  if (!workflowJson.meta) {\n    workflowJson.meta = {\n      instanceId: \"generated-by-ai-agent\"\n    };\n  }\n  \n  return [{\n    json: {\n      success: true,\n      workflow: workflowJson,\n      workflow_json: JSON.stringify(workflowJson, null, 2),\n      node_count: workflowJson.nodes.length,\n      workflow_name: workflowJson.name\n    }\n  }];\n  \n} catch (error) {\n  return [{\n    json: {\n      success: false,\n      error: error.message,\n      raw_output: $input.first().json.output || $input.first().json.text\n    }\n  }];\n}"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1340, 400],
+      "id": "code-2",
+      "name": "Validate & Format"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "output",
+              "name": "output",
+              "type": "string",
+              "value": "={{ $json.success ? `✅ Workflow Created: **${$json.workflow_name}**\\n\\nNodes: ${$json.node_count}\\n\\n**Import this JSON into n8n:**\\n\\`\\`\\`json\\n${$json.workflow_json}\\n\\`\\`\\`\\n\\nOr I can deploy it for you!` : `❌ Error generating workflow:\\n${$json.error}` }}"
+            },
+            {
+              "id": "workflow_json",
+              "name": "workflow_json",
+              "type": "string",
+              "value": "={{ $json.workflow_json || '' }}"
+            },
+            {
+              "id": "success",
+              "name": "success",
+              "type": "boolean",
+              "value": "={{ $json.success }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [1560, 400],
+      "id": "set-2",
+      "name": "Prepare Output"
+    }
+  ],
+  "connections": {
+    "When Called by AI Agent": {
+      "main": [[
+        {"node": "Extract Parameters", "type": "main", "index": 0},
+        {"node": "Get Available Credentials", "type": "main", "index": 0}
+      ]]
+    },
+    "Extract Parameters": {
+      "main": [[{"node": "Prepare Context", "type": "main", "index": 0}]]
+    },
+    "Get Available Credentials": {
+      "main": [[{"node": "Prepare Context", "type": "main", "index": 0}]]
+    },
+    "Prepare Context": {
+      "main": [[{"node": "Generate Workflow JSON", "type": "main", "index": 0}]]
+    },
+    "Generate Workflow JSON": {
+      "main": [[{"node": "Validate & Format", "type": "main", "index": 0}]]
+    },
+    "Claude Sonnet 4.5": {
+      "ai_languageModel": [[{"node": "Generate Workflow JSON", "type": "ai_languageModel", "index": 0}]]
+    },
+    "Validate & Format": {
+      "main": [[{"node": "Prepare Output", "type": "main", "index": 0}]]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 0,
+  "updatedAt": "2026-01-12T02:30:00.000Z",
+  "versionId": "1"
+}

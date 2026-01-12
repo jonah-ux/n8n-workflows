@@ -1,0 +1,1085 @@
+{
+  "name": "🔥 GOD-MODE AGENT - BEAST MODE (Your Enhanced Version)",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "god-mode-beast",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.mcpTrigger",
+      "typeVersion": 2,
+      "position": [240, 400],
+      "id": "mcp-trigger",
+      "name": "MCP Server (God-Mode)",
+      "webhookId": "god-mode-beast"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "telegram-god-mode",
+        "options": {}
+      },
+      "id": "telegram-webhook",
+      "name": "Telegram Webhook (Alternative)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [240, 600],
+      "webhookId": "telegram-god-mode"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Check all God-Mode control flags\nSELECT \n  kill_switch,\n  comms_enabled,\n  write_enabled,\n  jobs_enabled,\n  external_comms_enabled,\n  system_state,\n  kill_switch_reason\nFROM agent_controls \nLIMIT 1",
+        "options": {}
+      },
+      "id": "check-god-mode-controls",
+      "name": "Check God-Mode Controls",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [460, 500],
+      "credentials": {
+        "postgres": {
+          "id": "YOUR_SUPABASE_CREDENTIAL_ID",
+          "name": "Supabase God-Mode DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "kill-switch-check",
+              "leftValue": "={{ $json.kill_switch }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "or"
+        },
+        "options": {}
+      },
+      "id": "if-kill-switch-active",
+      "name": "Kill Switch Active?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [680, 500]
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "⚠️ GOD-MODE KILL SWITCH ACTIVE\n\nAll agent operations blocked.\n\nReason: {{ $('Check God-Mode Controls').item.json.kill_switch_reason || 'Manual activation' }}\n\nTo deactivate:\n```sql\nUPDATE agent_controls SET kill_switch = false;\n```",
+        "options": {}
+      },
+      "id": "respond-kill-switch",
+      "name": "Respond Kill Switch",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [900, 340]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "user-message",
+              "name": "user_message",
+              "value": "={{ $('MCP Server (God-Mode)').item.json.body?.message?.text || $('Telegram Webhook (Alternative)').item.json.body?.message?.text || $('MCP Server (God-Mode)').item.json.query?.message }}",
+              "type": "string"
+            },
+            {
+              "id": "chat-id",
+              "name": "chat_id",
+              "value": "={{ $('Telegram Webhook (Alternative)').item.json.body?.message?.chat?.id || 'mcp_session' }}",
+              "type": "string"
+            },
+            {
+              "id": "user-id",
+              "name": "user_id",
+              "value": "={{ $('Telegram Webhook (Alternative)').item.json.body?.message?.from?.id || 'mcp_user' }}",
+              "type": "string"
+            },
+            {
+              "id": "platform",
+              "name": "platform",
+              "value": "={{ $('Telegram Webhook (Alternative)').item.json.body?.message ? 'telegram' : 'mcp' }}",
+              "type": "string"
+            },
+            {
+              "id": "controls",
+              "name": "controls",
+              "value": "={{ $('Check God-Mode Controls').item.json }}",
+              "type": "object"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "prepare-context",
+      "name": "Prepare Context",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.3,
+      "position": [900, 660]
+    },
+    {
+      "parameters": {
+        "endpointUrl": "https://api.n8n-mcp.com/mcp",
+        "authentication": "bearerAuth",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.mcpClientTool",
+      "typeVersion": 1.2,
+      "position": [1120, 120],
+      "id": "mcp-n8n",
+      "name": "MCP: n8n Operations",
+      "credentials": {
+        "httpBearerAuth": {
+          "id": "vIK1oBw1xj0khNvy",
+          "name": "n8n-mcp-BearerToken"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "endpointUrl": "https://mcp.supabase.com/mcp?project_ref=zgexrnpctugtwwssbkss&features=docs%2Caccount%2Cbranching%2Cfunctions%2Cdevelopment%2Cdebugging%2Cdatabase%2Cstorage",
+        "authentication": "bearerAuth",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.mcpClientTool",
+      "typeVersion": 1.2,
+      "position": [1120, 240],
+      "id": "mcp-supabase",
+      "name": "MCP: Supabase (God-Mode DB)",
+      "credentials": {
+        "httpBearerAuth": {
+          "id": "EMb3SbsCJMpRGko2",
+          "name": "SupabaseMCPAuth"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "description": "VERY USEFUL. Queries Jonah's God-Mode Knowledge DB (pgvector + FTS + chat memory). Returns grounded answers from ASM SOPs, workflows, automation notes, troubleshooting, configs, prior chats, and canonical Notion knowledge.",
+        "workflowId": {
+          "__rl": true,
+          "value": "sESENzMSqQ6vpmjrWQwuN",
+          "mode": "list",
+          "cachedResultName": "🧠 RAG Knowledge Chat"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "query": "={{ $fromAI('query', 'User question to search God-Mode knowledge base') }}",
+            "session_id": "={{ $fromAI('session_id', 'Optional session id for conversational continuity') }}"
+          }
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.2,
+      "position": [1120, 360],
+      "id": "tool-knowledge-db",
+      "name": "Tool: Knowledge DB (RAG)"
+    },
+    {
+      "parameters": {
+        "toolDescription": "Workflow Engineering Sub-Agent. Builds, updates, optimizes, and deploys workflows. Has access to builder, updater, optimizer, and deployer tools. Can generate workflow JSON from descriptions.",
+        "text": "={{ $fromAI('task', 'Describe what you want engineered: build new workflow, update existing, optimize, or deploy') }}",
+        "options": {
+          "systemMessage": "You are the Workflow Engineering sub-agent in the God-Mode system.\n\n**Your specialization:** Building, updating, optimizing, and deploying n8n workflows.\n\n**Your tools:**\n- tool_workflow_builder: Generate workflows from descriptions\n- tool_workflow_updater: Update existing workflows\n- tool_workflow_optimizer: Optimize for performance/reliability/cost\n- tool_workflow_deployer: Deploy workflow JSON\n- n8n-mcp: Platform operations\n- supabase-mcp: Track changes and telemetry\n\n**Your approach:**\n1. Understand requirements clearly\n2. Check existing workflows via n8n-mcp if updating\n3. Use appropriate tool (builder for new, updater for changes)\n4. Test and validate\n5. Deploy with deployer tool\n6. Log to God-Mode DB via supabase-mcp\n\n**God-Mode Safety:**\n- Check control flags before deploying\n- Log all workflow changes to audit trail\n- Propose complex changes before applying\n- Never delete workflows (deprecate instead)\n\n**Personality:** Direct, technical, results-focused. No fluff."
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agentTool",
+      "typeVersion": 3,
+      "position": [1360, 120],
+      "id": "subagent-workflow-engineering",
+      "name": "Sub-Agent: Workflow Engineering"
+    },
+    {
+      "parameters": {
+        "toolDescription": "Monitor & Debug Sub-Agent. Detects failures, debugs executions, monitors health, and auto-fixes issues. Proactive about system reliability.",
+        "text": "={{ $fromAI('task', 'Describe the failure, execution id, or monitoring question') }}",
+        "options": {
+          "systemMessage": "You are the Monitor & Debug sub-agent in the God-Mode system.\n\n**Your specialization:** Detecting, diagnosing, and auto-fixing workflow failures.\n\n**Your tools:**\n- tool_workflow_health_monitor: Check system health\n- tool_execution_debugger: Deep dive into failures\n- tool_auto_fixer: Apply automatic fixes\n- n8n-mcp: Access execution data\n- supabase-mcp: Query telemetry and patterns\n\n**Your approach:**\n1. Gather execution/workflow details\n2. Use health monitor for overview\n3. Use debugger for specific failures\n4. Identify root cause\n5. Apply fix via auto-fixer if confidence >0.7\n6. Log incident to God-Mode DB\n7. Proactively suggest preventive measures\n\n**Auto-fix patterns you know:**\n- Rate limit issues → Add exponential backoff\n- Auth failures → Refresh tokens/credentials\n- Timeout errors → Increase timeout/add retry\n- Data shape issues → Add validation/transformation\n\n**God-Mode Safety:**\n- Check write_enabled before applying fixes\n- Log all fixes to audit trail\n- Require approval for Tier 3 fixes\n\n**Personality:** Proactive, diagnostic, fixes things before asking."
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agentTool",
+      "typeVersion": 3,
+      "position": [1360, 280],
+      "id": "subagent-monitor-debug",
+      "name": "Sub-Agent: Monitor & Debug"
+    },
+    {
+      "parameters": {
+        "toolDescription": "Integrations Sub-Agent. Handles API integrations, designs payloads, manages auth. Expert in HubSpot, Hunter, Google, Slack, and universal REST APIs.",
+        "text": "={{ $fromAI('task', 'Describe the integration: service, action, constraints, auth, payload') }}",
+        "options": {
+          "systemMessage": "You are the Integrations sub-agent in the God-Mode system.\n\n**Your specialization:** API integrations and service connections.\n\n**Your tools:**\n- tool_universal_integration: Execute API calls\n- tool_credential_schema_inspector: Check auth requirements\n- n8n-mcp: Platform operations\n- supabase-mcp: Store integration configs\n\n**Services you know deeply:**\n- HubSpot (CRM operations)\n- Hunter (email enrichment)\n- Google APIs (sheets, calendar, etc)\n- Slack (messaging)\n- Generic REST/GraphQL APIs\n\n**Your approach:**\n1. Understand service and action needed\n2. Check credentials via inspector\n3. Design payload structure\n4. Test via universal_integration\n5. Handle errors gracefully\n6. Return structured results\n\n**God-Mode Safety:**\n- Check external_comms_enabled for external APIs\n- Never send to customers without approval\n- Log all API calls to audit trail\n- Rate limit awareness\n\n**Personality:** Precise, schema-aware, handles auth cleanly."
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agentTool",
+      "typeVersion": 3,
+      "position": [1360, 440],
+      "id": "subagent-integrations",
+      "name": "Sub-Agent: Integrations"
+    },
+    {
+      "parameters": {
+        "toolDescription": "Messaging & Credentials Sub-Agent. Handles safe outbound messaging and credential schema inspection. NEVER sends without explicit approval.",
+        "text": "={{ $fromAI('task', 'Describe the message or credential schema you need inspected') }}",
+        "options": {
+          "systemMessage": "You are the Messaging & Credentials sub-agent in the God-Mode system.\n\n**Your specialization:** Safe outbound communications and credential management.\n\n**Your tools:**\n- tool_send_message_guarded: Send messages (requires approval)\n- tool_credential_schema_inspector: Inspect credential requirements\n- supabase-mcp: Check communication allowlist\n\n**Your approach (messaging):**\n1. NEVER send without explicit user intent\n2. Check external_comms_enabled flag FIRST\n3. Verify recipient is on allowlist\n4. Draft message for approval\n5. Only send if allow_send=true\n6. Log to audit trail\n\n**Your approach (credentials):**\n1. Use inspector to get schema\n2. Return required fields clearly\n3. Never expose credential values\n4. Guide credential setup\n\n**God-Mode Safety:**\n- Default external_comms_enabled=false\n- Allowlist: Only +1-320-406-4600 by default\n- Internal-only by default\n- All sends logged to audit trail\n\n**Personality:** Cautious, explicit, asks before sending."
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agentTool",
+      "typeVersion": 3,
+      "position": [1360, 600],
+      "id": "subagent-messaging-credentials",
+      "name": "Sub-Agent: Messaging & Credentials"
+    },
+    {
+      "parameters": {
+        "toolDescription": "Knowledge & Dev Helper Sub-Agent. Answers questions via RAG, generates code/expressions, provides dev assistance. Grounded in actual SOPs and docs.",
+        "text": "={{ $fromAI('task', 'Ask a question or describe code/expression you want generated') }}",
+        "options": {
+          "systemMessage": "You are the Knowledge & Dev Helper sub-agent in the God-Mode system.\n\n**Your specialization:** Answering questions and generating code.\n\n**Your tools:**\n- knowledge_db: RAG search (USE THIS FIRST for any question)\n- tool_expression_builder: n8n expression generation\n- tool_code_generator: JS/TS/SQL code generation\n- supabase-mcp: Query God-Mode data\n\n**Your approach (questions):**\n1. ALWAYS search knowledge_db first\n2. Return grounded answer with sources\n3. If not found, use general knowledge\n4. Cite sources clearly\n\n**Your approach (code):**\n1. Understand requirements\n2. Use expression_builder for n8n expressions\n3. Use code_generator for JS/TS/SQL\n4. Provide working, tested code\n5. Include comments\n\n**Knowledge you have access to:**\n- Jonah's ASM SOPs (canonical)\n- All workflow documentation\n- Troubleshooting guides\n- Configuration guides\n- Past conversations\n- n8n best practices\n\n**Personality:** Helpful, grounded, cites sources, technical."
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agentTool",
+      "typeVersion": 3,
+      "position": [1360, 760],
+      "id": "subagent-knowledge-dev",
+      "name": "Sub-Agent: Knowledge & Dev"
+    },
+    {
+      "parameters": {
+        "description": "Update existing workflows safely.",
+        "workflowId": {
+          "__rl": true,
+          "value": "xyf2aW6ZUK16WsgWhby0x",
+          "mode": "list",
+          "cachedResultName": "✏️ Workflow Updater"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "workflow_id": "={{ $fromAI('workflow_id', 'Target workflow id') }}",
+            "workflow_name": "={{ $fromAI('workflow_name', 'Optional name') }}",
+            "action": "={{ $fromAI('action', 'patch_nodes / add_nodes / refactor / rename') }}",
+            "changes": "={{ $fromAI('changes', 'Exact change set') }}"
+          }
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.2,
+      "position": [1600, 80],
+      "id": "tool-updater",
+      "name": "Workflow Updater"
+    },
+    {
+      "parameters": {
+        "description": "Optimize workflows for performance/reliability/cost.",
+        "workflowId": {
+          "__rl": true,
+          "value": "OBpYWGIz04j07vNgmn0dC",
+          "mode": "list",
+          "cachedResultName": "⚡ Workflow Optimizer"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "workflow_id": "={{ $fromAI('workflow_id', 'Target workflow id') }}",
+            "optimization_type": "={{ $fromAI('optimization_type', 'performance / reliability / cost / readability') }}",
+            "apply_changes": "={{ $fromAI('apply_changes', 'Apply automatically? true/false') }}"
+          }
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.2,
+      "position": [1600, 200],
+      "id": "tool-optimizer",
+      "name": "Workflow Optimizer"
+    },
+    {
+      "parameters": {
+        "description": "Deploy/import workflow JSON into n8n.",
+        "workflowId": {
+          "__rl": true,
+          "value": "h4MG3yGAca7PDPU1ys1GV",
+          "mode": "list",
+          "cachedResultName": "🚀 Workflow Deployer"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "workflow_json": "={{ $fromAI('workflow_json', 'Workflow JSON') }}",
+            "workflow_name": "={{ $fromAI('workflow_name', 'Name') }}",
+            "activate": "={{ $fromAI('activate', 'Activate? true/false') }}",
+            "update_if_exists": "={{ $fromAI('update_if_exists', 'Update if exists? true/false') }}"
+          }
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.2,
+      "position": [1600, 320],
+      "id": "tool-deployer",
+      "name": "Workflow Deployer"
+    },
+    {
+      "parameters": {
+        "description": "Build workflows from structured descriptions.",
+        "workflowId": {
+          "__rl": true,
+          "value": "Xf24pNABaHYMjcuPiLMpJ",
+          "mode": "list",
+          "cachedResultName": "🏗️ Workflow Builder"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "description": "={{ $fromAI('description', 'Describe the workflow') }}",
+            "workflow_type": "={{ $fromAI('workflow_type', 'Type/category') }}",
+            "required_services": "={{ $fromAI('required_services', 'Comma-separated services') }}",
+            "optimization_level": "={{ $fromAI('optimization_level', 'speed / reliability / cost / balanced') }}",
+            "mode": "={{ $fromAI('mode', 'create_new / extend_existing') }}",
+            "existing_workflow_id": "={{ $fromAI('existing_workflow_id', 'If extending') }}"
+          }
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.2,
+      "position": [1600, 440],
+      "id": "tool-builder",
+      "name": "Workflow Builder"
+    },
+    {
+      "parameters": {
+        "description": "Monitor workflow health and reliability.",
+        "workflowId": {
+          "__rl": true,
+          "value": "TH4_ydlstABdOI7nKvoCH",
+          "mode": "list",
+          "cachedResultName": "🏥 Health Monitor"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "monitor_type": "={{ $fromAI('monitor_type', 'errors / throughput / latency / recent_failures') }}",
+            "time_range_hours": "={{ $fromAI('time_range_hours', 'Hours back') }}"
+          }
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.2,
+      "position": [1600, 560],
+      "id": "tool-health-monitor",
+      "name": "Health Monitor"
+    },
+    {
+      "parameters": {
+        "description": "Debug failed executions deeply.",
+        "workflowId": {
+          "__rl": true,
+          "value": "yyY3SS0xgjNNqA8lC1j6P",
+          "mode": "list",
+          "cachedResultName": "🔍 Execution Debugger"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "execution_id": "={{ $fromAI('execution_id', 'Execution id to debug') }}",
+            "analysis_depth": "={{ $fromAI('analysis_depth', 'basic / deep') }}"
+          }
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.2,
+      "position": [1600, 680],
+      "id": "tool-debugger",
+      "name": "Execution Debugger"
+    },
+    {
+      "parameters": {
+        "description": "Auto-fix workflow failures.",
+        "workflowId": {
+          "__rl": true,
+          "value": "gQ1llEB74saEh7RXWcxG7",
+          "mode": "list",
+          "cachedResultName": "🔧 Auto-Fixer"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "workflow_id": "={{ $fromAI('workflow_id', 'Workflow id (optional)') }}",
+            "execution_id": "={{ $fromAI('execution_id', 'Execution id to fix') }}",
+            "failure_type": "={{ $fromAI('failure_type', 'auth / rate_limit / data_shape / node_error') }}",
+            "confidence_required": "={{ $fromAI('confidence_required', 'Min confidence 0-1') }}"
+          }
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.2,
+      "position": [1600, 800],
+      "id": "tool-auto-fixer",
+      "name": "Auto-Fixer"
+    },
+    {
+      "parameters": {
+        "description": "Universal integration helper.",
+        "workflowId": {
+          "__rl": true,
+          "value": "OdswzJSjDlUwfu6j0r9e8",
+          "mode": "list",
+          "cachedResultName": "🌐 Universal Integration"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "service": "={{ $fromAI('service', 'hubspot / hunter / google / slack') }}",
+            "action": "={{ $fromAI('action', 'search / create / update / enrich') }}",
+            "parameters": "={{ $fromAI('parameters', 'Parameters as JSON') }}"
+          }
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.2,
+      "position": [1840, 80],
+      "id": "tool-integration",
+      "name": "Universal Integration"
+    },
+    {
+      "parameters": {
+        "description": "Generate n8n expressions.",
+        "workflowId": {
+          "__rl": true,
+          "value": "A5EE9a76e5F70Od52yKuH",
+          "mode": "list",
+          "cachedResultName": "🎯 Expression Builder"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "task": "={{ $fromAI('task', 'What should expression do?') }}",
+            "context": "={{ $fromAI('context', 'Optional context') }}",
+            "data_structure": "={{ $fromAI('data_structure', 'Optional data structure') }}"
+          }
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.2,
+      "position": [1840, 200],
+      "id": "tool-expression-builder",
+      "name": "Expression Builder"
+    },
+    {
+      "parameters": {
+        "description": "Generate code for n8n (JS/TS/SQL).",
+        "workflowId": {
+          "__rl": true,
+          "value": "CYH6WIpuzCPh_rQP463_F",
+          "mode": "list",
+          "cachedResultName": "💻 Code Generator"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "task": "={{ $fromAI('task', 'What code do you need?') }}",
+            "code_type": "={{ $fromAI('code_type', 'js / ts / sql / expression / regex') }}",
+            "context": "={{ $fromAI('context', 'Constraints, sample I/O') }}"
+          }
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.2,
+      "position": [1840, 320],
+      "id": "tool-code-generator",
+      "name": "Code Generator"
+    },
+    {
+      "parameters": {
+        "description": "Inspect credential schema requirements.",
+        "workflowId": {
+          "__rl": true,
+          "value": "sT1JIYqWfIb-5a53SX2Fx",
+          "mode": "list",
+          "cachedResultName": "🔐 Credential Inspector"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "credential_type": "={{ $fromAI('credential_type', 'n8n credential type name') }}"
+          }
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.2,
+      "position": [1840, 440],
+      "id": "tool-credential-inspector",
+      "name": "Credential Inspector"
+    },
+    {
+      "parameters": {
+        "description": "Guarded message sender (requires approval).",
+        "workflowId": {
+          "__rl": true,
+          "value": "Vjy0lzwAXu00n3IXmNYsk",
+          "mode": "list",
+          "cachedResultName": "📤 Send Message (Guarded)"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "channel": "={{ $fromAI('channel', 'Destination channel') }}",
+            "recipient": "={{ $fromAI('recipient', 'Recipient identifier') }}",
+            "message": "={{ $fromAI('message', 'Message body') }}",
+            "allow_send": "={{ $fromAI('allow_send', 'Explicit boolean to send') }}"
+          }
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.2,
+      "position": [1840, 560],
+      "id": "tool-send-message",
+      "name": "Send Message (Guarded)"
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "schema": {
+          "__rl": true,
+          "value": "public",
+          "mode": "list"
+        },
+        "table": {
+          "__rl": true,
+          "value": "conversation_history",
+          "mode": "list"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "user_id": "={{ $('Prepare Context').item.json.user_id }}",
+            "chat_id": "={{ $('Prepare Context').item.json.chat_id }}",
+            "role": "user",
+            "content": "={{ $('Prepare Context').item.json.user_message }}",
+            "tool_calls": null
+          }
+        },
+        "options": {}
+      },
+      "id": "save-user-message",
+      "name": "Save User Message",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [2080, 400],
+      "credentials": {
+        "postgres": {
+          "id": "YOUR_SUPABASE_CREDENTIAL_ID",
+          "name": "Supabase God-Mode DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "schema": {
+          "__rl": true,
+          "value": "public",
+          "mode": "list"
+        },
+        "table": {
+          "__rl": true,
+          "value": "conversation_history",
+          "mode": "list"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "user_id": "={{ $('Prepare Context').item.json.user_id }}",
+            "chat_id": "={{ $('Prepare Context').item.json.chat_id }}",
+            "role": "assistant",
+            "content": "={{ $('MCP Server (God-Mode)').item.json.output }}",
+            "tool_calls": "={{ $('MCP Server (God-Mode)').item.json.tool_calls }}"
+          }
+        },
+        "options": {}
+      },
+      "id": "save-agent-response",
+      "name": "Save Agent Response",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [2080, 560],
+      "credentials": {
+        "postgres": {
+          "id": "YOUR_SUPABASE_CREDENTIAL_ID",
+          "name": "Supabase God-Mode DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "schema": {
+          "__rl": true,
+          "value": "public",
+          "mode": "list"
+        },
+        "table": {
+          "__rl": true,
+          "value": "agent_audit_log",
+          "mode": "list"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "action": "god_mode_agent_interaction",
+            "action_type": "system",
+            "success": true,
+            "source": "={{ $('Prepare Context').item.json.platform }}",
+            "input_data": "={{ { user_message: $('Prepare Context').item.json.user_message, chat_id: $('Prepare Context').item.json.chat_id, platform: $('Prepare Context').item.json.platform } }}",
+            "output_data": "={{ { response: $('MCP Server (God-Mode)').item.json.output, tool_calls: $('MCP Server (God-Mode)').item.json.tool_calls } }}"
+          }
+        },
+        "options": {}
+      },
+      "id": "log-to-audit-trail",
+      "name": "Log to God-Mode Audit Trail",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [2300, 480],
+      "credentials": {
+        "postgres": {
+          "id": "YOUR_SUPABASE_CREDENTIAL_ID",
+          "name": "Supabase God-Mode DB"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "MCP Server (God-Mode)": {
+      "main": [
+        [
+          {
+            "node": "Check God-Mode Controls",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram Webhook (Alternative)": {
+      "main": [
+        [
+          {
+            "node": "Check God-Mode Controls",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check God-Mode Controls": {
+      "main": [
+        [
+          {
+            "node": "Kill Switch Active?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Kill Switch Active?": {
+      "main": [
+        [
+          {
+            "node": "Respond Kill Switch",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Context": {
+      "main": [
+        [
+          {
+            "node": "Save User Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "MCP: n8n Operations": {
+      "ai_tool": [
+        [
+          {
+            "node": "MCP Server (God-Mode)",
+            "type": "ai_tool",
+            "index": 0
+          },
+          {
+            "node": "Sub-Agent: Workflow Engineering",
+            "type": "ai_tool",
+            "index": 0
+          },
+          {
+            "node": "Sub-Agent: Monitor & Debug",
+            "type": "ai_tool",
+            "index": 0
+          },
+          {
+            "node": "Sub-Agent: Integrations",
+            "type": "ai_tool",
+            "index": 0
+          },
+          {
+            "node": "Sub-Agent: Knowledge & Dev",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "MCP: Supabase (God-Mode DB)": {
+      "ai_tool": [
+        [
+          {
+            "node": "MCP Server (God-Mode)",
+            "type": "ai_tool",
+            "index": 0
+          },
+          {
+            "node": "Sub-Agent: Workflow Engineering",
+            "type": "ai_tool",
+            "index": 0
+          },
+          {
+            "node": "Sub-Agent: Monitor & Debug",
+            "type": "ai_tool",
+            "index": 0
+          },
+          {
+            "node": "Sub-Agent: Integrations",
+            "type": "ai_tool",
+            "index": 0
+          },
+          {
+            "node": "Sub-Agent: Messaging & Credentials",
+            "type": "ai_tool",
+            "index": 0
+          },
+          {
+            "node": "Sub-Agent: Knowledge & Dev",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tool: Knowledge DB (RAG)": {
+      "ai_tool": [
+        [
+          {
+            "node": "MCP Server (God-Mode)",
+            "type": "ai_tool",
+            "index": 0
+          },
+          {
+            "node": "Sub-Agent: Knowledge & Dev",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sub-Agent: Workflow Engineering": {
+      "ai_tool": [
+        [
+          {
+            "node": "MCP Server (God-Mode)",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sub-Agent: Monitor & Debug": {
+      "ai_tool": [
+        [
+          {
+            "node": "MCP Server (God-Mode)",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sub-Agent: Integrations": {
+      "ai_tool": [
+        [
+          {
+            "node": "MCP Server (God-Mode)",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sub-Agent: Messaging & Credentials": {
+      "ai_tool": [
+        [
+          {
+            "node": "MCP Server (God-Mode)",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sub-Agent: Knowledge & Dev": {
+      "ai_tool": [
+        [
+          {
+            "node": "MCP Server (God-Mode)",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Workflow Updater": {
+      "ai_tool": [
+        [
+          {
+            "node": "MCP Server (God-Mode)",
+            "type": "ai_tool",
+            "index": 0
+          },
+          {
+            "node": "Sub-Agent: Workflow Engineering",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Workflow Optimizer": {
+      "ai_tool": [
+        [
+          {
+            "node": "MCP Server (God-Mode)",
+            "type": "ai_tool",
+            "index": 0
+          },
+          {
+            "node": "Sub-Agent: Workflow Engineering",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Workflow Deployer": {
+      "ai_tool": [
+        [
+          {
+            "node": "MCP Server (God-Mode)",
+            "type": "ai_tool",
+            "index": 0
+          },
+          {
+            "node": "Sub-Agent: Workflow Engineering",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Workflow Builder": {
+      "ai_tool": [
+        [
+          {
+            "node": "MCP Server (God-Mode)",
+            "type": "ai_tool",
+            "index": 0
+          },
+          {
+            "node": "Sub-Agent: Workflow Engineering",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Health Monitor": {
+      "ai_tool": [
+        [
+          {
+            "node": "MCP Server (God-Mode)",
+            "type": "ai_tool",
+            "index": 0
+          },
+          {
+            "node": "Sub-Agent: Monitor & Debug",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execution Debugger": {
+      "ai_tool": [
+        [
+          {
+            "node": "MCP Server (God-Mode)",
+            "type": "ai_tool",
+            "index": 0
+          },
+          {
+            "node": "Sub-Agent: Monitor & Debug",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Auto-Fixer": {
+      "ai_tool": [
+        [
+          {
+            "node": "MCP Server (God-Mode)",
+            "type": "ai_tool",
+            "index": 0
+          },
+          {
+            "node": "Sub-Agent: Monitor & Debug",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Universal Integration": {
+      "ai_tool": [
+        [
+          {
+            "node": "MCP Server (God-Mode)",
+            "type": "ai_tool",
+            "index": 0
+          },
+          {
+            "node": "Sub-Agent: Integrations",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Expression Builder": {
+      "ai_tool": [
+        [
+          {
+            "node": "MCP Server (God-Mode)",
+            "type": "ai_tool",
+            "index": 0
+          },
+          {
+            "node": "Sub-Agent: Knowledge & Dev",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code Generator": {
+      "ai_tool": [
+        [
+          {
+            "node": "MCP Server (God-Mode)",
+            "type": "ai_tool",
+            "index": 0
+          },
+          {
+            "node": "Sub-Agent: Knowledge & Dev",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Credential Inspector": {
+      "ai_tool": [
+        [
+          {
+            "node": "MCP Server (God-Mode)",
+            "type": "ai_tool",
+            "index": 0
+          },
+          {
+            "node": "Sub-Agent: Messaging & Credentials",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Message (Guarded)": {
+      "ai_tool": [
+        [
+          {
+            "node": "MCP Server (God-Mode)",
+            "type": "ai_tool",
+            "index": 0
+          },
+          {
+            "node": "Sub-Agent: Messaging & Credentials",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save User Message": {
+      "main": [
+        [
+          {
+            "node": "Save Agent Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Agent Response": {
+      "main": [
+        [
+          {
+            "node": "Log to God-Mode Audit Trail",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "meta": {
+    "instanceId": "god-mode-beast-enhanced"
+  }
+}

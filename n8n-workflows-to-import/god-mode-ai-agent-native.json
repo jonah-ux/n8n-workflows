@@ -1,0 +1,720 @@
+{
+  "name": "🤖 God-Mode AI Agent (Native n8n)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "god-mode-chat",
+        "options": {}
+      },
+      "id": "telegram-webhook",
+      "name": "Telegram Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [240, 400],
+      "webhookId": "god-mode-chat"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT * FROM agent_controls LIMIT 1",
+        "options": {}
+      },
+      "id": "check-controls",
+      "name": "Check Kill Switch",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [460, 400],
+      "credentials": {
+        "postgres": {
+          "id": "YOUR_POSTGRES_CREDENTIAL_ID",
+          "name": "Supabase"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "kill-switch-check",
+              "leftValue": "={{ $json.kill_switch }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "or"
+        },
+        "options": {}
+      },
+      "id": "if-kill-switch",
+      "name": "Kill Switch Active?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [680, 400]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Telegram Webhook').item.json.body.message.chat.id }}",
+        "text": "⚠️ Kill switch is active. All agent actions are blocked.",
+        "additionalFields": {}
+      },
+      "id": "send-kill-switch-msg",
+      "name": "Send Kill Switch Message",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [900, 280],
+      "credentials": {
+        "telegramApi": {
+          "id": "YOUR_TELEGRAM_CREDENTIAL_ID",
+          "name": "Telegram Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "user-message",
+              "name": "user_message",
+              "value": "={{ $('Telegram Webhook').item.json.body.message.text }}",
+              "type": "string"
+            },
+            {
+              "id": "chat-id",
+              "name": "chat_id",
+              "value": "={{ $('Telegram Webhook').item.json.body.message.chat.id }}",
+              "type": "string"
+            },
+            {
+              "id": "user-id",
+              "name": "user_id",
+              "value": "={{ $('Telegram Webhook').item.json.body.message.from.id }}",
+              "type": "number"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "extract-message",
+      "name": "Extract Message Data",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.3,
+      "position": [900, 520]
+    },
+    {
+      "parameters": {
+        "agent": "conversationalAgent",
+        "text": "={{ $json.user_message }}",
+        "options": {
+          "systemMessage": "You are a God-Mode AI Agent managing an autonomous operations system for Jonah.\n\nYour capabilities:\n- Access to HubSpot CRM (deals, contacts, activities)\n- Control over n8n workflows (view, create, modify, deploy)\n- Knowledge base in Notion (canonical SOPs and processes)\n- Full audit trail and memory system in PostgreSQL\n- Pattern detection and proposal generation\n- Workflow building and fixing capabilities\n\nYour personality:\n- Direct and concise (Jonah is busy)\n- Proactive (suggest improvements without being asked)\n- Technical (don't dumb things down)\n- Results-focused (care about outcomes, not process)\n\nSafety rules:\n- ALWAYS check kill_switch before taking action\n- Internal-only by default (no customer contact without explicit approval)\n- Propose first for Tier 2-3 actions (don't just do it)\n- Log all actions to audit trail\n- Never delete data (supersede instead)\n\nCurrent context:\n- User: Jonah (operator, full access)\n- Timezone: America/Chicago\n- Today: {{ $now.format('yyyy-MM-dd') }}\n\nUse your tools to help Jonah operate his business efficiently."
+        }
+      },
+      "id": "main-ai-agent",
+      "name": "God-Mode AI Agent",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.7,
+      "position": [1120, 520],
+      "credentials": {
+        "anthropicApi": {
+          "id": "YOUR_ANTHROPIC_CREDENTIAL_ID",
+          "name": "Anthropic API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "model": "claude-3-5-sonnet-20241022",
+        "options": {}
+      },
+      "id": "claude-model",
+      "name": "Claude 3.5 Sonnet",
+      "type": "@n8n/n8n-nodes-langchain.lmChatAnthropic",
+      "typeVersion": 1,
+      "position": [1120, 340],
+      "credentials": {
+        "anthropicApi": {
+          "id": "YOUR_ANTHROPIC_CREDENTIAL_ID",
+          "name": "Anthropic API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sessionIdType": "customKey",
+        "sessionKey": "={{ $('Extract Message Data').item.json.chat_id }}",
+        "contextWindowLength": 10
+      },
+      "id": "window-memory",
+      "name": "Conversation Memory",
+      "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
+      "typeVersion": 1.2,
+      "position": [1120, 220]
+    },
+    {
+      "parameters": {
+        "name": "query_memory",
+        "description": "Search the knowledge base for information. Use this to recall past learnings, SOPs, or system knowledge.",
+        "workflowId": {
+          "__rl": true,
+          "value": "WORKFLOW_ID_FOR_QUERY_MEMORY",
+          "mode": "list"
+        },
+        "fields": {
+          "values": [
+            {
+              "name": "query",
+              "description": "The search query"
+            },
+            {
+              "name": "authority",
+              "description": "Filter by authority level: canonical, verified, or inferred"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "tool-query-memory",
+      "name": "Tool: Query Memory",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 1.1,
+      "position": [1340, 100]
+    },
+    {
+      "parameters": {
+        "name": "get_deals",
+        "description": "Query HubSpot deals. Use to check deal status, pipeline, or search for specific deals.",
+        "workflowId": {
+          "__rl": true,
+          "value": "WORKFLOW_ID_FOR_GET_DEALS",
+          "mode": "list"
+        },
+        "fields": {
+          "values": [
+            {
+              "name": "filters",
+              "description": "Deal filters (stage, amount, date range, etc.) as JSON object"
+            },
+            {
+              "name": "limit",
+              "description": "Maximum number of results to return"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "tool-get-deals",
+      "name": "Tool: Get Deals",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 1.1,
+      "position": [1340, 220]
+    },
+    {
+      "parameters": {
+        "name": "list_workflows",
+        "description": "Get all n8n workflows. Returns workflow names, IDs, status, and last execution.",
+        "workflowId": {
+          "__rl": true,
+          "value": "WORKFLOW_ID_FOR_LIST_WORKFLOWS",
+          "mode": "list"
+        },
+        "fields": {
+          "values": [
+            {
+              "name": "active_only",
+              "description": "Only show active workflows (true/false)"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "tool-list-workflows",
+      "name": "Tool: List Workflows",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 1.1,
+      "position": [1340, 340]
+    },
+    {
+      "parameters": {
+        "name": "detect_patterns",
+        "description": "Analyze system data for patterns and improvement opportunities. Returns detected patterns with confidence scores.",
+        "workflowId": {
+          "__rl": true,
+          "value": "WORKFLOW_ID_FOR_DETECT_PATTERNS",
+          "mode": "list"
+        },
+        "fields": {
+          "values": [
+            {
+              "name": "lookback_hours",
+              "description": "How far back to analyze in hours (default 24)"
+            },
+            {
+              "name": "min_confidence",
+              "description": "Minimum confidence threshold 0-1"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "tool-detect-patterns",
+      "name": "Tool: Detect Patterns",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 1.1,
+      "position": [1340, 460]
+    },
+    {
+      "parameters": {
+        "name": "generate_proposal",
+        "description": "Create an improvement proposal based on a pattern or idea. Generates detailed implementation steps.",
+        "workflowId": {
+          "__rl": true,
+          "value": "WORKFLOW_ID_FOR_GENERATE_PROPOSAL",
+          "mode": "list"
+        },
+        "fields": {
+          "values": [
+            {
+              "name": "title",
+              "description": "Proposal title"
+            },
+            {
+              "name": "description",
+              "description": "What should be improved and why"
+            },
+            {
+              "name": "evidence",
+              "description": "Supporting data as JSON object"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "tool-generate-proposal",
+      "name": "Tool: Generate Proposal",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 1.1,
+      "position": [1340, 580]
+    },
+    {
+      "parameters": {
+        "name": "hubspot_operations",
+        "description": "Sub-agent specialized in HubSpot CRM operations. Handles deals, contacts, companies, and sales analytics.",
+        "workflowId": {
+          "__rl": true,
+          "value": "WORKFLOW_ID_FOR_HUBSPOT_AGENT",
+          "mode": "list"
+        },
+        "fields": {
+          "values": [
+            {
+              "name": "task",
+              "description": "What HubSpot operation to perform"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "subagent-hubspot",
+      "name": "Sub-Agent: HubSpot Operations",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 1.1,
+      "position": [1340, 700]
+    },
+    {
+      "parameters": {
+        "name": "workflow_builder",
+        "description": "Sub-agent specialized in building and fixing n8n workflows. Can generate workflow JSON, deploy, test, and optimize.",
+        "workflowId": {
+          "__rl": true,
+          "value": "WORKFLOW_ID_FOR_BUILDER_AGENT",
+          "mode": "list"
+        },
+        "fields": {
+          "values": [
+            {
+              "name": "task",
+              "description": "What workflow operation to perform (build, fix, optimize, deploy)"
+            },
+            {
+              "name": "details",
+              "description": "Detailed requirements or description"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "subagent-workflow-builder",
+      "name": "Sub-Agent: Workflow Builder",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 1.1,
+      "position": [1340, 820]
+    },
+    {
+      "parameters": {
+        "name": "data_analyst",
+        "description": "Sub-agent specialized in data analysis. Queries databases, generates reports, finds patterns, and provides business insights.",
+        "workflowId": {
+          "__rl": true,
+          "value": "WORKFLOW_ID_FOR_ANALYST_AGENT",
+          "mode": "list"
+        },
+        "fields": {
+          "values": [
+            {
+              "name": "analysis_type",
+              "description": "Type of analysis (revenue, patterns, performance, predictions)"
+            },
+            {
+              "name": "parameters",
+              "description": "Analysis parameters as JSON"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "subagent-data-analyst",
+      "name": "Sub-Agent: Data Analyst",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 1.1,
+      "position": [1340, 940]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Extract Message Data').item.json.chat_id }}",
+        "text": "={{ $json.output }}",
+        "additionalFields": {
+          "reply_to_message_id": "={{ $('Telegram Webhook').item.json.body.message.message_id }}"
+        }
+      },
+      "id": "send-response",
+      "name": "Send Telegram Response",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [1560, 520],
+      "credentials": {
+        "telegramApi": {
+          "id": "YOUR_TELEGRAM_CREDENTIAL_ID",
+          "name": "Telegram Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "schema": {
+          "__rl": true,
+          "value": "public",
+          "mode": "list"
+        },
+        "table": {
+          "__rl": true,
+          "value": "conversation_history",
+          "mode": "list"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "user_id": "={{ $('Extract Message Data').item.json.user_id }}",
+            "chat_id": "={{ $('Extract Message Data').item.json.chat_id }}",
+            "role": "assistant",
+            "content": "={{ $json.output }}",
+            "message_id": "={{ $('Telegram Webhook').item.json.body.message.message_id }}"
+          }
+        },
+        "options": {}
+      },
+      "id": "save-to-history",
+      "name": "Save to History",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [1780, 520],
+      "credentials": {
+        "postgres": {
+          "id": "YOUR_POSTGRES_CREDENTIAL_ID",
+          "name": "Supabase"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "schema": {
+          "__rl": true,
+          "value": "public",
+          "mode": "list"
+        },
+        "table": {
+          "__rl": true,
+          "value": "agent_audit_log",
+          "mode": "list"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "action": "conversational_agent",
+            "action_type": "system",
+            "success": true,
+            "source": "telegram",
+            "input_data": "={{ { user_message: $('Extract Message Data').item.json.user_message, chat_id: $('Extract Message Data').item.json.chat_id } }}",
+            "output_data": "={{ { response: $json.output } }}"
+          }
+        },
+        "options": {}
+      },
+      "id": "log-audit",
+      "name": "Log to Audit Trail",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [2000, 520],
+      "credentials": {
+        "postgres": {
+          "id": "YOUR_POSTGRES_CREDENTIAL_ID",
+          "name": "Supabase"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "content": "## 🤖 God-Mode AI Agent (Native n8n)\\n\\n**Uses n8n's AI Agent node properly!**\\n\\n**Architecture:**\\n- n8n AI Agent node (native tool calling)\\n- Claude 3.5 Sonnet model\\n- Conversation memory (10 message window)\\n- Multiple tool workflows\\n- Sub-agents for specialized tasks\\n\\n**Tools:**\\n- query_memory\\n- get_deals\\n- list_workflows\\n- detect_patterns\\n- generate_proposal\\n\\n**Sub-Agents:**\\n- HubSpot Operations (CRM specialist)\\n- Workflow Builder (builds/fixes workflows)\\n- Data Analyst (insights and reports)\\n\\n**Safety:**\\n✅ Kill switch check\\n✅ Audit logging\\n✅ Conversation history\\n✅ Context management\\n\\n**Extensible:**\\nAdd new tools by connecting more Tool: Workflow nodes\\nAdd new sub-agents by connecting more sub-agent workflows\\n\\n**God-Mode Ready:**\\nArchitecture supports future capabilities:\\n- Workflow generation\\n- Business intelligence\\n- Autonomous actions\\n- Cross-system orchestration",
+        "height": 712.1818181818181,
+        "width": 437.2727272727273,
+        "color": 4
+      },
+      "id": "agent-info",
+      "name": "Agent Info",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [180, 60]
+    },
+    {
+      "parameters": {
+        "content": "## 🔧 Setup\\n\\n1. **Credentials:**\\n   - Telegram Bot\\n   - Anthropic API (Claude)\\n   - Postgres (Supabase)\\n\\n2. **Create Tool Workflows:**\\n   Each tool is a separate workflow with:\\n   - Webhook trigger\\n   - Logic to perform task\\n   - Return JSON output\\n\\n3. **Create Sub-Agent Workflows:**\\n   Each sub-agent is a workflow with:\\n   - AI Agent node (specialized)\\n   - Its own set of tools\\n   - Returns results to main agent\\n\\n4. **Connect Tools:**\\n   - Update workflowId in each Tool node\\n   - Point to your actual workflows\\n\\n5. **Test:**\\n   Message bot: \\"Hello\\"\\n   Should respond using tools",
+        "height": 590.909090909091,
+        "width": 397.2727272727273,
+        "color": 5
+      },
+      "id": "setup-notes",
+      "name": "Setup Notes",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [660, 60]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Telegram Webhook": {
+      "main": [
+        [
+          {
+            "node": "Check Kill Switch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Kill Switch": {
+      "main": [
+        [
+          {
+            "node": "Kill Switch Active?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Kill Switch Active?": {
+      "main": [
+        [
+          {
+            "node": "Send Kill Switch Message",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Extract Message Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Message Data": {
+      "main": [
+        [
+          {
+            "node": "God-Mode AI Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "God-Mode AI Agent": {
+      "main": [
+        [
+          {
+            "node": "Send Telegram Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claude 3.5 Sonnet": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "God-Mode AI Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Conversation Memory": {
+      "ai_memory": [
+        [
+          {
+            "node": "God-Mode AI Agent",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tool: Query Memory": {
+      "ai_tool": [
+        [
+          {
+            "node": "God-Mode AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tool: Get Deals": {
+      "ai_tool": [
+        [
+          {
+            "node": "God-Mode AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tool: List Workflows": {
+      "ai_tool": [
+        [
+          {
+            "node": "God-Mode AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tool: Detect Patterns": {
+      "ai_tool": [
+        [
+          {
+            "node": "God-Mode AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tool: Generate Proposal": {
+      "ai_tool": [
+        [
+          {
+            "node": "God-Mode AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sub-Agent: HubSpot Operations": {
+      "ai_tool": [
+        [
+          {
+            "node": "God-Mode AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sub-Agent: Workflow Builder": {
+      "ai_tool": [
+        [
+          {
+            "node": "God-Mode AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sub-Agent: Data Analyst": {
+      "ai_tool": [
+        [
+          {
+            "node": "God-Mode AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Telegram Response": {
+      "main": [
+        [
+          {
+            "node": "Save to History",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save to History": {
+      "main": [
+        [
+          {
+            "node": "Log to Audit Trail",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "1",
+  "meta": {
+    "instanceId": "your_instance_id"
+  },
+  "id": "god-mode-ai-agent-native",
+  "tags": []
+}

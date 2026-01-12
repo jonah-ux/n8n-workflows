@@ -1,0 +1,870 @@
+{
+  "name": "🔥 GOD-MODE AI AGENT - BEAST MODE",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "god-mode-beast",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Telegram/API Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 500],
+      "webhookId": "god-mode-beast"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Check all control flags\nSELECT \n  kill_switch,\n  comms_enabled,\n  write_enabled,\n  jobs_enabled,\n  external_comms_enabled,\n  system_state,\n  kill_switch_reason\nFROM agent_controls \nLIMIT 1",
+        "options": {}
+      },
+      "id": "check-all-controls",
+      "name": "Check All Controls",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [460, 500],
+      "credentials": {
+        "postgres": {
+          "id": "YOUR_POSTGRES_CREDENTIAL_ID",
+          "name": "Supabase"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract message and validate\nconst webhook = $('Telegram/API Webhook').item.json;\nconst controls = $input.first().json;\n\n// Check if kill switch active\nif (controls.kill_switch) {\n  return [{\n    json: {\n      error: 'kill_switch_active',\n      reason: controls.kill_switch_reason || 'Kill switch is active',\n      user_message: webhook.body?.message?.text || webhook.query?.message,\n      chat_id: webhook.body?.message?.chat?.id || webhook.query?.chat_id\n    }\n  }];\n}\n\n// Extract message data\nconst telegramMessage = webhook.body?.message;\nconst apiMessage = webhook.query;\n\nreturn [{\n  json: {\n    user_message: telegramMessage?.text || apiMessage?.message || '',\n    chat_id: telegramMessage?.chat?.id || apiMessage?.chat_id,\n    user_id: telegramMessage?.from?.id || apiMessage?.user_id,\n    message_id: telegramMessage?.message_id,\n    platform: telegramMessage ? 'telegram' : 'api',\n    controls: controls,\n    timestamp: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "validate-and-extract",
+      "name": "Validate & Extract",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 500]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "has-error",
+              "leftValue": "={{ $json.error }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-errors",
+      "name": "Has Errors?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [900, 500]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chat_id }}",
+        "text": "⚠️ {{ $json.reason }}",
+        "additionalFields": {}
+      },
+      "id": "send-error-msg",
+      "name": "Send Error Message",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [1120, 320],
+      "credentials": {
+        "telegramApi": {
+          "id": "YOUR_TELEGRAM_CREDENTIAL_ID",
+          "name": "Telegram Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "agent": "conversationalAgent",
+        "text": "={{ $json.user_message }}",
+        "options": {
+          "systemMessage": "# GOD-MODE OPERATIONS AGENT\\n\\nYou are the most advanced autonomous operations AI ever built. You manage Jonah's entire business infrastructure.\\n\\n## YOUR CAPABILITIES\\n\\n### CRM Operations (HubSpot Sub-Agent)\\n- Full CRUD on deals, contacts, companies\\n- Pipeline management and forecasting\\n- Revenue attribution and analytics\\n- Lead scoring and qualification\\n- Sales activity tracking\\n\\n### Workflow Management (Builder Sub-Agent)\\n- Generate n8n workflows from descriptions\\n- Fix broken workflows automatically\\n- Optimize workflow performance\\n- Deploy and test workflows\\n- Manage workflow versions\\n\\n### Data Intelligence (Analyst Sub-Agent)\\n- Query any database (Postgres, Supabase)\\n- Generate business reports\\n- Predict outcomes (deals, revenue, churn)\\n- Detect patterns and anomalies\\n- Revenue impact analysis\\n\\n### Knowledge Management\\n- RAG search across all documentation\\n- Notion canonical knowledge access\\n- Memory system with versioning\\n- Never delete, always supersede\\n\\n### Direct Tools\\n- query_memory: Search knowledge base\\n- query_audit_log: Search action history\\n- get_proposals: View improvement proposals\\n- approve_proposal: Execute improvements\\n- sync_hubspot: Trigger CRM sync\\n- sync_notion: Trigger knowledge sync\\n- sync_n8n: Monitor workflow executions\\n- detect_patterns: Find improvement opportunities\\n- generate_proposal: Create improvement proposals\\n- check_workflow_health: Analyze workflow performance\\n- execute_sql: Run database queries\\n- search_documentation: RAG search docs\\n\\n## YOUR PERSONALITY\\n\\n- **Direct:** No fluff, get to the point\\n- **Proactive:** Suggest improvements without being asked\\n- **Technical:** Use proper terminology, don't dumb down\\n- **Results-focused:** Care about outcomes, not process\\n- **Confident:** You're the expert, act like it\\n- **Fast:** Jonah is busy, be concise\\n\\n## OPERATING RULES\\n\\n### Safety Tiers\\n- **Tier 0 (Auto, Silent):** Read operations, queries, searches\\n- **Tier 1 (Auto, Notify):** Safe writes, syncs, internal updates\\n- **Tier 2 (Auto, Grace Period):** Workflow changes, proposals\\n- **Tier 3 (Always Ask):** External comms, deletions, deployments\\n\\n### Decision Making\\n1. For Tier 0-1: Just do it, mention after\\n2. For Tier 2: Tell Jonah you're doing it in 1 hour\\n3. For Tier 3: Always ask first\\n\\n### Communication Style\\n```\\nBAD: \\"I've analyzed your HubSpot data and found some interesting patterns.\\"\\nGOOD: \\"7 deals stalled >5 days. Pattern: All $10K+, all Fridays. Fix: Auto-follow-up workflow. Building now.\\"\\n\\nBAD: \\"Would you like me to help you with that?\\"\\nGOOD: \\"Fixed. Added exponential backoff for rate limits. Testing... ✅ Working.\\"\\n```\\n\\n### Context Awareness\\nYou have access to:\\n- Full conversation history (last 20 messages)\\n- All documentation via RAG\\n- Complete audit trail\\n- Business metrics and KPIs\\n- Current system state\\n\\nUse this context to be proactive:\\n```\\nUser: \\"Check deals\\"\\nYou: \\"7 active deals, $45K pipeline.\\n      \\n      BTW: Noticed your HubSpot sync failed 3x today due to rate limits.\\n      I added exponential backoff. Fixed now.\\"\\n```\\n\\n## CURRENT CONTEXT\\n- **User:** Jonah (operator, full access)\\n- **Timezone:** America/Chicago ({{ $now.tz('America/Chicago').format('z') }})\\n- **Today:** {{ $now.format('dddd, MMMM D, YYYY') }}\\n- **Time:** {{ $now.tz('America/Chicago').format('h:mm A') }}\\n- **System State:** {{ $('Validate & Extract').item.json.controls.system_state }}\\n\\n## WHEN TO USE SUB-AGENTS\\n\\n### Use HubSpot Sub-Agent When:\\n- Complex CRM operations (multiple steps)\\n- Need CRM-specific knowledge\\n- Sales analytics or forecasting\\n- Deal pipeline management\\n\\n### Use Workflow Builder Sub-Agent When:\\n- Building new workflows\\n- Fixing broken workflows\\n- Optimizing performance\\n- Deploying changes\\n\\n### Use Data Analyst Sub-Agent When:\\n- Complex database queries\\n- Business intelligence requests\\n- Pattern analysis across multiple sources\\n- Predictive analytics\\n\\n## EXAMPLES OF EXCELLENCE\\n\\n### Example 1: Proactive Fix\\n```\\nUser: \\"Morning\\"\\nYou: \\"Morning. Quick heads up:\\n      \\n      - Overnight: 3 deals moved to 'Proposal Sent'\\n      - HubSpot sync had rate limit issues, fixed with backoff\\n      - 1 new proposal ready: Auto-follow-up for stalled deals\\n      \\n      Want details on any of these?\\"\\n```\\n\\n### Example 2: Complex Request\\n```\\nUser: \\"Why are deals taking longer to close?  \\"\\nYou: [Calls data_analyst sub-agent]\\n      \\n      \\"Analyzed 6 months of data:\\n      \\n      **Problem:** Avg close time increased from 14 to 23 days\\n      \\n      **Root causes:**\\n      1. Proposals >$15K: +12 day delay (pricing approvals)\\n      2. Multi-stakeholder deals: +8 days (scheduling)\\n      3. Friday proposals: +5 days (weekend effect)\\n      \\n      **Solutions:**\\n      1. Auto-approve pricing <$20K → Saves 12 days\\n      2. Automated scheduling links → Saves 8 days\\n      3. Monday-Thursday proposal rule → Saves 5 days\\n      \\n      Want me to build these workflows?\\"\\n```\\n\\n### Example 3: Workflow Building\\n```\\nUser: \\"Build a workflow that monitors competitor pricing\\"\\nYou: [Calls workflow_builder sub-agent]\\n      \\n      \\"Built and deployed:\\n      \\n      ✅ Workflow 'Competitor Price Monitor'\\n      - Scrapes 3 competitor sites daily (6 AM)\\n      - Stores in Supabase with history\\n      - Alerts you on >10% price changes\\n      - Updates your pricing page if you're >20% higher\\n      \\n      Running first scan now... [30 seconds later]\\n      ✅ Scanned. Current pricing: You're 15% cheaper than Competitor A, on par with B.\\n      \\n      Monitoring active.\\"\\n```\\n\\nNow go make Jonah's business run itself. 🔥"
+        }
+      },
+      "id": "main-agent",
+      "name": "🔥 GOD-MODE AGENT",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.7,
+      "position": [1120, 680]
+    },
+    {
+      "parameters": {
+        "model": "claude-3-5-sonnet-20241022",
+        "options": {
+          "maxTokens": 4096,
+          "temperature": 0.3
+        }
+      },
+      "id": "claude-model",
+      "name": "Claude 3.5 Sonnet",
+      "type": "@n8n/n8n-nodes-langchain.lmChatAnthropic",
+      "typeVersion": 1,
+      "position": [1340, 260],
+      "credentials": {
+        "anthropicApi": {
+          "id": "YOUR_ANTHROPIC_CREDENTIAL_ID",
+          "name": "Anthropic API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sessionIdType": "customKey",
+        "sessionKey": "={{ $('Validate & Extract').item.json.chat_id }}",
+        "contextWindowLength": 20
+      },
+      "id": "window-memory",
+      "name": "Window Memory (20 msgs)",
+      "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
+      "typeVersion": 1.2,
+      "position": [1340, 380]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Get conversation summary\nSELECT \n  COUNT(*) as total_messages,\n  array_agg(DISTINCT role) as participants,\n  MAX(created_at) as last_message_at,\n  STRING_AGG(content, ' ' ORDER BY created_at DESC) as recent_context\nFROM conversation_history\nWHERE chat_id = {{ $('Validate & Extract').item.json.chat_id }}\n  AND created_at >= NOW() - INTERVAL '1 hour'\nGROUP BY chat_id",
+        "options": {}
+      },
+      "id": "get-context",
+      "name": "Get Recent Context",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [1340, 500],
+      "credentials": {
+        "postgres": {
+          "id": "YOUR_POSTGRES_CREDENTIAL_ID",
+          "name": "Supabase"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "public": false,
+        "notice": ""
+      },
+      "id": "sticky-note-tools",
+      "name": "=== DIRECT TOOLS ===",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [1560, 60],
+      "parameters": {
+        "height": 80,
+        "width": 300,
+        "color": 4
+      }
+    },
+    {
+      "parameters": {
+        "name": "query_memory",
+        "description": "Search the knowledge base using semantic search. Returns relevant information from Notion, docs, and past learnings.",
+        "workflowId": {
+          "__rl": true,
+          "value": "WORKFLOW_ID",
+          "mode": "list"
+        },
+        "fields": {
+          "values": [
+            {
+              "name": "query",
+              "description": "What to search for"
+            },
+            {
+              "name": "limit",
+              "description": "Max results (default 5)"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "tool-query-memory",
+      "name": "Tool: Query Memory (RAG)",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 1.1,
+      "position": [1560, 160]
+    },
+    {
+      "parameters": {
+        "name": "execute_sql",
+        "description": "Execute SQL queries on the database. Use for custom data analysis, complex joins, or specific metrics.",
+        "workflowId": {
+          "__rl": true,
+          "value": "WORKFLOW_ID",
+          "mode": "list"
+        },
+        "fields": {
+          "values": [
+            {
+              "name": "query",
+              "description": "SQL query to execute (SELECT only)"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "tool-execute-sql",
+      "name": "Tool: Execute SQL",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 1.1,
+      "position": [1560, 280]
+    },
+    {
+      "parameters": {
+        "name": "get_proposals",
+        "description": "Get improvement proposals. Returns pending proposals with details, evidence, and impact estimates.",
+        "workflowId": {
+          "__rl": true,
+          "value": "WORKFLOW_ID",
+          "mode": "list"
+        },
+        "fields": {
+          "values": [
+            {
+              "name": "status",
+              "description": "Filter by status: pending, approved, rejected"
+            },
+            {
+              "name": "priority",
+              "description": "Filter by priority: critical, high, medium, low"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "tool-get-proposals",
+      "name": "Tool: Get Proposals",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 1.1,
+      "position": [1560, 400]
+    },
+    {
+      "parameters": {
+        "name": "approve_proposal",
+        "description": "Approve and execute an improvement proposal. This will apply the proposed changes.",
+        "workflowId": {
+          "__rl": true,
+          "value": "WORKFLOW_ID",
+          "mode": "list"
+        },
+        "fields": {
+          "values": [
+            {
+              "name": "proposal_id",
+              "description": "UUID of proposal to approve"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "tool-approve-proposal",
+      "name": "Tool: Approve Proposal",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 1.1,
+      "position": [1560, 520]
+    },
+    {
+      "parameters": {
+        "name": "detect_patterns",
+        "description": "Analyze system data for patterns, anomalies, and improvement opportunities. Returns patterns with confidence scores.",
+        "workflowId": {
+          "__rl": true,
+          "value": "WORKFLOW_ID",
+          "mode": "list"
+        },
+        "fields": {
+          "values": [
+            {
+              "name": "lookback_hours",
+              "description": "How far back to analyze (default 24)"
+            },
+            {
+              "name": "pattern_types",
+              "description": "Types to detect: failures, performance, cost, drift"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "tool-detect-patterns",
+      "name": "Tool: Detect Patterns",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 1.1,
+      "position": [1560, 640]
+    },
+    {
+      "parameters": {
+        "name": "check_workflow_health",
+        "description": "Check health and performance of specific n8n workflows. Returns execution stats, error rates, and performance metrics.",
+        "workflowId": {
+          "__rl": true,
+          "value": "WORKFLOW_ID",
+          "mode": "list"
+        },
+        "fields": {
+          "values": [
+            {
+              "name": "workflow_id",
+              "description": "n8n workflow ID (optional, checks all if not provided)"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "tool-check-health",
+      "name": "Tool: Check Workflow Health",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 1.1,
+      "position": [1560, 760]
+    },
+    {
+      "parameters": {
+        "public": false,
+        "notice": ""
+      },
+      "id": "sticky-note-subagents",
+      "name": "=== SUB-AGENTS (Specialists) ===",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [1820, 60],
+      "parameters": {
+        "height": 80,
+        "width": 380,
+        "color": 7
+      }
+    },
+    {
+      "parameters": {
+        "name": "hubspot_operations",
+        "description": "Specialized sub-agent for HubSpot CRM operations. Handles all CRM tasks: deals, contacts, companies, pipelines, forecasting, and sales analytics. Has deep knowledge of your sales process.",
+        "workflowId": {
+          "__rl": true,
+          "value": "WORKFLOW_ID_HUBSPOT_AGENT",
+          "mode": "list"
+        },
+        "fields": {
+          "values": [
+            {
+              "name": "task",
+              "description": "Describe the HubSpot operation to perform"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "subagent-hubspot",
+      "name": "Sub-Agent: HubSpot CRM",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 1.1,
+      "position": [1820, 160]
+    },
+    {
+      "parameters": {
+        "name": "workflow_builder",
+        "description": "Specialized sub-agent for building, fixing, and optimizing n8n workflows. Can generate workflow JSON from descriptions, debug issues, add error handling, and deploy changes. Expert in n8n architecture.",
+        "workflowId": {
+          "__rl": true,
+          "value": "WORKFLOW_ID_BUILDER_AGENT",
+          "mode": "list"
+        },
+        "fields": {
+          "values": [
+            {
+              "name": "operation",
+              "description": "build, fix, optimize, or deploy"
+            },
+            {
+              "name": "details",
+              "description": "Detailed description or workflow ID"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "subagent-builder",
+      "name": "Sub-Agent: Workflow Builder",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 1.1,
+      "position": [1820, 310]
+    },
+    {
+      "parameters": {
+        "name": "data_analyst",
+        "description": "Specialized sub-agent for data analysis and business intelligence. Queries databases, generates reports, finds patterns, predicts outcomes, and provides actionable insights. Expert in SQL, statistics, and business metrics.",
+        "workflowId": {
+          "__rl": true,
+          "value": "WORKFLOW_ID_ANALYST_AGENT",
+          "mode": "list"
+        },
+        "fields": {
+          "values": [
+            {
+              "name": "analysis_type",
+              "description": "revenue, patterns, performance, prediction, or custom"
+            },
+            {
+              "name": "parameters",
+              "description": "Analysis parameters as JSON"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "subagent-analyst",
+      "name": "Sub-Agent: Data Analyst",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 1.1,
+      "position": [1820, 460]
+    },
+    {
+      "parameters": {
+        "name": "notion_knowledge",
+        "description": "Specialized sub-agent for Notion knowledge management. Searches SOPs, documentation, and processes. Creates and updates documentation. Maintains canonical knowledge base.",
+        "workflowId": {
+          "__rl": true,
+          "value": "WORKFLOW_ID_NOTION_AGENT",
+          "mode": "list"
+        },
+        "fields": {
+          "values": [
+            {
+              "name": "task",
+              "description": "search, create, update, or organize"
+            },
+            {
+              "name": "query",
+              "description": "Search query or content to create"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "subagent-notion",
+      "name": "Sub-Agent: Notion Knowledge",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 1.1,
+      "position": [1820, 610]
+    },
+    {
+      "parameters": {
+        "name": "auto_recovery",
+        "description": "Specialized sub-agent for automatic problem fixing. Detects common issues (rate limits, auth, timeouts) and applies smart fixes. Can modify workflows to prevent future failures.",
+        "workflowId": {
+          "__rl": true,
+          "value": "WORKFLOW_ID_RECOVERY_AGENT",
+          "mode": "list"
+        },
+        "fields": {
+          "values": [
+            {
+              "name": "issue_type",
+              "description": "Type of issue: rate_limit, auth, timeout, error"
+            },
+            {
+              "name": "context",
+              "description": "Error details and context as JSON"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "subagent-recovery",
+      "name": "Sub-Agent: Auto-Recovery",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 1.1,
+      "position": [1820, 760]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Validate & Extract').item.json.chat_id }}",
+        "text": "={{ $json.output }}",
+        "additionalFields": {
+          "parse_mode": "Markdown",
+          "reply_to_message_id": "={{ $('Validate & Extract').item.json.message_id }}"
+        }
+      },
+      "id": "send-response",
+      "name": "Send Response",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [2240, 680],
+      "credentials": {
+        "telegramApi": {
+          "id": "YOUR_TELEGRAM_CREDENTIAL_ID",
+          "name": "Telegram Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "schema": {
+          "__rl": true,
+          "value": "public",
+          "mode": "list"
+        },
+        "table": {
+          "__rl": true,
+          "value": "conversation_history",
+          "mode": "list"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "user_id": "={{ $('Validate & Extract').item.json.user_id }}",
+            "chat_id": "={{ $('Validate & Extract').item.json.chat_id }}",
+            "role": "user",
+            "content": "={{ $('Validate & Extract').item.json.user_message }}",
+            "message_id": "={{ $('Validate & Extract').item.json.message_id }}"
+          }
+        },
+        "options": {}
+      },
+      "id": "save-user-msg",
+      "name": "Save User Message",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [2240, 500],
+      "credentials": {
+        "postgres": {
+          "id": "YOUR_POSTGRES_CREDENTIAL_ID",
+          "name": "Supabase"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "schema": {
+          "__rl": true,
+          "value": "public",
+          "mode": "list"
+        },
+        "table": {
+          "__rl": true,
+          "value": "conversation_history",
+          "mode": "list"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "user_id": "={{ $('Validate & Extract').item.json.user_id }}",
+            "chat_id": "={{ $('Validate & Extract').item.json.chat_id }}",
+            "role": "assistant",
+            "content": "={{ $('🔥 GOD-MODE AGENT').item.json.output }}",
+            "message_id": "={{ $('Validate & Extract').item.json.message_id }}"
+          }
+        },
+        "options": {}
+      },
+      "id": "save-agent-msg",
+      "name": "Save Agent Response",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [2240, 800],
+      "credentials": {
+        "postgres": {
+          "id": "YOUR_POSTGRES_CREDENTIAL_ID",
+          "name": "Supabase"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "schema": {
+          "__rl": true,
+          "value": "public",
+          "mode": "list"
+        },
+        "table": {
+          "__rl": true,
+          "value": "agent_audit_log",
+          "mode": "list"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "action": "god_mode_agent",
+            "action_type": "system",
+            "success": true,
+            "source": "={{ $('Validate & Extract').item.json.platform }}",
+            "input_data": "={{ { user_message: $('Validate & Extract').item.json.user_message, chat_id: $('Validate & Extract').item.json.chat_id } }}",
+            "output_data": "={{ { response: $('🔥 GOD-MODE AGENT').item.json.output } }}"
+          }
+        },
+        "options": {}
+      },
+      "id": "log-audit",
+      "name": "Log to Audit Trail",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [2460, 680],
+      "credentials": {
+        "postgres": {
+          "id": "YOUR_POSTGRES_CREDENTIAL_ID",
+          "name": "Supabase"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Telegram/API Webhook": {
+      "main": [
+        [
+          {
+            "node": "Check All Controls",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check All Controls": {
+      "main": [
+        [
+          {
+            "node": "Validate & Extract",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate & Extract": {
+      "main": [
+        [
+          {
+            "node": "Has Errors?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Get Recent Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Errors?": {
+      "main": [
+        [
+          {
+            "node": "Send Error Message",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "🔥 GOD-MODE AGENT",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔥 GOD-MODE AGENT": {
+      "main": [
+        [
+          {
+            "node": "Send Response",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Save User Message",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Save Agent Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claude 3.5 Sonnet": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "🔥 GOD-MODE AGENT",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Window Memory (20 msgs)": {
+      "ai_memory": [
+        [
+          {
+            "node": "🔥 GOD-MODE AGENT",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tool: Query Memory (RAG)": {
+      "ai_tool": [
+        [
+          {
+            "node": "🔥 GOD-MODE AGENT",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tool: Execute SQL": {
+      "ai_tool": [
+        [
+          {
+            "node": "🔥 GOD-MODE AGENT",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tool: Get Proposals": {
+      "ai_tool": [
+        [
+          {
+            "node": "🔥 GOD-MODE AGENT",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tool: Approve Proposal": {
+      "ai_tool": [
+        [
+          {
+            "node": "🔥 GOD-MODE AGENT",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tool: Detect Patterns": {
+      "ai_tool": [
+        [
+          {
+            "node": "🔥 GOD-MODE AGENT",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tool: Check Workflow Health": {
+      "ai_tool": [
+        [
+          {
+            "node": "🔥 GOD-MODE AGENT",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sub-Agent: HubSpot CRM": {
+      "ai_tool": [
+        [
+          {
+            "node": "🔥 GOD-MODE AGENT",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sub-Agent: Workflow Builder": {
+      "ai_tool": [
+        [
+          {
+            "node": "🔥 GOD-MODE AGENT",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sub-Agent: Data Analyst": {
+      "ai_tool": [
+        [
+          {
+            "node": "🔥 GOD-MODE AGENT",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sub-Agent: Notion Knowledge": {
+      "ai_tool": [
+        [
+          {
+            "node": "🔥 GOD-MODE AGENT",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sub-Agent: Auto-Recovery": {
+      "ai_tool": [
+        [
+          {
+            "node": "🔥 GOD-MODE AGENT",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Response": {
+      "main": [
+        [
+          {
+            "node": "Log to Audit Trail",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "1",
+  "meta": {
+    "instanceId": "your_instance_id"
+  },
+  "id": "god-mode-agent-beast",
+  "tags": []
+}

@@ -1,0 +1,105 @@
+{
+  "name": "🔄 Sync Workflows to RAG",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [{"field": "hours", "hoursInterval": 6}]
+        }
+      },
+      "id": "1",
+      "name": "Every 6 Hours",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://jonahautoshopmedia.app.n8n.cloud/api/v1/workflows",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "n8nApi",
+        "options": {}
+      },
+      "id": "2",
+      "name": "Get All Workflows",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [460, 300],
+      "credentials": {
+        "n8nApi": {
+          "id": "1",
+          "name": "n8n API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {"id": "workflow_id", "name": "workflow_id", "value": "={{ $json.id }}", "type": "string"},
+            {"id": "name", "name": "name", "value": "={{ $json.name }}", "type": "string"},
+            {"id": "description", "name": "description", "value": "={{ 'Workflow with ' + ($json.nodes?.length || 0) + ' nodes' }}", "type": "string"},
+            {"id": "workflow_json", "name": "workflow_json", "value": "={{ JSON.stringify($json) }}", "type": "string"},
+            {"id": "node_count", "name": "node_count", "value": "={{ $json.nodes?.length || 0 }}", "type": "number"},
+            {"id": "is_active", "name": "is_active", "value": "={{ $json.active || false }}", "type": "boolean"}
+          ]
+        }
+      },
+      "id": "3",
+      "name": "Process Each Workflow",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO workflows (workflow_id, name, description, category, workflow_json, node_count, is_active, source)\nVALUES ($1, $2, $3, 'personal', $4::jsonb, $5, $6, 'user')\nON CONFLICT (workflow_id) DO UPDATE SET\n  name = EXCLUDED.name,\n  description = EXCLUDED.description,\n  workflow_json = EXCLUDED.workflow_json,\n  node_count = EXCLUDED.node_count,\n  is_active = EXCLUDED.is_active,\n  updated_at = NOW()",
+        "additionalFields": {
+          "queryParameters": {
+            "parameters": [
+              {"name": "workflow_id", "value": "={{ $json.workflow_id }}"},
+              {"name": "name", "value": "={{ $json.name }}"},
+              {"name": "description", "value": "={{ $json.description }}"},
+              {"name": "workflow_json", "value": "={{ $json.workflow_json }}"},
+              {"name": "node_count", "value": "={{ $json.node_count }}"},
+              {"name": "is_active", "value": "={{ $json.is_active }}"}
+            ]
+          }
+        }
+      },
+      "id": "4",
+      "name": "Save to Database",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [900, 300],
+      "credentials": {
+        "postgres": {
+          "id": "2",
+          "name": "Supabase RAG Database"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Every 6 Hours": {
+      "main": [[{"node": "Get All Workflows", "type": "main", "index": 0}]]
+    },
+    "Get All Workflows": {
+      "main": [[{"node": "Process Each Workflow", "type": "main", "index": 0}]]
+    },
+    "Process Each Workflow": {
+      "main": [[{"node": "Save to Database", "type": "main", "index": 0}]]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 0,
+  "updatedAt": "2026-01-12T02:00:00.000Z",
+  "versionId": "1"
+}

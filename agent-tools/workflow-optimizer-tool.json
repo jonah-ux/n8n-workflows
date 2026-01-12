@@ -1,0 +1,233 @@
+{
+  "name": "⚡ Workflow Optimizer Tool",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "optimizer-trigger",
+      "name": "When called by another workflow",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "workflow-id",
+              "name": "workflow_id",
+              "value": "={{ $json.workflow_id }}",
+              "type": "string"
+            },
+            {
+              "id": "optimization-type",
+              "name": "optimization_type",
+              "value": "={{ $json.optimization_type || 'full' }}",
+              "type": "string"
+            },
+            {
+              "id": "apply-changes",
+              "name": "apply_changes",
+              "value": "={{ $json.apply_changes || false }}",
+              "type": "boolean"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "extract-params-opt",
+      "name": "Extract Parameters",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.3,
+      "position": [470, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://jonahautoshopmedia.app.n8n.cloud/api/v1/workflows/{{ $json.workflow_id }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "n8nApi",
+        "options": {}
+      },
+      "id": "get-workflow-opt",
+      "name": "Get Workflow",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [690, 300],
+      "credentials": {
+        "n8nApi": {
+          "id": "BfmmuCL4hhYYZq4w",
+          "name": "n8n account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const workflow = $input.first().json;\nconst optimizationType = $('Extract Parameters').item.json.optimization_type;\n\nconst optimizations = {\n  removed_duplicates: [],\n  merged_nodes: [],\n  improved_error_handling: [],\n  performance_improvements: [],\n  reduced_api_calls: [],\n  simplified_expressions: [],\n  improved_structure: [],\n  cache_opportunities: [],\n  batch_opportunities: []\n};\n\nconst metrics = {\n  original_node_count: workflow.nodes.length,\n  original_connection_count: Object.keys(workflow.connections).length,\n  optimization_score_before: 0,\n  optimization_score_after: 0,\n  estimated_time_savings_percent: 0,\n  estimated_cost_savings_percent: 0\n};\n\n// Create optimized copy\nconst optimizedWorkflow = JSON.parse(JSON.stringify(workflow));\n\n// OPTIMIZATION 1: Remove duplicate nodes\nif (['full', 'structure'].includes(optimizationType)) {\n  const nodesByFunction = {};\n  \n  optimizedWorkflow.nodes.forEach(node => {\n    // Create signature based on node type, parameters, and credentials\n    const signature = JSON.stringify({\n      type: node.type,\n      parameters: node.parameters,\n      credentials: node.credentials\n    });\n    \n    if (!nodesByFunction[signature]) {\n      nodesByFunction[signature] = [];\n    }\n    nodesByFunction[signature].push(node);\n  });\n  \n  // Find duplicates\n  Object.entries(nodesByFunction).forEach(([sig, nodes]) => {\n    if (nodes.length > 1) {\n      optimizations.removed_duplicates.push({\n        nodes: nodes.map(n => n.name),\n        can_merge: true,\n        savings: `${nodes.length - 1} duplicate nodes`\n      });\n      \n      // Keep first node, remove others and rewire connections\n      const keepNode = nodes[0];\n      nodes.slice(1).forEach(dupNode => {\n        // Rewire all connections pointing to duplicate to point to kept node\n        Object.keys(optimizedWorkflow.connections).forEach(source => {\n          const sourceConns = optimizedWorkflow.connections[source];\n          if (sourceConns.main) {\n            sourceConns.main = sourceConns.main.map(branch =>\n              branch.map(conn => \n                conn.node === dupNode.name ? { ...conn, node: keepNode.name } : conn\n              )\n            );\n          }\n        });\n        \n        // Remove duplicate node\n        optimizedWorkflow.nodes = optimizedWorkflow.nodes.filter(n => n.name !== dupNode.name);\n        delete optimizedWorkflow.connections[dupNode.name];\n      });\n    }\n  });\n}\n\n// OPTIMIZATION 2: Add error handling to nodes that don't have it\nif (['full', 'reliability'].includes(optimizationType)) {\n  optimizedWorkflow.nodes.forEach(node => {\n    if (!node.onError && !['n8n-nodes-base.start', 'n8n-nodes-base.executeWorkflowTrigger'].includes(node.type)) {\n      if (!node.continueOnFail) {\n        node.continueOnFail = false;\n        node.onError = 'continueRegularOutput';\n        \n        optimizations.improved_error_handling.push({\n          node: node.name,\n          added: 'onError handler',\n          benefit: 'Prevents workflow from stopping on error'\n        });\n      }\n    }\n    \n    // Add retry logic to API nodes\n    if (node.type.includes('http') || node.type.includes('api')) {\n      if (!node.retryOnFail || node.retryOnFail === false) {\n        node.retryOnFail = true;\n        node.maxTries = 3;\n        node.waitBetweenTries = 1000;\n        \n        optimizations.improved_error_handling.push({\n          node: node.name,\n          added: 'Retry logic (3 attempts)',\n          benefit: 'Handles transient API failures'\n        });\n      }\n    }\n  });\n}\n\n// OPTIMIZATION 3: Identify cacheable operations\nif (['full', 'performance'].includes(optimizationType)) {\n  optimizedWorkflow.nodes.forEach(node => {\n    // Database lookups that could be cached\n    if (node.type.includes('postgres') || node.type.includes('mysql')) {\n      const hasWhereClause = JSON.stringify(node.parameters).includes('WHERE');\n      if (hasWhereClause) {\n        optimizations.cache_opportunities.push({\n          node: node.name,\n          type: 'Database query cache',\n          suggestion: 'Consider caching frequently-run queries',\n          estimated_savings: '30-70% query time'\n        });\n      }\n    }\n    \n    // API calls that could be cached\n    if (node.type.includes('http') && node.parameters?.method === 'GET') {\n      optimizations.cache_opportunities.push({\n        node: node.name,\n        type: 'API response cache',\n        suggestion: 'Cache GET requests if data doesnt change frequently',\n        estimated_savings: '90% API time + cost savings'\n      });\n    }\n  });\n}\n\n// OPTIMIZATION 4: Identify batch processing opportunities\nif (['full', 'performance'].includes(optimizationType)) {\n  const apiNodes = optimizedWorkflow.nodes.filter(n => \n    n.type.includes('http') || n.type.includes('api')\n  );\n  \n  apiNodes.forEach(node => {\n    // Check if node is in a loop\n    const nodeConnections = optimizedWorkflow.connections[node.name];\n    if (nodeConnections) {\n      optimizations.batch_opportunities.push({\n        node: node.name,\n        type: 'Batch API requests',\n        suggestion: 'Process multiple items in single request if API supports batching',\n        estimated_savings: '50-80% execution time and API costs'\n      });\n    }\n  });\n}\n\n// OPTIMIZATION 5: Simplify complex expressions\nif (['full', 'expressions'].includes(optimizationType)) {\n  optimizedWorkflow.nodes.forEach(node => {\n    const nodeStr = JSON.stringify(node.parameters);\n    \n    // Find overly complex expressions\n    const expressionMatches = nodeStr.match(/={{[^}]+}}/g) || [];\n    expressionMatches.forEach(expr => {\n      if (expr.length > 100) {\n        optimizations.simplified_expressions.push({\n          node: node.name,\n          expression: expr.substring(0, 50) + '...',\n          suggestion: 'Move complex logic to Code node for better maintainability',\n          benefit: 'Easier to debug and maintain'\n        });\n      }\n    });\n  });\n}\n\n// OPTIMIZATION 6: Improve workflow structure\nif (['full', 'structure'].includes(optimizationType)) {\n  // Check for long linear chains (could be parallelized)\n  const nodeDepth = {};\n  const calculateDepth = (nodeName, depth = 0) => {\n    if (nodeDepth[nodeName]) return;\n    nodeDepth[nodeName] = depth;\n    \n    const connections = optimizedWorkflow.connections[nodeName];\n    if (connections?.main) {\n      connections.main.forEach(branch => {\n        branch.forEach(conn => {\n          calculateDepth(conn.node, depth + 1);\n        });\n      });\n    }\n  };\n  \n  // Start from trigger nodes\n  optimizedWorkflow.nodes\n    .filter(n => ['n8n-nodes-base.start', 'n8n-nodes-base.executeWorkflowTrigger', 'n8n-nodes-base.scheduleTrigger'].includes(n.type))\n    .forEach(trigger => calculateDepth(trigger.name));\n  \n  const maxDepth = Math.max(...Object.values(nodeDepth));\n  if (maxDepth > 10) {\n    optimizations.improved_structure.push({\n      issue: 'Long sequential chain',\n      depth: maxDepth,\n      suggestion: 'Consider parallelizing independent operations',\n      benefit: 'Reduce total execution time by 40-60%'\n    });\n  }\n  \n  // Check for missing error branches\n  const nodesWithoutErrorHandling = optimizedWorkflow.nodes.filter(n => \n    !n.onError && \n    !['n8n-nodes-base.start', 'n8n-nodes-base.executeWorkflowTrigger'].includes(n.type)\n  );\n  \n  if (nodesWithoutErrorHandling.length > 0) {\n    optimizations.improved_structure.push({\n      issue: 'Missing error handling paths',\n      affected_nodes: nodesWithoutErrorHandling.length,\n      suggestion: 'Add error handler nodes for critical operations',\n      benefit: 'Better error recovery and debugging'\n    });\n  }\n}\n\n// OPTIMIZATION 7: Reduce unnecessary API calls\nif (['full', 'cost'].includes(optimizationType)) {\n  // Check for API calls in loops that could be combined\n  const loopNodes = optimizedWorkflow.nodes.filter(n => \n    n.type === 'n8n-nodes-base.splitInBatches'\n  );\n  \n  if (loopNodes.length > 0) {\n    optimizations.reduced_api_calls.push({\n      issue: 'Loop with API calls detected',\n      nodes: loopNodes.map(n => n.name),\n      suggestion: 'Batch API requests outside loop when possible',\n      estimated_savings: '70-90% API costs'\n    });\n  }\n}\n\n// Calculate optimization scores\nconst countOptimizations = (\n  optimizations.removed_duplicates.length +\n  optimizations.merged_nodes.length +\n  optimizations.improved_error_handling.length +\n  optimizations.performance_improvements.length +\n  optimizations.reduced_api_calls.length\n);\n\nconst countOpportunities = (\n  optimizations.cache_opportunities.length +\n  optimizations.batch_opportunities.length +\n  optimizations.simplified_expressions.length +\n  optimizations.improved_structure.length\n);\n\nmetrics.optimization_score_before = Math.max(0, 100 - (countOptimizations * 10) - (countOpportunities * 5));\nmetrics.optimization_score_after = Math.min(100, metrics.optimization_score_before + (countOptimizations * 8));\nmetrics.optimized_node_count = optimizedWorkflow.nodes.length;\nmetrics.optimized_connection_count = Object.keys(optimizedWorkflow.connections).length;\n\n// Estimate savings\nif (optimizations.cache_opportunities.length > 0) {\n  metrics.estimated_time_savings_percent += 30;\n  metrics.estimated_cost_savings_percent += 40;\n}\nif (optimizations.batch_opportunities.length > 0) {\n  metrics.estimated_time_savings_percent += 50;\n  metrics.estimated_cost_savings_percent += 60;\n}\nif (optimizations.removed_duplicates.length > 0) {\n  metrics.estimated_time_savings_percent += 10;\n}\n\nreturn [{\n  json: {\n    workflow_id: workflow.id,\n    workflow_name: workflow.name,\n    metrics,\n    optimizations,\n    optimized_workflow: optimizedWorkflow,\n    total_optimizations_applied: countOptimizations,\n    total_opportunities_identified: countOpportunities,\n    should_apply: optimizations.removed_duplicates.length > 0 || optimizations.improved_error_handling.length > 0\n  }\n}];"
+      },
+      "id": "analyze-optimize",
+      "name": "Analyze & Optimize",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [910, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "should-apply",
+              "leftValue": "={{ $json.should_apply }}",
+              "rightValue": "true",
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "user-requested",
+              "leftValue": "={{ $('Extract Parameters').item.json.apply_changes }}",
+              "rightValue": "true",
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "should-apply-changes",
+      "name": "Should Apply Changes?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1130, 300]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://jonahautoshopmedia.app.n8n.cloud/api/v1/workflows/{{ $json.workflow_id }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "n8nApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.optimized_workflow) }}",
+        "options": {}
+      },
+      "id": "apply-optimizations",
+      "name": "Apply Optimizations",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1350, 200],
+      "credentials": {
+        "n8nApi": {
+          "id": "BfmmuCL4hhYYZq4w",
+          "name": "n8n account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $input.first().json;\n\nlet output = `⚡ **Workflow Optimization Report**\\n\\n`;\noutput += `**Workflow:** ${data.workflow_name}\\n\\n`;\n\noutput += `📊 **Metrics:**\\n`;\noutput += `- Original Nodes: ${data.metrics.original_node_count}\\n`;\noutput += `- Optimized Nodes: ${data.metrics.optimized_node_count}\\n`;\noutput += `- Nodes Removed: ${data.metrics.original_node_count - data.metrics.optimized_node_count}\\n`;\noutput += `- Optimization Score: ${data.metrics.optimization_score_before}% → ${data.metrics.optimization_score_after}%\\n`;\nif (data.metrics.estimated_time_savings_percent > 0) {\n  output += `- Est. Time Savings: ${Math.min(data.metrics.estimated_time_savings_percent, 90)}%\\n`;\n}\nif (data.metrics.estimated_cost_savings_percent > 0) {\n  output += `- Est. Cost Savings: ${Math.min(data.metrics.estimated_cost_savings_percent, 90)}%\\n`;\n}\noutput += `\\n`;\n\nif (data.optimizations.removed_duplicates.length > 0) {\n  output += `🔄 **Removed Duplicates (${data.optimizations.removed_duplicates.length})**\\n`;\n  data.optimizations.removed_duplicates.forEach(dup => {\n    output += `- Merged: ${dup.nodes.join(', ')}\\n`;\n    output += `  Savings: ${dup.savings}\\n`;\n  });\n  output += `\\n`;\n}\n\nif (data.optimizations.improved_error_handling.length > 0) {\n  output += `🛡️ **Improved Error Handling (${data.optimizations.improved_error_handling.length})**\\n`;\n  data.optimizations.improved_error_handling.slice(0, 5).forEach(improvement => {\n    output += `- **${improvement.node}**\\n`;\n    output += `  Added: ${improvement.added}\\n`;\n    output += `  Benefit: ${improvement.benefit}\\n`;\n  });\n  if (data.optimizations.improved_error_handling.length > 5) {\n    output += `  ... and ${data.optimizations.improved_error_handling.length - 5} more\\n`;\n  }\n  output += `\\n`;\n}\n\nif (data.optimizations.cache_opportunities.length > 0) {\n  output += `💾 **Cache Opportunities (${data.optimizations.cache_opportunities.length})**\\n`;\n  data.optimizations.cache_opportunities.slice(0, 3).forEach(cache => {\n    output += `- **${cache.node}** - ${cache.type}\\n`;\n    output += `  ${cache.suggestion}\\n`;\n    output += `  Est. Savings: ${cache.estimated_savings}\\n`;\n  });\n  output += `\\n`;\n}\n\nif (data.optimizations.batch_opportunities.length > 0) {\n  output += `📦 **Batch Processing Opportunities (${data.optimizations.batch_opportunities.length})**\\n`;\n  data.optimizations.batch_opportunities.slice(0, 3).forEach(batch => {\n    output += `- **${batch.node}** - ${batch.type}\\n`;\n    output += `  ${batch.suggestion}\\n`;\n    output += `  Est. Savings: ${batch.estimated_savings}\\n`;\n  });\n  output += `\\n`;\n}\n\nif (data.optimizations.simplified_expressions.length > 0) {\n  output += `🔧 **Expression Simplification (${data.optimizations.simplified_expressions.length})**\\n`;\n  data.optimizations.simplified_expressions.slice(0, 3).forEach(expr => {\n    output += `- **${expr.node}**\\n`;\n    output += `  ${expr.suggestion}\\n`;\n  });\n  output += `\\n`;\n}\n\nif (data.optimizations.improved_structure.length > 0) {\n  output += `🏗️ **Structure Improvements (${data.optimizations.improved_structure.length})**\\n`;\n  data.optimizations.improved_structure.forEach(improvement => {\n    output += `- **${improvement.issue}**\\n`;\n    output += `  ${improvement.suggestion}\\n`;\n    output += `  Benefit: ${improvement.benefit}\\n`;\n  });\n  output += `\\n`;\n}\n\nif (data.optimizations.reduced_api_calls.length > 0) {\n  output += `💰 **API Call Reduction (${data.optimizations.reduced_api_calls.length})**\\n`;\n  data.optimizations.reduced_api_calls.forEach(api => {\n    output += `- **${api.issue}**\\n`;\n    output += `  ${api.suggestion}\\n`;\n    output += `  Est. Savings: ${api.estimated_savings}\\n`;\n  });\n  output += `\\n`;\n}\n\noutput += `\\n---\\n\\n`;\n\nif (data.total_optimizations_applied > 0) {\n  output += `✅ **${data.total_optimizations_applied} optimizations applied!**\\n`;\n} else {\n  output += `✨ **Workflow already well-optimized!**\\n`;\n}\n\nif (data.total_opportunities_identified > 0) {\n  output += `💡 **${data.total_opportunities_identified} additional opportunities identified**\\n`;\n  output += `These require manual implementation but offer significant improvements.\\n`;\n}\n\nreturn [{\n  json: {\n    formatted_output: output,\n    analysis: data,\n    success: true\n  }\n}];"
+      },
+      "id": "format-output-opt",
+      "name": "Format Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1350, 400]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "When called by another workflow": {
+      "main": [
+        [
+          {
+            "node": "Extract Parameters",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Parameters": {
+      "main": [
+        [
+          {
+            "node": "Get Workflow",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Workflow": {
+      "main": [
+        [
+          {
+            "node": "Analyze & Optimize",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Analyze & Optimize": {
+      "main": [
+        [
+          {
+            "node": "Should Apply Changes?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Should Apply Changes?": {
+      "main": [
+        [
+          {
+            "node": "Apply Optimizations",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Format Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Apply Optimizations": {
+      "main": [
+        [
+          {
+            "node": "Format Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "initial",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "eb47830968c19640d461725e22e2e82f18382dcdabd1739e2b75698b31e1a0c9"
+  },
+  "id": "workflow-optimizer-tool",
+  "tags": []
+}

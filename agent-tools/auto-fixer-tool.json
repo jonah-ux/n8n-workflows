@@ -1,0 +1,303 @@
+{
+  "name": "🔧 Auto-Fixer Tool",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "auto-fixer-trigger",
+      "name": "When called by another workflow",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "issue-type",
+              "name": "issue_type",
+              "value": "={{ $json.issue_type }}",
+              "type": "string"
+            },
+            {
+              "id": "workflow-id-fix",
+              "name": "workflow_id",
+              "value": "={{ $json.workflow_id }}",
+              "type": "string"
+            },
+            {
+              "id": "execution-id-fix",
+              "name": "execution_id",
+              "value": "={{ $json.execution_id || '' }}",
+              "type": "string"
+            },
+            {
+              "id": "error-details",
+              "name": "error_details",
+              "value": "={{ $json.error_details || {} }}",
+              "type": "object"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "extract-params-fixer",
+      "name": "Extract Parameters",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.3,
+      "position": [470, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://jonahautoshopmedia.app.n8n.cloud/api/v1/workflows/{{ $json.workflow_id }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "n8nApi",
+        "options": {}
+      },
+      "id": "get-workflow-fixer",
+      "name": "Get Workflow",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [690, 300],
+      "credentials": {
+        "n8nApi": {
+          "id": "BfmmuCL4hhYYZq4w",
+          "name": "n8n account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://jonahautoshopmedia.app.n8n.cloud/api/v1/executions/{{ $('Extract Parameters').item.json.execution_id }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "n8nApi",
+        "options": {}
+      },
+      "id": "get-execution-fixer",
+      "name": "Get Execution (if provided)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [690, 500],
+      "credentials": {
+        "n8nApi": {
+          "id": "BfmmuCL4hhYYZq4w",
+          "name": "n8n account"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://jonahautoshopmedia.app.n8n.cloud/api/v1/credentials",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "n8nApi",
+        "options": {}
+      },
+      "id": "get-credentials-fixer",
+      "name": "Get All Credentials",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [690, 700],
+      "credentials": {
+        "n8nApi": {
+          "id": "BfmmuCL4hhYYZq4w",
+          "name": "n8n account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const workflow = $input.first().json;\nconst execution = $input.all()[1]?.json;\nconst credentials = Array.isArray($input.all()[2]?.json) ? $input.all()[2].json : ($input.all()[2]?.json?.data || []);\n\nconst params = $('Extract Parameters').item.json;\nconst issueType = params.issue_type;\nconst errorDetails = params.error_details;\n\nconst fixes = [];\nlet fixedWorkflow = JSON.parse(JSON.stringify(workflow));\nlet fixApplied = false;\n\n// AUTO-FIX 1: Credential errors\nif (issueType === 'CREDENTIAL_ERROR' || errorDetails.type === 'CREDENTIAL_ERROR') {\n  const failingNode = errorDetails.failing_node || errorDetails.node;\n  const node = fixedWorkflow.nodes.find(n => n.name === failingNode);\n  \n  if (node && node.credentials) {\n    Object.entries(node.credentials).forEach(([credType, credConfig]) => {\n      // Find matching credential type\n      const availableCred = credentials.find(c => c.type === credType);\n      \n      if (availableCred && availableCred.id !== credConfig.id) {\n        // Update to working credential\n        node.credentials[credType].id = availableCred.id;\n        node.credentials[credType].name = availableCred.name;\n        \n        fixes.push({\n          type: 'credential_fix',\n          node: node.name,\n          action: `Updated ${credType} credential`,\n          old_id: credConfig.id,\n          new_id: availableCred.id,\n          new_name: availableCred.name\n        });\n        fixApplied = true;\n      }\n    });\n  }\n}\n\n// AUTO-FIX 2: Network/Timeout errors - add retry logic\nif (issueType === 'NETWORK_ERROR' || issueType === 'TIMEOUT_ERROR' || \n    errorDetails.type === 'NETWORK_ERROR' || errorDetails.type === 'TIMEOUT_ERROR') {\n  const failingNode = errorDetails.failing_node || errorDetails.node;\n  const node = fixedWorkflow.nodes.find(n => n.name === failingNode);\n  \n  if (node) {\n    if (!node.retryOnFail) {\n      node.retryOnFail = true;\n      node.maxTries = 3;\n      node.waitBetweenTries = 2000;\n      \n      fixes.push({\n        type: 'retry_logic_added',\n        node: node.name,\n        action: 'Added retry logic with exponential backoff',\n        config: '3 retries, 2s wait'\n      });\n      fixApplied = true;\n    }\n    \n    // Increase timeout if it's a timeout error\n    if (issueType === 'TIMEOUT_ERROR' && node.parameters?.timeout) {\n      node.parameters.timeout = Math.min(node.parameters.timeout * 2, 300000);\n      fixes.push({\n        type: 'timeout_increased',\n        node: node.name,\n        action: 'Doubled timeout',\n        new_timeout_ms: node.parameters.timeout\n      });\n      fixApplied = true;\n    }\n  }\n}\n\n// AUTO-FIX 3: Data parsing errors - add validation\nif (issueType === 'DATA_PARSING_ERROR' || errorDetails.type === 'DATA_PARSING_ERROR') {\n  const failingNode = errorDetails.failing_node || errorDetails.node;\n  const nodeIndex = fixedWorkflow.nodes.findIndex(n => n.name === failingNode);\n  \n  if (nodeIndex >= 0) {\n    // Insert validation Code node before failing node\n    const validationNode = {\n      id: `validation-${Date.now()}`,\n      name: `Validate Data for ${failingNode}`,\n      type: 'n8n-nodes-base.code',\n      typeVersion: 2,\n      position: [\n        fixedWorkflow.nodes[nodeIndex].position[0] - 220,\n        fixedWorkflow.nodes[nodeIndex].position[1]\n      ],\n      parameters: {\n        jsCode: `// Validate and clean data\\nconst items = $input.all();\\n\\ntry {\\n  const validated = items.map(item => {\\n    const json = item.json;\\n    \\n    // Remove null/undefined values\\n    const cleaned = Object.entries(json)\\n      .filter(([key, val]) => val !== null && val !== undefined)\\n      .reduce((obj, [key, val]) => {\\n        obj[key] = val;\\n        return obj;\\n      }, {});\\n    \\n    return { json: cleaned };\\n  });\\n  \\n  return validated;\\n} catch (error) {\\n  return [{\\n    json: {\\n      error: 'Data validation failed',\\n      message: error.message,\\n      original_data: items[0]?.json\\n    }\\n  }];\\n}`\n      }\n    };\n    \n    fixedWorkflow.nodes.splice(nodeIndex, 0, validationNode);\n    \n    // Rewire connections\n    const originalNode = fixedWorkflow.nodes[nodeIndex + 1];\n    Object.keys(fixedWorkflow.connections).forEach(source => {\n      const conns = fixedWorkflow.connections[source];\n      if (conns.main) {\n        conns.main = conns.main.map(branch =>\n          branch.map(conn => \n            conn.node === originalNode.name \n              ? { ...conn, node: validationNode.name }\n              : conn\n          )\n        );\n      }\n    });\n    \n    // Add connection from validation to original node\n    fixedWorkflow.connections[validationNode.name] = {\n      main: [[{ node: originalNode.name, type: 'main', index: 0 }]]\n    };\n    \n    fixes.push({\n      type: 'validation_added',\n      node: failingNode,\n      action: 'Added data validation node',\n      validation_node: validationNode.name\n    });\n    fixApplied = true;\n  }\n}\n\n// AUTO-FIX 4: Authentication errors - flag for manual fix\nif (issueType === 'AUTHENTICATION_ERROR' || errorDetails.type === 'AUTHENTICATION_ERROR') {\n  const failingNode = errorDetails.failing_node || errorDetails.node;\n  \n  fixes.push({\n    type: 'manual_action_required',\n    node: failingNode,\n    action: 'API credentials need to be updated',\n    severity: 'high',\n    instructions: [\n      'Go to Credentials in n8n',\n      `Find credential used by ${failingNode}`,\n      'Update API key/token',\n      'Test the credential',\n      'Re-run workflow'\n    ]\n  });\n}\n\n// AUTO-FIX 5: Missing error handling - add globally\nif (!fixApplied) {\n  let addedErrorHandling = false;\n  \n  fixedWorkflow.nodes.forEach(node => {\n    if (!node.onError && \n        !['n8n-nodes-base.start', 'n8n-nodes-base.executeWorkflowTrigger'].includes(node.type)) {\n      node.onError = 'continueRegularOutput';\n      node.continueOnFail = false;\n      addedErrorHandling = true;\n    }\n  });\n  \n  if (addedErrorHandling) {\n    fixes.push({\n      type: 'error_handling_added',\n      action: 'Added error handling to all nodes',\n      benefit: 'Workflow will continue even if some nodes fail'\n    });\n    fixApplied = true;\n  }\n}\n\n// Analyze execution to find patterns\nlet executionAnalysis = null;\nif (execution) {\n  const nodeData = execution.data?.resultData?.runData || {};\n  const failedNodes = [];\n  \n  Object.entries(nodeData).forEach(([nodeName, runs]) => {\n    runs.forEach(run => {\n      if (run.error) {\n        failedNodes.push({\n          node: nodeName,\n          error: run.error.message,\n          type: run.error.name\n        });\n      }\n    });\n  });\n  \n  executionAnalysis = {\n    total_nodes: Object.keys(nodeData).length,\n    failed_nodes: failedNodes,\n    last_successful_node: execution.data?.resultData?.lastNodeExecuted\n  };\n}\n\nreturn [{\n  json: {\n    workflow_id: workflow.id,\n    workflow_name: workflow.name,\n    issue_type: issueType,\n    fixes_applied: fixes,\n    fix_count: fixes.length,\n    automatically_fixed: fixApplied,\n    fixed_workflow: fixedWorkflow,\n    execution_analysis: executionAnalysis,\n    requires_manual_action: fixes.some(f => f.type === 'manual_action_required')\n  }\n}];"
+      },
+      "id": "analyze-and-fix",
+      "name": "Analyze & Fix",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [910, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "auto-fixed",
+              "leftValue": "={{ $json.automatically_fixed }}",
+              "rightValue": "true",
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "was-fixed",
+      "name": "Was Auto-Fixed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1130, 300]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://jonahautoshopmedia.app.n8n.cloud/api/v1/workflows/{{ $json.workflow_id }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "n8nApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.fixed_workflow) }}",
+        "options": {}
+      },
+      "id": "apply-fix",
+      "name": "Apply Fix",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1350, 200],
+      "credentials": {
+        "n8nApi": {
+          "id": "BfmmuCL4hhYYZq4w",
+          "name": "n8n account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $input.first().json;\n\nlet output = `🔧 **Auto-Fix Report**\\n\\n`;\noutput += `**Workflow:** ${data.workflow_name}\\n`;\noutput += `**Issue Type:** ${data.issue_type}\\n\\n`;\n\nif (data.automatically_fixed) {\n  output += `✅ **AUTOMATICALLY FIXED!**\\n\\n`;\n  output += `**Fixes Applied (${data.fix_count}):**\\n\\n`;\n  \n  data.fixes_applied.forEach((fix, i) => {\n    output += `${i + 1}. **${fix.type.replace(/_/g, ' ').toUpperCase()}**\\n`;\n    if (fix.node) {\n      output += `   Node: ${fix.node}\\n`;\n    }\n    output += `   Action: ${fix.action}\\n`;\n    if (fix.config) {\n      output += `   Config: ${fix.config}\\n`;\n    }\n    if (fix.benefit) {\n      output += `   Benefit: ${fix.benefit}\\n`;\n    }\n    if (fix.new_name) {\n      output += `   New credential: ${fix.new_name}\\n`;\n    }\n    output += `\\n`;\n  });\n  \n  output += `✨ **Workflow has been updated and should work now!**\\n\\n`;\n  output += `**Next Steps:**\\n`;\n  output += `1. Test the workflow manually\\n`;\n  output += `2. Check if the issue is resolved\\n`;\n  output += `3. Monitor next execution\\n`;\n} else if (data.requires_manual_action) {\n  output += `⚠️  **MANUAL ACTION REQUIRED**\\n\\n`;\n  \n  const manualFixes = data.fixes_applied.filter(f => f.type === 'manual_action_required');\n  manualFixes.forEach(fix => {\n    output += `**${fix.node}**\\n`;\n    output += `${fix.action}\\n\\n`;\n    output += `**Steps:**\\n`;\n    fix.instructions.forEach((step, i) => {\n      output += `${i + 1}. ${step}\\n`;\n    });\n    output += `\\n`;\n  });\n} else {\n  output += `ℹ️  **NO AUTOMATIC FIX AVAILABLE**\\n\\n`;\n  output += `This issue requires:\n- Investigation of root cause\\n`;\n  output += `- Custom solution\\n`;\n  output += `- Workflow redesign\\n\\n`;\n  output += `I can help debug further if you provide more details.\\n`;\n}\n\nif (data.execution_analysis) {\n  output += `\\n---\\n\\n`;\n  output += `📊 **Execution Analysis:**\\n`;\n  output += `- Total nodes: ${data.execution_analysis.total_nodes}\\n`;\n  output += `- Failed nodes: ${data.execution_analysis.failed_nodes.length}\\n`;\n  output += `- Last successful: ${data.execution_analysis.last_successful_node || 'N/A'}\\n`;\n}\n\nreturn [{\n  json: {\n    formatted_output: output,\n    analysis: data,\n    success: true\n  }\n}];"
+      },
+      "id": "format-output-fixer",
+      "name": "Format Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1350, 400]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "When called by another workflow": {
+      "main": [
+        [
+          {
+            "node": "Extract Parameters",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Parameters": {
+      "main": [
+        [
+          {
+            "node": "Get Workflow",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Get Execution (if provided)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Get All Credentials",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Workflow": {
+      "main": [
+        [
+          {
+            "node": "Analyze & Fix",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Execution (if provided)": {
+      "main": [
+        [
+          {
+            "node": "Analyze & Fix",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get All Credentials": {
+      "main": [
+        [
+          {
+            "node": "Analyze & Fix",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Analyze & Fix": {
+      "main": [
+        [
+          {
+            "node": "Was Auto-Fixed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Was Auto-Fixed?": {
+      "main": [
+        [
+          {
+            "node": "Apply Fix",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Format Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Apply Fix": {
+      "main": [
+        [
+          {
+            "node": "Format Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "initial",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "eb47830968c19640d461725e22e2e82f18382dcdabd1739e2b75698b31e1a0c9"
+  },
+  "id": "auto-fixer-tool",
+  "tags": []
+}

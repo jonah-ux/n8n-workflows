@@ -1,0 +1,186 @@
+{
+  "name": "🏥 Workflow Health Monitor Tool",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "health-monitor-trigger",
+      "name": "When called by another workflow",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "monitor-type",
+              "name": "monitor_type",
+              "value": "={{ $json.monitor_type || 'all' }}",
+              "type": "string"
+            },
+            {
+              "id": "time-range",
+              "name": "time_range_hours",
+              "value": "={{ $json.time_range_hours || 24 }}",
+              "type": "number"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "extract-params-health",
+      "name": "Extract Parameters",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.3,
+      "position": [470, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://jonahautoshopmedia.app.n8n.cloud/api/v1/workflows",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "n8nApi",
+        "options": {}
+      },
+      "id": "get-all-workflows",
+      "name": "Get All Workflows",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [690, 300],
+      "credentials": {
+        "n8nApi": {
+          "id": "BfmmuCL4hhYYZq4w",
+          "name": "n8n account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://jonahautoshopmedia.app.n8n.cloud/api/v1/executions",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "n8nApi",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "limit",
+              "value": "100"
+            },
+            {
+              "name": "status",
+              "value": "error"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "get-failed-executions",
+      "name": "Get Recent Failed Executions",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [690, 500],
+      "credentials": {
+        "n8nApi": {
+          "id": "BfmmuCL4hhYYZq4w",
+          "name": "n8n account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const workflows = Array.isArray($input.first().json) ? $input.first().json : ($input.first().json.data || []);\nconst failedExecutions = Array.isArray($input.all()[1]?.json) ? $input.all()[1].json : ($input.all()[1]?.json?.data || []);\n\nconst timeRange = $('Extract Parameters').item.json.time_range_hours;\nconst cutoffTime = new Date(Date.now() - (timeRange * 60 * 60 * 1000));\n\nconst healthReport = {\n  timestamp: new Date().toISOString(),\n  time_range_hours: timeRange,\n  total_workflows: workflows.length,\n  active_workflows: 0,\n  inactive_workflows: 0,\n  workflows_with_issues: [],\n  critical_issues: [],\n  warnings: [],\n  recommendations: [],\n  overall_health_score: 0\n};\n\nconst workflowStats = {};\n\n// Analyze each workflow\nworkflows.forEach(workflow => {\n  if (workflow.active) {\n    healthReport.active_workflows++;\n  } else {\n    healthReport.inactive_workflows++;\n  }\n  \n  const stats = {\n    id: workflow.id,\n    name: workflow.name,\n    active: workflow.active,\n    node_count: workflow.nodes?.length || 0,\n    connection_count: Object.keys(workflow.connections || {}).length,\n    issues: [],\n    warnings: [],\n    health_score: 100\n  };\n  \n  // Check for missing error handling\n  if (workflow.nodes) {\n    const nodesWithoutErrorHandling = workflow.nodes.filter(n => \n      !n.onError && \n      !['n8n-nodes-base.start', 'n8n-nodes-base.executeWorkflowTrigger'].includes(n.type)\n    );\n    \n    if (nodesWithoutErrorHandling.length > 0) {\n      stats.issues.push({\n        type: 'missing_error_handling',\n        severity: 'medium',\n        message: `${nodesWithoutErrorHandling.length} nodes lack error handling`,\n        affected_nodes: nodesWithoutErrorHandling.map(n => n.name)\n      });\n      stats.health_score -= 10;\n    }\n    \n    // Check for missing retry logic on API nodes\n    const apiNodesWithoutRetry = workflow.nodes.filter(n => \n      (n.type.includes('http') || n.type.includes('api')) && \n      !n.retryOnFail\n    );\n    \n    if (apiNodesWithoutRetry.length > 0) {\n      stats.warnings.push({\n        type: 'missing_retry_logic',\n        severity: 'low',\n        message: `${apiNodesWithoutRetry.length} API nodes lack retry logic`,\n        affected_nodes: apiNodesWithoutRetry.map(n => n.name)\n      });\n      stats.health_score -= 5;\n    }\n    \n    // Check for orphaned nodes\n    const connections = workflow.connections || {};\n    const connectedNodes = new Set();\n    Object.values(connections).forEach(conn => {\n      if (conn.main) {\n        conn.main.forEach(branch => {\n          branch.forEach(c => connectedNodes.add(c.node));\n        });\n      }\n    });\n    \n    const triggers = workflow.nodes.filter(n => \n      ['n8n-nodes-base.start', 'n8n-nodes-base.executeWorkflowTrigger', 'n8n-nodes-base.scheduleTrigger'].includes(n.type)\n    );\n    \n    const orphanedNodes = workflow.nodes.filter(n => \n      !triggers.some(t => t.name === n.name) && \n      !connectedNodes.has(n.name) &&\n      !Object.keys(connections).includes(n.name)\n    );\n    \n    if (orphanedNodes.length > 0) {\n      stats.issues.push({\n        type: 'orphaned_nodes',\n        severity: 'low',\n        message: `${orphanedNodes.length} disconnected nodes detected`,\n        affected_nodes: orphanedNodes.map(n => n.name)\n      });\n      stats.health_score -= 15;\n    }\n    \n    // Check for very long workflows (performance concern)\n    if (workflow.nodes.length > 30) {\n      stats.warnings.push({\n        type: 'complex_workflow',\n        severity: 'low',\n        message: `Workflow has ${workflow.nodes.length} nodes - consider breaking into sub-workflows`\n      });\n      stats.health_score -= 5;\n    }\n  }\n  \n  workflowStats[workflow.id] = stats;\n});\n\n// Analyze failed executions\nconst recentFailures = failedExecutions.filter(exec => \n  new Date(exec.stoppedAt) > cutoffTime\n);\n\nconst failuresByWorkflow = {};\nrecentFailures.forEach(exec => {\n  if (!failuresByWorkflow[exec.workflowId]) {\n    failuresByWorkflow[exec.workflowId] = [];\n  }\n  failuresByWorkflow[exec.workflowId].push(exec);\n});\n\n// Identify problematic workflows\nObject.entries(failuresByWorkflow).forEach(([workflowId, failures]) => {\n  const stats = workflowStats[workflowId];\n  if (!stats) return;\n  \n  const failureRate = failures.length;\n  \n  if (failureRate >= 10) {\n    stats.issues.push({\n      type: 'high_failure_rate',\n      severity: 'critical',\n      message: `${failureRate} failures in last ${timeRange}h`,\n      failure_count: failureRate\n    });\n    stats.health_score -= 30;\n    \n    healthReport.critical_issues.push({\n      workflow_id: workflowId,\n      workflow_name: stats.name,\n      issue: `Critical: ${failureRate} failures`,\n      action: 'Immediate investigation required'\n    });\n  } else if (failureRate >= 5) {\n    stats.issues.push({\n      type: 'moderate_failure_rate',\n      severity: 'high',\n      message: `${failureRate} failures in last ${timeRange}h`,\n      failure_count: failureRate\n    });\n    stats.health_score -= 20;\n    \n    healthReport.warnings.push({\n      workflow_id: workflowId,\n      workflow_name: stats.name,\n      warning: `${failureRate} failures detected`,\n      action: 'Review and debug recommended'\n    });\n  } else if (failureRate > 0) {\n    stats.warnings.push({\n      type: 'occasional_failures',\n      severity: 'medium',\n      message: `${failureRate} failures in last ${timeRange}h`,\n      failure_count: failureRate\n    });\n    stats.health_score -= 10;\n  }\n  \n  stats.recent_failures = failureRate;\n});\n\n// Identify workflows with issues\nhealthReport.workflows_with_issues = Object.values(workflowStats)\n  .filter(stats => stats.issues.length > 0 || stats.health_score < 80)\n  .sort((a, b) => a.health_score - b.health_score);\n\n// Generate recommendations\nif (healthReport.workflows_with_issues.length > 0) {\n  healthReport.recommendations.push({\n    priority: 'high',\n    action: 'Add error handling',\n    description: `${healthReport.workflows_with_issues.filter(w => w.issues.some(i => i.type === 'missing_error_handling')).length} workflows need error handling`,\n    automated: true\n  });\n}\n\nif (Object.keys(failuresByWorkflow).length > 5) {\n  healthReport.recommendations.push({\n    priority: 'high',\n    action: 'Investigate failures',\n    description: `${Object.keys(failuresByWorkflow).length} workflows experiencing failures`,\n    automated: false\n  });\n}\n\nconst inactiveCount = healthReport.inactive_workflows;\nif (inactiveCount > healthReport.total_workflows * 0.3) {\n  healthReport.recommendations.push({\n    priority: 'low',\n    action: 'Clean up inactive workflows',\n    description: `${inactiveCount} inactive workflows (${Math.round(inactiveCount/healthReport.total_workflows*100)}% of total)`,\n    automated: false\n  });\n}\n\n// Calculate overall health score\nconst avgWorkflowHealth = Object.values(workflowStats)\n  .reduce((sum, stats) => sum + stats.health_score, 0) / workflows.length;\n\nconst criticalPenalty = healthReport.critical_issues.length * 10;\nconst warningPenalty = healthReport.warnings.length * 5;\n\nhealthReport.overall_health_score = Math.max(0, Math.round(avgWorkflowHealth - criticalPenalty - warningPenalty));\n\nreturn [{\n  json: {\n    health_report: healthReport,\n    workflow_details: workflowStats,\n    failed_executions_count: recentFailures.length,\n    success: true\n  }\n}];"
+      },
+      "id": "analyze-health",
+      "name": "Analyze Health",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [910, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $input.first().json;\nconst report = data.health_report;\n\nlet output = `🏥 **Workflow Health Report**\\n\\n`;\noutput += `**Generated:** ${new Date(report.timestamp).toLocaleString()}\\n`;\noutput += `**Time Range:** Last ${report.time_range_hours} hours\\n\\n`;\n\noutput += `---\\n\\n`;\n\n// Overall health score\nconst healthIcon = report.overall_health_score >= 90 ? '🟢' : \n                   report.overall_health_score >= 70 ? '🟡' : \n                   report.overall_health_score >= 50 ? '🟠' : '🔴';\n\noutput += `${healthIcon} **Overall Health Score: ${report.overall_health_score}/100**\\n\\n`;\n\noutput += `📊 **System Overview:**\\n`;\noutput += `- Total Workflows: ${report.total_workflows}\\n`;\noutput += `- Active: ${report.active_workflows}\\n`;\noutput += `- Inactive: ${report.inactive_workflows}\\n`;\noutput += `- With Issues: ${report.workflows_with_issues.length}\\n`;\noutput += `- Failed Executions: ${data.failed_executions_count}\\n\\n`;\n\nif (report.critical_issues.length > 0) {\n  output += `🚨 **CRITICAL ISSUES (${report.critical_issues.length})**\\n\\n`;\n  report.critical_issues.forEach((issue, i) => {\n    output += `${i + 1}. **${issue.workflow_name}**\\n`;\n    output += `   ${issue.issue}\\n`;\n    output += `   Action: ${issue.action}\\n\\n`;\n  });\n}\n\nif (report.warnings.length > 0) {\n  output += `⚠️  **WARNINGS (${report.warnings.length})**\\n\\n`;\n  report.warnings.slice(0, 5).forEach((warning, i) => {\n    output += `${i + 1}. **${warning.workflow_name}**\\n`;\n    output += `   ${warning.warning}\\n`;\n    output += `   Action: ${warning.action}\\n\\n`;\n  });\n  if (report.warnings.length > 5) {\n    output += `   ... and ${report.warnings.length - 5} more warnings\\n\\n`;\n  }\n}\n\nif (report.workflows_with_issues.length > 0) {\n  output += `🔍 **TOP WORKFLOWS NEEDING ATTENTION**\\n\\n`;\n  report.workflows_with_issues.slice(0, 10).forEach((workflow, i) => {\n    const scoreIcon = workflow.health_score >= 80 ? '🟡' : \n                      workflow.health_score >= 60 ? '🟠' : '🔴';\n    \n    output += `${i + 1}. ${scoreIcon} **${workflow.name}** (Score: ${workflow.health_score}/100)\\n`;\n    \n    if (workflow.recent_failures > 0) {\n      output += `   ❌ ${workflow.recent_failures} recent failures\\n`;\n    }\n    \n    workflow.issues.forEach(issue => {\n      output += `   • ${issue.message}\\n`;\n    });\n    \n    output += `\\n`;\n  });\n}\n\nif (report.recommendations.length > 0) {\n  output += `\\n💡 **RECOMMENDATIONS**\\n\\n`;\n  report.recommendations.forEach((rec, i) => {\n    const priorityIcon = rec.priority === 'high' ? '🔴' : \n                        rec.priority === 'medium' ? '🟡' : '🟢';\n    const autoIcon = rec.automated ? '🤖' : '👤';\n    \n    output += `${priorityIcon} ${autoIcon} **${rec.action}**\\n`;\n    output += `   ${rec.description}\\n`;\n    output += `   Can Auto-Fix: ${rec.automated ? 'Yes' : 'No'}\\n\\n`;\n  });\n}\n\noutput += `\\n---\\n\\n`;\n\nif (report.overall_health_score >= 90) {\n  output += `✨ **Excellent health! System is running smoothly.**\\n`;\n} else if (report.overall_health_score >= 70) {\n  output += `👍 **Good health with minor issues to address.**\\n`;\n} else if (report.overall_health_score >= 50) {\n  output += `⚠️  **Moderate health. Several issues need attention.**\\n`;\n} else {\n  output += `🚨 **Poor health. Immediate action required!**\\n`;\n}\n\nif (report.recommendations.some(r => r.automated)) {\n  output += `\\n🤖 **I can automatically fix some of these issues. Would you like me to?**`;\n}\n\nreturn [{\n  json: {\n    formatted_output: output,\n    report: data,\n    success: true\n  }\n}];"
+      },
+      "id": "format-output-health",
+      "name": "Format Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1130, 300]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "When called by another workflow": {
+      "main": [
+        [
+          {
+            "node": "Extract Parameters",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Parameters": {
+      "main": [
+        [
+          {
+            "node": "Get All Workflows",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Get Recent Failed Executions",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get All Workflows": {
+      "main": [
+        [
+          {
+            "node": "Analyze Health",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Recent Failed Executions": {
+      "main": [
+        [
+          {
+            "node": "Analyze Health",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Analyze Health": {
+      "main": [
+        [
+          {
+            "node": "Format Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "initial",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "eb47830968c19640d461725e22e2e82f18382dcdabd1739e2b75698b31e1a0c9"
+  },
+  "id": "workflow-health-monitor-tool",
+  "tags": []
+}

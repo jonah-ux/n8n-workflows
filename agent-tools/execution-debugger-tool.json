@@ -1,0 +1,179 @@
+{
+  "name": "🔍 Execution Debugger Tool",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "execution-debugger-trigger",
+      "name": "When called by another workflow",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "exec-id",
+              "name": "execution_id",
+              "value": "={{ $json.execution_id }}",
+              "type": "string"
+            },
+            {
+              "id": "workflow-id",
+              "name": "workflow_id",
+              "value": "={{ $json.workflow_id }}",
+              "type": "string"
+            },
+            {
+              "id": "analysis-depth",
+              "name": "analysis_depth",
+              "value": "={{ $json.analysis_depth || 'detailed' }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "extract-params",
+      "name": "Extract Parameters",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.3,
+      "position": [470, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://jonahautoshopmedia.app.n8n.cloud/api/v1/executions/{{ $json.execution_id }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "n8nApi",
+        "options": {}
+      },
+      "id": "get-execution",
+      "name": "Get Execution Details",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [690, 300],
+      "credentials": {
+        "n8nApi": {
+          "id": "BfmmuCL4hhYYZq4w",
+          "name": "n8n account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://jonahautoshopmedia.app.n8n.cloud/api/v1/workflows/{{ $('Extract Parameters').item.json.workflow_id }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "n8nApi",
+        "options": {}
+      },
+      "id": "get-workflow",
+      "name": "Get Workflow Definition",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [690, 500],
+      "credentials": {
+        "n8nApi": {
+          "id": "BfmmuCL4hhYYZq4w",
+          "name": "n8n account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const execution = $input.first().json;\nconst workflow = $input.all()[1]?.json;\nconst analysisDepth = $('Extract Parameters').item.json.analysis_depth;\n\n// Deep analysis of execution failure\nconst analysis = {\n  execution_id: execution.id,\n  workflow_id: execution.workflowId,\n  workflow_name: workflow?.name || 'Unknown',\n  status: execution.status,\n  started_at: execution.startedAt,\n  stopped_at: execution.stoppedAt,\n  duration_ms: new Date(execution.stoppedAt) - new Date(execution.startedAt),\n  mode: execution.mode,\n  errors: [],\n  warnings: [],\n  node_analysis: [],\n  data_flow: [],\n  root_cause: null,\n  suggested_fixes: [],\n  error_patterns: []\n};\n\n// Analyze each node execution\nconst nodeData = execution.data?.resultData?.runData || {};\nconst lastNodeExecuted = execution.data?.resultData?.lastNodeExecuted;\n\nObject.entries(nodeData).forEach(([nodeName, runs]) => {\n  runs.forEach((run, runIndex) => {\n    const nodeAnalysis = {\n      node_name: nodeName,\n      run_index: runIndex,\n      execution_time_ms: run.executionTime,\n      start_time: run.startTime,\n      items_in: run.data?.main?.[0]?.length || 0,\n      items_out: run.data?.main?.[0]?.length || 0,\n      error: run.error,\n      status: run.error ? 'failed' : 'success'\n    };\n\n    // Detect errors\n    if (run.error) {\n      const error = {\n        node: nodeName,\n        type: run.error.name || 'Error',\n        message: run.error.message,\n        description: run.error.description,\n        stack: run.error.stack,\n        timestamp: run.startTime,\n        context: {\n          items_processed: nodeAnalysis.items_in,\n          execution_time_ms: nodeAnalysis.execution_time_ms\n        }\n      };\n\n      analysis.errors.push(error);\n\n      // Pattern detection\n      if (run.error.message?.includes('credential')) {\n        analysis.error_patterns.push('CREDENTIAL_ERROR');\n      } else if (run.error.message?.includes('timeout')) {\n        analysis.error_patterns.push('TIMEOUT_ERROR');\n      } else if (run.error.message?.includes('401') || run.error.message?.includes('403')) {\n        analysis.error_patterns.push('AUTHENTICATION_ERROR');\n      } else if (run.error.message?.includes('404')) {\n        analysis.error_patterns.push('NOT_FOUND_ERROR');\n      } else if (run.error.message?.includes('500')) {\n        analysis.error_patterns.push('SERVER_ERROR');\n      } else if (run.error.message?.includes('ECONNREFUSED') || run.error.message?.includes('ENOTFOUND')) {\n        analysis.error_patterns.push('NETWORK_ERROR');\n      } else if (run.error.message?.includes('JSON') || run.error.message?.includes('parse')) {\n        analysis.error_patterns.push('DATA_PARSING_ERROR');\n      }\n    }\n\n    // Detect warnings\n    if (nodeAnalysis.execution_time_ms > 30000) {\n      analysis.warnings.push({\n        node: nodeName,\n        type: 'SLOW_EXECUTION',\n        message: `Node took ${(nodeAnalysis.execution_time_ms / 1000).toFixed(2)}s to execute`,\n        severity: 'medium'\n      });\n    }\n\n    if (nodeAnalysis.items_in > 1000) {\n      analysis.warnings.push({\n        node: nodeName,\n        type: 'LARGE_DATASET',\n        message: `Processing ${nodeAnalysis.items_in} items may cause performance issues`,\n        severity: 'low'\n      });\n    }\n\n    if (nodeAnalysis.items_in > 0 && nodeAnalysis.items_out === 0 && !run.error) {\n      analysis.warnings.push({\n        node: nodeName,\n        type: 'DATA_LOSS',\n        message: `Node received ${nodeAnalysis.items_in} items but output 0`,\n        severity: 'high'\n      });\n    }\n\n    analysis.node_analysis.push(nodeAnalysis);\n\n    // Track data flow\n    analysis.data_flow.push({\n      node: nodeName,\n      items: nodeAnalysis.items_out,\n      timestamp: run.startTime\n    });\n  });\n});\n\n// Determine root cause\nif (analysis.errors.length > 0) {\n  const firstError = analysis.errors[0];\n  \n  if (analysis.error_patterns.includes('CREDENTIAL_ERROR')) {\n    analysis.root_cause = {\n      type: 'CREDENTIAL_ERROR',\n      description: 'Credential is missing, expired, or incorrectly configured',\n      failing_node: firstError.node,\n      error_message: firstError.message\n    };\n    analysis.suggested_fixes.push({\n      priority: 'high',\n      action: 'fix_credentials',\n      description: `Update or reconfigure credentials for ${firstError.node}`,\n      automated: true\n    });\n  } else if (analysis.error_patterns.includes('AUTHENTICATION_ERROR')) {\n    analysis.root_cause = {\n      type: 'AUTHENTICATION_ERROR',\n      description: 'API authentication failed - check API keys or tokens',\n      failing_node: firstError.node,\n      error_message: firstError.message\n    };\n    analysis.suggested_fixes.push({\n      priority: 'high',\n      action: 'verify_api_credentials',\n      description: `Verify API credentials for ${firstError.node}. Token may be expired or invalid.`,\n      automated: false\n    });\n  } else if (analysis.error_patterns.includes('NETWORK_ERROR')) {\n    analysis.root_cause = {\n      type: 'NETWORK_ERROR',\n      description: 'Network connectivity issue - service may be down or unreachable',\n      failing_node: firstError.node,\n      error_message: firstError.message\n    };\n    analysis.suggested_fixes.push({\n      priority: 'medium',\n      action: 'add_retry_logic',\n      description: `Add retry logic with exponential backoff to ${firstError.node}`,\n      automated: true\n    });\n  } else if (analysis.error_patterns.includes('DATA_PARSING_ERROR')) {\n    analysis.root_cause = {\n      type: 'DATA_PARSING_ERROR',\n      description: 'Data format issue - incoming data structure unexpected',\n      failing_node: firstError.node,\n      error_message: firstError.message\n    };\n    analysis.suggested_fixes.push({\n      priority: 'high',\n      action: 'add_data_validation',\n      description: `Add data validation and transformation before ${firstError.node}`,\n      automated: true\n    });\n  } else if (analysis.error_patterns.includes('TIMEOUT_ERROR')) {\n    analysis.root_cause = {\n      type: 'TIMEOUT_ERROR',\n      description: 'Request timeout - operation taking too long',\n      failing_node: firstError.node,\n      error_message: firstError.message\n    };\n    analysis.suggested_fixes.push({\n      priority: 'medium',\n      action: 'increase_timeout',\n      description: `Increase timeout setting for ${firstError.node} or optimize query`,\n      automated: true\n    });\n  } else {\n    analysis.root_cause = {\n      type: 'UNKNOWN_ERROR',\n      description: firstError.message,\n      failing_node: firstError.node,\n      error_message: firstError.message\n    };\n    analysis.suggested_fixes.push({\n      priority: 'high',\n      action: 'manual_investigation',\n      description: `Investigate error in ${firstError.node}: ${firstError.message}`,\n      automated: false\n    });\n  }\n}\n\n// Additional suggestions based on warnings\nif (analysis.warnings.some(w => w.type === 'SLOW_EXECUTION')) {\n  analysis.suggested_fixes.push({\n    priority: 'low',\n    action: 'optimize_performance',\n    description: 'Consider batching, caching, or parallel processing for slow nodes',\n    automated: true\n  });\n}\n\nif (analysis.warnings.some(w => w.type === 'DATA_LOSS')) {\n  analysis.suggested_fixes.push({\n    priority: 'high',\n    action: 'investigate_data_loss',\n    description: 'Check filter conditions or data transformation logic',\n    automated: false\n  });\n}\n\n// Generate summary\nanalysis.summary = {\n  total_nodes_executed: Object.keys(nodeData).length,\n  last_node_executed: lastNodeExecuted,\n  error_count: analysis.errors.length,\n  warning_count: analysis.warnings.length,\n  total_duration_seconds: (analysis.duration_ms / 1000).toFixed(2),\n  items_processed: analysis.data_flow.reduce((sum, df) => sum + df.items, 0),\n  can_auto_fix: analysis.suggested_fixes.some(f => f.automated),\n  severity: analysis.errors.length > 0 ? 'error' : analysis.warnings.length > 0 ? 'warning' : 'success'\n};\n\n// Format output based on depth\nif (analysisDepth === 'summary') {\n  return [{\n    json: {\n      execution_id: analysis.execution_id,\n      workflow_name: analysis.workflow_name,\n      status: analysis.status,\n      summary: analysis.summary,\n      root_cause: analysis.root_cause,\n      top_suggestions: analysis.suggested_fixes.slice(0, 3)\n    }\n  }];\n} else {\n  return [{ json: analysis }];\n}"
+      },
+      "id": "analyze-execution",
+      "name": "Analyze Execution",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [910, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const analysis = $input.first().json;\n\n// Format beautiful output\nlet output = `🔍 **Execution Debug Report**\\n\\n`;\noutput += `**Workflow:** ${analysis.workflow_name}\\n`;\noutput += `**Execution ID:** ${analysis.execution_id}\\n`;\noutput += `**Status:** ${analysis.status}\\n`;\noutput += `**Duration:** ${analysis.summary.total_duration_seconds}s\\n`;\noutput += `**Nodes Executed:** ${analysis.summary.total_nodes_executed}\\n`;\noutput += `**Items Processed:** ${analysis.summary.items_processed}\\n\\n`;\n\nif (analysis.errors.length > 0) {\n  output += `❌ **ERRORS (${analysis.errors.length})**\\n\\n`;\n  analysis.errors.forEach((error, i) => {\n    output += `**${i + 1}. ${error.node}**\\n`;\n    output += `   Type: ${error.type}\\n`;\n    output += `   Message: ${error.message}\\n`;\n    if (error.description) {\n      output += `   Details: ${error.description}\\n`;\n    }\n    output += `\\n`;\n  });\n}\n\nif (analysis.root_cause) {\n  output += `🎯 **ROOT CAUSE**\\n\\n`;\n  output += `**Type:** ${analysis.root_cause.type}\\n`;\n  output += `**Node:** ${analysis.root_cause.failing_node}\\n`;\n  output += `**Description:** ${analysis.root_cause.description}\\n\\n`;\n}\n\nif (analysis.suggested_fixes.length > 0) {\n  output += `💡 **SUGGESTED FIXES**\\n\\n`;\n  analysis.suggested_fixes.forEach((fix, i) => {\n    const icon = fix.priority === 'high' ? '🔴' : fix.priority === 'medium' ? '🟡' : '🟢';\n    const autoIcon = fix.automated ? '🤖' : '👤';\n    output += `${icon} ${autoIcon} **${i + 1}. ${fix.action}**\\n`;\n    output += `   ${fix.description}\\n`;\n    output += `   Priority: ${fix.priority.toUpperCase()}\\n`;\n    output += `   Can Auto-Fix: ${fix.automated ? 'Yes' : 'No'}\\n\\n`;\n  });\n}\n\nif (analysis.warnings.length > 0) {\n  output += `⚠️  **WARNINGS (${analysis.warnings.length})**\\n\\n`;\n  analysis.warnings.forEach((warning, i) => {\n    output += `**${i + 1}. ${warning.node}** - ${warning.type}\\n`;\n    output += `   ${warning.message}\\n\\n`;\n  });\n}\n\noutput += `\\n---\\n\\n`;\noutput += `📊 **Node Execution Timeline:**\\n\\n`;\nanalysis.node_analysis.forEach(node => {\n  const statusIcon = node.status === 'failed' ? '❌' : '✅';\n  output += `${statusIcon} **${node.node_name}** (${(node.execution_time_ms / 1000).toFixed(2)}s)\\n`;\n  output += `   Items: ${node.items_in} in → ${node.items_out} out\\n`;\n  if (node.error) {\n    output += `   Error: ${node.error.message}\\n`;\n  }\n  output += `\\n`;\n});\n\noutput += `\\n---\\n\\n`;\nif (analysis.summary.can_auto_fix) {\n  output += `✨ **Some issues can be automatically fixed!**\\n`;\n  output += `Ask me to apply suggested fixes.\\n`;\n} else {\n  output += `🔧 **Manual investigation required**\\n`;\n}\n\nreturn [{\n  json: {\n    formatted_output: output,\n    analysis: analysis,\n    success: true\n  }\n}];"
+      },
+      "id": "format-output",
+      "name": "Format Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1130, 300]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "When called by another workflow": {
+      "main": [
+        [
+          {
+            "node": "Extract Parameters",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Parameters": {
+      "main": [
+        [
+          {
+            "node": "Get Execution Details",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Get Workflow Definition",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Execution Details": {
+      "main": [
+        [
+          {
+            "node": "Analyze Execution",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Workflow Definition": {
+      "main": [
+        [
+          {
+            "node": "Analyze Execution",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Analyze Execution": {
+      "main": [
+        [
+          {
+            "node": "Format Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "initial",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "eb47830968c19640d461725e22e2e82f18382dcdabd1739e2b75698b31e1a0c9"
+  },
+  "id": "execution-debugger-tool",
+  "tags": []
+}

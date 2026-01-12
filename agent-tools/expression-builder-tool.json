@@ -1,0 +1,174 @@
+{
+  "name": "🎯 Expression Builder Tool",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "expression-trigger",
+      "name": "When called by another workflow",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "task-desc",
+              "name": "task",
+              "value": "={{ $json.task }}",
+              "type": "string"
+            },
+            {
+              "id": "context-info",
+              "name": "context",
+              "value": "={{ $json.context || '' }}",
+              "type": "string"
+            },
+            {
+              "id": "data-structure",
+              "name": "data_structure",
+              "value": "={{ $json.data_structure || '' }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "extract-params-expr",
+      "name": "Extract Parameters",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.3,
+      "position": [470, 300]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.task }}",
+        "hasOutputParser": true,
+        "options": {
+          "systemMessage": "You are an expert n8n expression builder. Generate working n8n expressions that follow best practices.\n\n## n8n Expression Syntax\n\n**Basic syntax:**\n- Expressions start with ={{ and end with }}\n- Access current item: $json.fieldName\n- Access all items: $input.all()\n- Access first item: $input.first()\n- Access specific item: $input.item.json.fieldName\n- Previous node data: $('Node Name').item.json.fieldName\n\n**Common patterns:**\n\n1. **Access nested data:**\n   {{ $json.user.profile.email }}\n\n2. **Conditional logic:**\n   {{ $json.status === 'active' ? 'Yes' : 'No' }}\n\n3. **Array operations:**\n   {{ $json.users.map(u => u.email) }}\n   {{ $json.items.filter(i => i.price > 100) }}\n   {{ $json.numbers.reduce((a, b) => a + b, 0) }}\n\n4. **String operations:**\n   {{ $json.name.toLowerCase() }}\n   {{ $json.text.split(',') }}\n   {{ `Hello ${$json.name}` }}\n\n5. **Date operations:**\n   {{ new Date().toISOString() }}\n   {{ DateTime.now().toFormat('yyyy-MM-dd') }}\n   {{ DateTime.fromISO($json.date).plus({ days: 7 }) }}\n\n6. **Math operations:**\n   {{ Math.round($json.price * 1.1) }}\n   {{ Math.max(...$json.numbers) }}\n\n7. **Check if field exists:**\n   {{ $json.field !== undefined && $json.field !== null }}\n\n8. **Access previous nodes:**\n   {{ $('HTTP Request').item.json.response }}\n   {{ $('Code').all().map(i => i.json.result) }}\n\n9. **Combine multiple values:**\n   {{ $json.firstName + ' ' + $json.lastName }}\n\n10. **Safe access (avoid errors):**\n    {{ $json.user?.profile?.email || 'N/A' }}\n\n**Libraries available:**\n- Luxon (DateTime) for dates\n- Math for calculations\n- Standard JavaScript (String, Array, Object methods)\n\n**Best practices:**\n1. Use optional chaining (?.) for nested properties\n2. Provide fallback values with ||\n3. Keep expressions simple - use Code node for complex logic\n4. Test expressions with sample data\n5. Use template literals for string concatenation\n\n## Your Task\n\nGenerate a working n8n expression based on the user's request. Return:\n\n1. The expression itself\n2. Brief explanation of what it does\n3. Example output\n4. Any notes or warnings\n\nFormat response as JSON:\n{\n  \"expression\": \"the expression\",\n  \"explanation\": \"what it does\",\n  \"example_output\": \"example result\",\n  \"notes\": \"any important notes\"\n}"
+        }
+      },
+      "id": "generate-expression",
+      "name": "Generate Expression",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.6,
+      "position": [690, 300],
+      "credentials": {
+        "anthropicApi": {
+          "id": "qMSVDiuomuTzBLLX",
+          "name": "Anthropic account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "model": "claude-sonnet-4-20250514",
+        "options": {
+          "temperature": 0.2
+        }
+      },
+      "id": "claude-sonnet-expr",
+      "name": "Claude Sonnet 4.5",
+      "type": "@n8n/n8n-nodes-langchain.lmChatAnthropic",
+      "typeVersion": 1.7,
+      "position": [690, 500],
+      "credentials": {
+        "anthropicApi": {
+          "id": "qMSVDiuomuTzBLLX",
+          "name": "Anthropic account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsonSchema": "{\"type\":\"object\",\"properties\":{\"expression\":{\"type\":\"string\",\"description\":\"The n8n expression\"},\"explanation\":{\"type\":\"string\",\"description\":\"What the expression does\"},\"example_output\":{\"type\":\"string\",\"description\":\"Example output\"},\"notes\":{\"type\":\"string\",\"description\":\"Important notes or warnings\"}},\"required\":[\"expression\",\"explanation\"],\"additionalProperties\":false}"
+      },
+      "id": "json-parser-expr",
+      "name": "JSON Output Parser",
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1.2,
+      "position": [690, 700]
+    },
+    {
+      "parameters": {
+        "jsCode": "const result = $input.first().json;\n\nlet output = `🎯 **n8n Expression Generated**\\n\\n`;\n\noutput += `**Expression:**\\n\\`\\`\\`\\n${ result.expression }\\n\\`\\`\\`\\n\\n`;\n\noutput += `**What it does:**\\n${result.explanation}\\n\\n`;\n\nif (result.example_output) {\n  output += `**Example Output:**\\n\\`${result.example_output}\\`\\n\\n`;\n}\n\nif (result.notes) {\n  output += `**📝 Notes:**\\n${result.notes}\\n\\n`;\n}\n\noutput += `---\\n\\n`;\noutput += `**How to use:**\\n`;\noutput += `1. Copy the expression above\\n`;\noutput += `2. In n8n, click on any field with the 📝 icon\\n`;\noutput += `3. Paste the expression\\n`;\noutput += `4. Test with your data\\n\\n`;\n\noutput += `💡 **Tip:** Test expressions using the \"Test step\" button in n8n to see results before saving.`;\n\nreturn [{\n  json: {\n    formatted_output: output,\n    expression: result.expression,\n    explanation: result.explanation,\n    example_output: result.example_output,\n    notes: result.notes,\n    success: true\n  }\n}];"
+      },
+      "id": "format-output-expr",
+      "name": "Format Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [910, 300]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "When called by another workflow": {
+      "main": [
+        [
+          {
+            "node": "Extract Parameters",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Parameters": {
+      "main": [
+        [
+          {
+            "node": "Generate Expression",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Expression": {
+      "main": [
+        [
+          {
+            "node": "Format Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claude Sonnet 4.5": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Generate Expression",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "JSON Output Parser": {
+      "ai_outputParser": [
+        [
+          {
+            "node": "Generate Expression",
+            "type": "ai_outputParser",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "initial",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "eb47830968c19640d461725e22e2e82f18382dcdabd1739e2b75698b31e1a0c9"
+  },
+  "id": "expression-builder-tool",
+  "tags": []
+}

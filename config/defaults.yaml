@@ -1,0 +1,410 @@
+# God-Mode Personal Ops System - Default Configuration
+# DO NOT commit secrets to this file. Use .env for sensitive values.
+
+# ============================================================================
+# SYSTEM IDENTITY
+# ============================================================================
+system:
+  name: "God-Mode Ops System"
+  operator: "Jonah"
+  timezone: "America/Chicago"
+  environment: "production"  # production | staging | development
+
+# ============================================================================
+# OPERATING PHILOSOPHY
+# ============================================================================
+philosophy:
+  alerting_mode: "under_alert"  # Aggregate aggressively, interrupt sparingly
+  action_mode: "propose_first"  # Propose → Review → Apply (never auto-apply without approval)
+  authority_model: "canonical_wins"  # Notion canonical > verified > inferred
+  internal_only: true  # No customer/prospect comms without explicit enable
+
+# ============================================================================
+# BACKGROUND JOBS SCHEDULE
+# ============================================================================
+jobs:
+  # Periodic scan: Analyze new data for patterns and improvements
+  periodic_scan:
+    enabled: true
+    interval_minutes: 30  # Run every 30 minutes
+    timeout_minutes: 10
+    max_proposals_per_run: 10
+
+  # Daily digest: Summarize what happened + top recommendations
+  daily_digest:
+    enabled: true
+    time: "08:00"  # 8:00 AM Central
+    timezone: "America/Chicago"
+    channel: "telegram"  # telegram | email | both
+    max_items: 5  # Maximum bullet points in digest
+
+  # Morning call: Voice status summary
+  morning_call:
+    enabled: true
+    time: "06:00"  # 6:00 AM Central
+    timezone: "America/Chicago"
+    duration_seconds: 60  # Maximum call length
+    voice_provider: "salesmsg"  # salesmsg | twilio (if available)
+    script_template: "morning_status"
+
+# ============================================================================
+# QUIET HOURS
+# ============================================================================
+quiet_hours:
+  enabled: true
+  start: "21:00"  # 9:00 PM
+  end: "06:00"    # 6:00 AM
+  timezone: "America/Chicago"
+  # During quiet hours:
+  # - SEV0/SEV1 still go through
+  # - Everything else queued for morning digest
+  exceptions:
+    - "SEV0"
+    - "SEV1"
+
+# ============================================================================
+# ALERTING & SEVERITY ROUTING
+# ============================================================================
+alerting:
+  # Under-alerting philosophy: Minimize interruptions
+  default_severity: "INFO"
+
+  severity_levels:
+    SEV0:
+      description: "System completely offline"
+      delivery: "immediate_call"
+      bypass_quiet_hours: true
+      bypass_rate_limits: true
+
+    SEV1:
+      description: "Critical business impact"
+      delivery: "immediate_sms"
+      bypass_quiet_hours: true
+      bypass_rate_limits: true
+
+    WARN:
+      description: "Degraded performance or repeated failures"
+      delivery: "daily_digest"
+      bypass_quiet_hours: false
+
+    INFO:
+      description: "Normal operational updates"
+      delivery: "daily_digest"
+      bypass_quiet_hours: false
+
+    DEBUG:
+      description: "Verbose logging, never sent"
+      delivery: "none"
+
+  # Aggregation rules (under-alerting)
+  aggregation:
+    enabled: true
+    window_minutes: 60
+    # If >3 similar alerts in 60 min → Group into one
+    similarity_threshold: 0.8
+
+  # Escalation (future)
+  escalation:
+    enabled: false
+    # After N hours no response → escalate severity
+    # (Not implemented in v1)
+
+# ============================================================================
+# RATE LIMITS
+# ============================================================================
+rate_limits:
+  # Prevent runaway behavior
+  proposals_per_hour: 10
+  proposals_per_day: 50
+  corrections_per_hour: 20
+  digest_per_day: 1
+  calls_per_day: 1
+
+  # If exceeded → Log error + pause job
+  on_exceeded: "pause_job"  # pause_job | drop | queue
+
+# ============================================================================
+# KNOWLEDGE SYSTEM
+# ============================================================================
+knowledge:
+  # Authority hierarchy
+  authority_order:
+    - "canonical"  # Notion SOPs
+    - "verified"   # User-confirmed from chat/logs
+    - "inferred"   # Pattern detected, not confirmed
+
+  # Versioning
+  versioning:
+    enabled: true
+    never_delete: true  # Always supersede, never delete
+    retention_days: 365  # Keep superseded versions for 1 year minimum
+
+  # Correction detection
+  corrections:
+    enabled: true
+    keywords:  # Detect "that's wrong" patterns
+      - "wrong"
+      - "incorrect"
+      - "actually"
+      - "no that"
+      - "not right"
+      - "that's not"
+      - "fix that"
+    max_corrections_per_item: 5  # If >5, flag as ambiguous
+
+  # Supersession rules
+  supersession:
+    reasons:
+      - "updated_in_notion"
+      - "corrected_by_user"
+      - "conflicting_evidence"
+      - "deprecated_version"
+      - "context_specific"
+
+# ============================================================================
+# DATA SOURCES
+# ============================================================================
+sources:
+  # Notion (Canonical)
+  notion:
+    enabled: true
+    scan_interval_minutes: 60
+    canonical_tags: ['SOP', 'Canonical', 'Final']
+    index_all_pages: false  # Only index tagged pages
+    databases:
+      # Database IDs from env vars
+      - name: "SOPs"
+        id_env: "NOTION_SOPS_DATABASE_ID"
+      - name: "Docs"
+        id_env: "NOTION_DOCS_DATABASE_ID"
+
+  # n8n Workflows (Execution logs)
+  n8n:
+    enabled: true
+    scan_interval_minutes: 30
+    failure_threshold: 3  # Alert if same workflow fails 3+ times
+    execution_retention_days: 30
+    track_successful: false  # Only track failures
+
+  # HubSpot (CRM changes)
+  hubspot:
+    enabled: true
+    poll_interval_minutes: 60
+    track_objects:
+      - contacts
+      - deals
+      - companies
+    track_fields: "all"  # all | specific list
+
+  # Chat Logs (Conversation memory)
+  chat_logs:
+    enabled: true
+    source: "supabase"
+    table: "agent_conversations"
+    retention_days: 90
+
+# ============================================================================
+# PROPOSALS SYSTEM
+# ============================================================================
+proposals:
+  # Proposal generation
+  enabled: true
+  confidence_threshold: 0.6  # Min confidence to create proposal (0.0-1.0)
+
+  # Proposal types
+  types:
+    - add_validator
+    - patch_workflow
+    - create_sop
+    - update_config
+    - fix_credential
+    - optimize_performance
+
+  # Auto-apply (future, disabled in v1)
+  auto_apply:
+    enabled: false
+    # When enabled, only auto-apply low-risk proposals
+    allowed_types: []
+    require_confidence: 0.9
+
+  # Proposal lifecycle
+  lifecycle:
+    pending_ttl_days: 30  # Auto-archive if not reviewed in 30 days
+    statuses:
+      - pending    # Awaiting review
+      - approved   # User approved, ready to apply
+      - applied    # Successfully applied
+      - rejected   # User rejected
+      - deferred   # User wants to revisit later
+      - archived   # Auto-archived after TTL
+
+# ============================================================================
+# COMMUNICATION CHANNELS
+# ============================================================================
+communication:
+  # Providers (configured via env vars)
+  providers:
+    salesmsg:
+      enabled: true
+      use_for: ['sms', 'call']
+    telegram:
+      enabled: true
+      use_for: ['digest', 'alerts']
+    email:
+      enabled: false
+      use_for: ['digest']
+
+  # Simulation mode (for testing)
+  simulation_mode: false  # If true, log instead of send
+
+  # Internal-only guardrail
+  internal_only: true
+  external_comms_enabled: false  # MUST be explicit to enable
+
+  # Allowlist (phone numbers/chat IDs from env)
+  allowlist_env_vars:
+    - JONAH_PHONE_NUMBER
+    - JONAH_TELEGRAM_CHAT_ID
+
+# ============================================================================
+# SAFETY & GUARDRAILS
+# ============================================================================
+safety:
+  # Kill switch (emergency stop)
+  kill_switch_enabled: false  # Set via database agent_controls table
+
+  # Audit logging
+  audit:
+    enabled: true
+    log_all_actions: true
+    retention_days: 365
+    include_payloads: true
+    sanitize_secrets: true
+
+  # Approval gates
+  approval:
+    required_for:
+      - workflow_modification
+      - config_change
+      - external_communication
+      - data_deletion
+    not_required_for:
+      - read_operations
+      - proposal_creation
+      - knowledge_indexing
+      - digest_sending
+
+  # Permissions (from agent_controls table)
+  default_permissions:
+    comms_enabled: true
+    write_enabled: true
+    external_comms_enabled: false
+    jobs_enabled: true
+
+# ============================================================================
+# PATTERN DETECTION
+# ============================================================================
+patterns:
+  # Repeated failure detection
+  repeated_failures:
+    enabled: true
+    threshold: 3  # Same error 3+ times
+    window_hours: 24
+
+  # Missing SOP detection
+  missing_sop:
+    enabled: true
+    threshold: 5  # Same question asked 5+ times
+
+  # Config drift detection
+  config_drift:
+    enabled: true
+    check_interval_hours: 24
+    sources:
+      - notion_sop
+      - actual_workflow_config
+
+  # Data quality issues
+  data_quality:
+    enabled: true
+    checks:
+      - null_values
+      - format_errors
+      - duplicate_records
+
+# ============================================================================
+# PERFORMANCE TUNING
+# ============================================================================
+performance:
+  # Batch sizes
+  batch_size:
+    notion_pages: 100
+    workflow_executions: 50
+    hubspot_changes: 200
+
+  # Concurrency
+  max_concurrent_jobs: 5
+  max_concurrent_api_calls: 10
+
+  # Caching
+  cache:
+    enabled: true
+    ttl_minutes: 60
+    items:
+      - notion_pages
+      - workflow_definitions
+
+  # Database connection pool
+  database:
+    pool_size: 10
+    idle_timeout_seconds: 30
+
+# ============================================================================
+# FEATURE FLAGS
+# ============================================================================
+features:
+  # v1 features
+  knowledge_indexing: true
+  pattern_detection: true
+  proposal_generation: true
+  daily_digest: true
+  morning_call: true
+  correction_protocol: true
+
+  # Future features (disabled)
+  auto_apply_proposals: false
+  external_communications: false
+  multi_user: false
+  workflow_patching: false
+  cost_optimization: false
+
+# ============================================================================
+# MONITORING
+# ============================================================================
+monitoring:
+  health_check:
+    enabled: true
+    endpoint: "/health"
+    interval_seconds: 60
+
+  metrics:
+    enabled: true
+    export_format: "prometheus"  # prometheus | json | none
+    include:
+      - proposals_generated
+      - proposals_approved
+      - corrections_made
+      - digest_sent
+      - calls_placed
+      - job_durations
+      - error_rate
+
+# ============================================================================
+# NOTES
+# ============================================================================
+# 1. All secrets must be in .env, never in this file
+# 2. Timezone is critical for scheduled jobs
+# 3. Rate limits prevent runaway behavior
+# 4. Under-alerting is enforced by aggregation + quiet hours
+# 5. Internal-only is hardcoded; external requires explicit enable
+# 6. Kill switch can override all settings (in database)

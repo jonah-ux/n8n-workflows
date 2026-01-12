@@ -1,134 +1,286 @@
-# n8n Personal Workflow Assistant 🤖
+# God-Mode Personal Ops System
 
-Your AI-powered n8n workflow management system that runs entirely inside n8n!
-
-## What This Does
-
-This system automatically:
-- ✅ **Syncs YOUR workflows** from n8n to a Supabase database
-- ✅ **Logs all executions** with performance metrics
-- ✅ **Extracts reusable node configs** (HTTP requests, APIs, etc.)
-- ✅ **Enables AI search** of your workflows and patterns
-
-## Why This is Useful
-
-Instead of managing 1000s of workflows, your AI agent can:
-- 🔍 "Find my HubSpot API configurations"
-- ⚡ "What workflows use SerpAPI successfully?"
-- 📊 "Which workflows are failing and why?"
-- 🤖 "Build a workflow that scrapes products and emails me"
-
-## Quick Setup (10 Minutes)
-
-### Step 1: Set Up Database (2 min)
-
-1. Go to your Supabase SQL Editor:
-   https://supabase.com/dashboard/project/zgexrnpctugtwwssbkss/sql
-
-2. Copy and paste the contents of `starter-schema.sql`
-
-3. Click "Run"
-
-### Step 2: Add Credentials in n8n (3 min)
-
-1. Go to: https://jonahautoshopmedia.app.n8n.cloud/credentials
-
-2. Add a new Postgres credential:
-   - **Name:** `Supabase RAG Database`
-   - **Type:** Postgres
-   - **Host:** `db.zgexrnpctugtwwssbkss.supabase.co`
-   - **Port:** `5432`
-   - **Database:** `postgres`
-   - **User:** `postgres`
-   - **Password:** Your Supabase password
-
-### Step 3: Import Workflows (5 min)
-
-1. Download these 2 files from `n8n-workflows-to-import/`:
-   - `workflow-sync.json`
-   - `execution-logger.json`
-
-2. In n8n, click "Add workflow" → "Import from File"
-
-3. Import both files
-
-4. Click "Active" on both workflows
-
-5. On the sync workflow, click "Execute Workflow" to run the first sync
-
-### Done! 🎉
-
-Your workflows will now:
-- Sync to the database every 6 hours
-- Log all executions automatically
-- Be searchable by your AI agent
-
-## What's Included
-
-```
-n8n-workflows/
-├── README.md                          # This file
-├── SIMPLE_SETUP.md                    # Detailed setup guide
-├── starter-schema.sql                 # Database setup (simplified)
-├── docs/
-│   └── postgres-schema.sql           # Full database schema
-├── n8n-workflows-to-import/
-│   ├── workflow-sync.json            # Syncs workflows every 6 hours
-│   ├── execution-logger.json         # Logs all executions
-│   └── README.md                     # Import instructions
-└── scripts/
-    ├── .env.example                  # Configuration template
-    └── requirements.txt              # Python dependencies (future)
-```
-
-## Your Credentials (Already Configured)
-
-- ✅ n8n Instance: `https://jonahautoshopmedia.app.n8n.cloud`
-- ✅ Supabase Project: `zgexrnpctugtwwssbkss`
-- ✅ Database: PostgreSQL with pgvector
-
-## How It Works
-
-```
-┌─────────────────┐
-│   Your n8n      │
-│   Instance      │
-└────────┬────────┘
-         │
-         │ Every 6 hours
-         │
-┌────────▼────────────────┐
-│  Workflow Sync          │
-│  (runs in n8n)          │
-└────────┬────────────────┘
-         │
-         │ Stores in
-         │
-┌────────▼────────────────┐
-│  Supabase PostgreSQL    │
-│  + pgvector             │
-│  - All workflows        │
-│  - Node configurations  │
-│  - Execution logs       │
-│  - Performance metrics  │
-└─────────────────────────┘
-```
-
-## Next Steps
-
-1. **Set up the database** (see Step 1 above)
-2. **Import the workflows** (see Steps 2-3 above)
-3. **Query your workflows**:
-   ```sql
-   SELECT name, node_count, updated_at
-   FROM workflows
-   ORDER BY updated_at DESC;
-   ```
-
-## Need Help?
-
-Check `SIMPLE_SETUP.md` for detailed instructions and troubleshooting.
+**Autonomous agent system for continuous improvement and operational intelligence.**
 
 ---
 
-Built with ❤️ to make your n8n automation smarter and more searchable!
+## Overview
+
+This is a **God-Mode Personal Ops System** designed to:
+- Learn continuously from multiple data sources (Notion, n8n, HubSpot, chat logs)
+- Maintain a two-tier knowledge system (canonical vs. raw)
+- Detect patterns and generate actionable improvement proposals
+- Under-alert with daily digests (8:00 AM) and morning calls (6:00 AM)
+- Remain internal-only by default (no customer contact without explicit flag)
+- Respect strict safety guardrails (kill switch, audit logging, forbidden actions)
+
+---
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    DATA SOURCES                              │
+├─────────────────────────────────────────────────────────────┤
+│  Notion (Canonical)  │  n8n  │  HubSpot  │  Chat Logs      │
+└──────────┬───────────────────────────────────────────────────┘
+           │
+           ▼
+┌─────────────────────────────────────────────────────────────┐
+│                KNOWLEDGE SYSTEM (Two-Tier)                   │
+├─────────────────────────────────────────────────────────────┤
+│  Canonical (Notion) > Verified > Inferred                    │
+│  • Never delete (supersede with version history)             │
+│  • Authority hierarchy enforced                              │
+└──────────┬───────────────────────────────────────────────────┘
+           │
+           ▼
+┌─────────────────────────────────────────────────────────────┐
+│                 INTELLIGENCE LAYER                           │
+├─────────────────────────────────────────────────────────────┤
+│  Pattern Detection  →  Proposal Generation                   │
+│  • Repeated failures  • Missing SOPs  • Config drift         │
+│  • Cost anomalies  • Performance issues                      │
+└──────────┬───────────────────────────────────────────────────┘
+           │
+           ▼
+┌─────────────────────────────────────────────────────────────┐
+│                  BACKGROUND JOBS                             │
+├─────────────────────────────────────────────────────────────┤
+│  • Periodic Scan (30 min)  • Daily Digest (8:00 AM)         │
+│  • Morning Call (6:00 AM)  • Watchers (5 min)               │
+│  • Retry Queue  • Cleanup                                    │
+└──────────┬───────────────────────────────────────────────────┘
+           │
+           ▼
+┌─────────────────────────────────────────────────────────────┐
+│              COMMUNICATION LAYER                             │
+├─────────────────────────────────────────────────────────────┤
+│  Salesmsg (Primary)  │  Telegram (Fallback)                 │
+│  • Internal-only by default  • Allowlist enforced           │
+└─────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## Key Features
+
+### 🔒 Safety First
+- **Kill Switch:** Global emergency stop for all actions
+- **Control Flags:** Fine-grained control (comms, write, jobs, external_comms)
+- **Forbidden Actions:** Explicit list of never-allowed operations
+- **Audit Logging:** Complete trail of all actions
+- **Rate Limiting:** 10 proposals/hour, 1 digest/day
+
+### 📚 Two-Tier Knowledge System
+- **Canonical (Notion):** Single source of truth, always wins
+- **Verified:** User-confirmed knowledge
+- **Inferred:** Pattern-detected knowledge
+- **Version History:** Never delete, always supersede with reason
+
+### 🔍 Pattern Detection
+- Repeated workflow failures
+- Missing SOPs
+- Configuration drift
+- Cost anomalies
+- Performance degradation
+
+### 📊 Under-Alerting
+- **Daily Digest:** 8:00 AM, max 5 bullet points
+- **Morning Call:** 6:00 AM, 60-second voice summary
+- **Quiet Hours:** 21:00-06:00 (only SEV0/SEV1 bypass)
+
+### 🤖 Proposal-Based Actions
+- System proposes improvements
+- Human reviews and approves
+- System applies changes
+- Never auto-modifies production
+
+---
+
+## Quick Start
+
+### 1. Prerequisites
+
+- Node.js 18+
+- Supabase project (PostgreSQL)
+- Notion integration
+- n8n instance
+- HubSpot account (optional)
+- Salesmsg account
+- Telegram bot
+
+### 2. Installation
+
+```bash
+# Clone repository
+git clone https://github.com/jonah-ux/n8n-workflows.git
+cd n8n-workflows
+
+# Install dependencies
+npm install
+
+# Copy environment template
+cp .env.example .env
+
+# Edit .env with your credentials
+nano .env
+```
+
+### 3. Database Setup
+
+```bash
+# Apply migration to create all tables
+# In Supabase SQL Editor, run:
+cat migrations/001_create_agent_core.sql
+
+# Verify tables created
+# Check: agent_controls, memory_items, proposals, incidents, etc.
+```
+
+### 4. Configuration
+
+Edit `config/defaults.yaml` to customize:
+- Scan intervals
+- Digest/call times
+- Quiet hours
+- Rate limits
+- Authority hierarchy
+
+### 5. Run
+
+```bash
+# Development mode
+npm run dev
+
+# Production mode
+npm run build
+npm start
+
+# Test kill switch
+node -e "require('./src/lib/safety').activateKillSwitch(db, 'testing')"
+```
+
+---
+
+## Project Structure
+
+```
+n8n-workflows/
+├── config/                    # Configuration files
+│   ├── defaults.yaml          # System defaults
+│   └── forbidden_actions.md   # Explicitly forbidden actions
+├── docs/                      # Documentation
+│   ├── ARCHITECTURE.md        # System architecture
+│   ├── JOBS.md               # Background jobs spec
+│   └── IMPLEMENTATION_PLAN.md # Implementation roadmap
+├── migrations/                # Database migrations
+│   └── 001_create_agent_core.sql
+├── src/                       # Source code
+│   ├── lib/                   # Core infrastructure
+│   │   ├── database.ts        # Supabase client wrapper
+│   │   ├── safety.ts          # Kill switch & safety checks
+│   │   └── audit.ts           # Audit logging
+│   ├── integrations/          # External service integrations
+│   │   ├── notion.ts          # Notion API client
+│   │   ├── n8n.ts            # n8n API client
+│   │   ├── hubspot.ts         # HubSpot API client
+│   │   ├── salesmsg.ts        # Salesmsg API client
+│   │   └── telegram.ts        # Telegram bot client
+│   ├── comms/                 # Communication layer
+│   │   └── router.ts          # Message routing & safety
+│   ├── memory/                # Knowledge system
+│   │   └── store.ts           # Memory storage & versioning
+│   ├── intelligence/          # Pattern detection & proposals
+│   │   ├── pattern-detector.ts
+│   │   └── proposal-generator.ts
+│   ├── jobs/                  # Background jobs
+│   │   └── framework.ts       # Job base class
+│   └── background/            # Background services
+│       ├── watchers.ts        # Monitoring & alerting
+│       ├── retry-queue.ts     # Failed job retry
+│       └── health-monitor.ts  # System health checks
+├── tests/                     # Test suite
+│   ├── unit/
+│   ├── integration/
+│   └── safety/
+├── .env.example              # Environment variables template
+├── package.json              # Dependencies
+├── tsconfig.json             # TypeScript config
+└── README.md                 # This file
+```
+
+---
+
+## Safety Guardrails
+
+### Forbidden Actions (NEVER allowed)
+
+See `config/forbidden_actions.md` for complete list:
+
+- ❌ Send messages to customers (unless external_comms_enabled=true)
+- ❌ Delete any data (always supersede)
+- ❌ Modify production directly (propose first)
+- ❌ Process payments or financial transactions
+- ❌ Rotate credentials automatically
+- ❌ Execute arbitrary code
+- ❌ Bypass kill switch
+
+### Control Flags
+
+```typescript
+// Check control flags
+const controls = await db.getAgentControls();
+
+controls.kill_switch           // Emergency stop (blocks ALL)
+controls.jobs_enabled          // Enable background jobs
+controls.comms_enabled         // Enable communications
+controls.write_enabled         // Enable database writes
+controls.external_comms_enabled // Enable customer contact (default: false)
+```
+
+### Rate Limits
+
+- **Proposals:** 10/hour, 50/day
+- **Corrections:** 20/hour
+- **Digests:** 1/day
+- **Calls:** 1/day
+- **Salesmsg:** 5/hour
+- **Telegram:** 10/hour
+
+---
+
+## Documentation
+
+- **[ARCHITECTURE.md](docs/ARCHITECTURE.md)** - Complete system architecture
+- **[JOBS.md](docs/JOBS.md)** - Background jobs specification
+- **[IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md)** - Implementation roadmap
+- **[forbidden_actions.md](config/forbidden_actions.md)** - Forbidden actions list
+
+---
+
+## Support
+
+For issues or questions:
+1. Check documentation in `docs/`
+2. Review audit logs: `SELECT * FROM agent_audit_log`
+3. Check kill switch: `SELECT * FROM agent_controls`
+4. Create GitHub issue: https://github.com/jonah-ux/n8n-workflows/issues
+
+---
+
+## License
+
+MIT License - See LICENSE file for details
+
+---
+
+## Version History
+
+| Version | Date       | Changes                          |
+|---------|------------|----------------------------------|
+| 1.0.0   | 2026-01-12 | Initial release                  |
+
+---
+
+**Built with safety, transparency, and continuous improvement in mind.**

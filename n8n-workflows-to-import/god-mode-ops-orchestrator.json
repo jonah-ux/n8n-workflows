@@ -1,0 +1,527 @@
+{
+  "name": "God-Mode Ops - Job Orchestrator",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 5
+            }
+          ]
+        }
+      },
+      "id": "schedule-trigger",
+      "name": "Every 5 Minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        240,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT * FROM agent_controls LIMIT 1",
+        "options": {}
+      },
+      "id": "check-controls",
+      "name": "Check Agent Controls",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        460,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "YOUR_POSTGRES_CREDENTIAL_ID",
+          "name": "Supabase"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "kill-switch-check",
+              "leftValue": "={{ $json.kill_switch }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "or"
+        },
+        "options": {}
+      },
+      "id": "if-kill-switch",
+      "name": "Kill Switch Active?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        680,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "schema": {
+          "__rl": true,
+          "value": "public",
+          "mode": "list",
+          "cachedResultName": "public"
+        },
+        "table": {
+          "__rl": true,
+          "value": "agent_audit_log",
+          "mode": "list",
+          "cachedResultName": "agent_audit_log"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "action": "job_orchestrator",
+            "action_type": "system",
+            "success": false,
+            "error": "Kill switch is active - all jobs blocked",
+            "source": "n8n_orchestrator"
+          },
+          "matchingColumns": [],
+          "schema": []
+        },
+        "options": {}
+      },
+      "id": "log-kill-switch",
+      "name": "Log Kill Switch Block",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        900,
+        180
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "YOUR_POSTGRES_CREDENTIAL_ID",
+          "name": "Supabase"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "jobs-enabled-check",
+              "leftValue": "={{ $json.jobs_enabled }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-jobs-enabled",
+      "name": "Jobs Enabled?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        900,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Determine which jobs should run based on current time\nconst now = new Date();\nconst hour = now.getHours();\nconst minute = now.getMinutes();\nconst currentTime = `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`;\n\n// Get day of week and minutes since midnight\nconst minutesSinceMidnight = hour * 60 + minute;\n\n// Job schedule logic\nconst jobsToRun = [];\n\n// 1. Periodic Scan (every 30 minutes)\nif (minute % 30 === 0) {\n  jobsToRun.push({\n    job_name: 'periodic_scan',\n    priority: 1,\n    description: 'Scan all data sources for changes and patterns'\n  });\n}\n\n// 2. Watchers (every 5 minutes)\nif (minute % 5 === 0) {\n  jobsToRun.push({\n    job_name: 'run_watchers',\n    priority: 2,\n    description: 'Monitor for anomalies and incidents'\n  });\n}\n\n// 3. Retry Queue Processor (every minute - but n8n runs every 5 min)\njobsToRun.push({\n  job_name: 'process_retry_queue',\n  priority: 3,\n  description: 'Process failed jobs with exponential backoff'\n});\n\n// 4. Daily Digest (8:00 AM Central = 14:00 UTC)\nif (currentTime === '14:00') {\n  jobsToRun.push({\n    job_name: 'daily_digest',\n    priority: 0, // Highest priority\n    description: 'Send daily summary digest'\n  });\n}\n\n// 5. Morning Call (6:00 AM Central = 12:00 UTC)\nif (currentTime === '12:00') {\n  jobsToRun.push({\n    job_name: 'morning_call',\n    priority: 0, // Highest priority\n    description: 'Place morning status call'\n  });\n}\n\n// 6. Notion Sync (every 60 minutes)\nif (minute === 0) {\n  jobsToRun.push({\n    job_name: 'sync_notion',\n    priority: 4,\n    description: 'Sync canonical knowledge from Notion'\n  });\n}\n\n// 7. n8n Sync (every 30 minutes)\nif (minute % 30 === 0) {\n  jobsToRun.push({\n    job_name: 'sync_n8n',\n    priority: 4,\n    description: 'Monitor n8n workflow executions'\n  });\n}\n\n// 8. HubSpot Sync (every 60 minutes)\nif (minute === 15) {\n  jobsToRun.push({\n    job_name: 'sync_hubspot',\n    priority: 5,\n    description: 'Track CRM changes'\n  });\n}\n\n// 9. Health Monitor (every 5 minutes - ALWAYS runs)\njobsToRun.push({\n  job_name: 'health_monitor',\n  priority: 1,\n  description: 'Check system health'\n});\n\n// 10. Cleanup (2:00 AM Central = 8:00 UTC)\nif (currentTime === '08:00') {\n  jobsToRun.push({\n    job_name: 'cleanup_old_data',\n    priority: 6,\n    description: 'Archive old records'\n  });\n}\n\n// Sort by priority (lower number = higher priority)\njobsToRun.sort((a, b) => a.priority - b.priority);\n\n// Return jobs to run\nreturn jobsToRun.map(job => ({\n  json: {\n    ...job,\n    scheduled_at: now.toISOString(),\n    current_time: currentTime,\n    timezone: 'America/Chicago'\n  }\n}));"
+      },
+      "id": "determine-jobs",
+      "name": "Determine Jobs to Run",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "has-jobs",
+              "leftValue": "={{ $json.job_name }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-has-jobs",
+      "name": "Any Jobs to Run?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1340,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "job-data",
+              "name": "job",
+              "value": "={{ $json }}",
+              "type": "object"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "prepare-job-execution",
+      "name": "Prepare Job Data",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.3,
+      "position": [
+        1560,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "chooseBranch",
+        "output": "={{ $json.job.job_name }}"
+      },
+      "id": "switch-job-type",
+      "name": "Route to Job Handler",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [
+        1780,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "schema": {
+          "__rl": true,
+          "value": "public",
+          "mode": "list"
+        },
+        "table": {
+          "__rl": true,
+          "value": "agent_audit_log",
+          "mode": "list"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "action": "={{ $json.job.job_name }}",
+            "action_type": "system",
+            "success": true,
+            "source": "n8n_orchestrator",
+            "input_data": "={{ $json.job }}"
+          }
+        },
+        "options": {}
+      },
+      "id": "log-job-start",
+      "name": "Log Job Started",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        2000,
+        180
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "YOUR_POSTGRES_CREDENTIAL_ID",
+          "name": "Supabase"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "content": "## Periodic Scan Job\n\nThis job should:\n1. Sync all data sources\n2. Detect patterns\n3. Generate proposals\n\n**Status:** Stub - Not yet implemented",
+        "height": 343.71484375,
+        "width": 389.5078125,
+        "color": 7
+      },
+      "id": "note-periodic-scan",
+      "name": "Note: Periodic Scan",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        2000,
+        380
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Health Monitor Job\n\nThis job should:\n1. Check database connectivity\n2. Check external API health\n3. Report status\n\n**Status:** Stub - Not yet implemented",
+        "height": 343.71484375,
+        "width": 389.5078125,
+        "color": 7
+      },
+      "id": "note-health-monitor",
+      "name": "Note: Health Monitor",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        2420,
+        380
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Daily Digest Job\n\nThis job should:\n1. Query last 24h data\n2. Format digest (max 5 bullets)\n3. Send via Telegram/Salesmsg\n\n**Status:** Stub - Not yet implemented",
+        "height": 343.71484375,
+        "width": 389.5078125,
+        "color": 7
+      },
+      "id": "note-daily-digest",
+      "name": "Note: Daily Digest",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        2840,
+        380
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## 🚀 God-Mode Ops System - Job Orchestrator\n\n**Purpose:** \nManages all background jobs with safety checks and audit logging.\n\n**How it works:**\n1. Runs every 5 minutes\n2. Checks kill switch and control flags\n3. Determines which jobs should run based on schedule\n4. Routes to appropriate job handler\n5. Logs all actions to audit trail\n\n**Current Status:** Foundation complete, job handlers are stubs\n\n**Next Steps:**\n1. Implement each job handler\n2. Connect to actual data sources (Notion, HubSpot)\n3. Build pattern detection logic\n4. Implement communication layer\n\n**Safety Features:**\n✅ Kill switch check\n✅ Jobs enabled check\n✅ Audit logging\n✅ Priority-based scheduling\n\n**Jobs Defined:**\n- periodic_scan (every 30 min)\n- run_watchers (every 5 min)\n- process_retry_queue (continuous)\n- daily_digest (8:00 AM)\n- morning_call (6:00 AM)\n- sync_notion (hourly)\n- sync_n8n (every 30 min)\n- sync_hubspot (hourly)\n- health_monitor (every 5 min, always runs)\n- cleanup_old_data (2:00 AM daily)",
+        "height": 677.8899662825839,
+        "width": 524.8165869525318,
+        "color": 4
+      },
+      "id": "orchestrator-info",
+      "name": "Orchestrator Info",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        180,
+        -120
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## ⚠️ KILL SWITCH ACTIVE\n\nAll jobs blocked.\n\nTo deactivate:\n```sql\nUPDATE agent_controls \nSET kill_switch = false,\n    kill_switch_reason = NULL,\n    kill_switch_activated_at = NULL\nWHERE id = (SELECT id FROM agent_controls LIMIT 1);\n```",
+        "height": 295.7993037453492,
+        "width": 382.8598148149153,
+        "color": 2
+      },
+      "id": "note-kill-switch",
+      "name": "Kill Switch Active",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        840,
+        -20
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "schema": {
+          "__rl": true,
+          "value": "public",
+          "mode": "list"
+        },
+        "table": {
+          "__rl": true,
+          "value": "agent_audit_log",
+          "mode": "list"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "action": "job_orchestrator_check",
+            "action_type": "system",
+            "success": true,
+            "source": "n8n_orchestrator",
+            "output_data": "={ \"message\": \"No jobs to run at this time\", \"checked_at\": \"{{ $now.toISO() }}\" }"
+          }
+        },
+        "options": {}
+      },
+      "id": "log-no-jobs",
+      "name": "Log No Jobs",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        1560,
+        540
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "YOUR_POSTGRES_CREDENTIAL_ID",
+          "name": "Supabase"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "content": "## 🔧 Setup Instructions\n\n1. **Update Postgres Credential:**\n   - Replace `YOUR_POSTGRES_CREDENTIAL_ID` in all Postgres nodes\n   - Use your Supabase credentials\n\n2. **Activate Workflow:**\n   - Click \"Active\" toggle at top\n   - Workflow will run every 5 minutes\n\n3. **Monitor Execution:**\n   - Check Executions tab\n   - Query audit log: `SELECT * FROM agent_audit_log ORDER BY ts DESC`\n\n4. **Test Kill Switch:**\n   ```sql\n   UPDATE agent_controls SET kill_switch = true;\n   ```\n   Then wait for next run - should see \"Kill switch is active\" in logs\n\n5. **Implement Job Handlers:**\n   - Each job routes to a sticky note (placeholder)\n   - Replace notes with actual workflow logic\n   - See docs/JOBS.md for specifications",
+        "height": 611.1838949033123,
+        "width": 489.7326062694507,
+        "color": 5
+      },
+      "id": "setup-instructions",
+      "name": "Setup Instructions",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        760,
+        -120
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Every 5 Minutes": {
+      "main": [
+        [
+          {
+            "node": "Check Agent Controls",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Agent Controls": {
+      "main": [
+        [
+          {
+            "node": "Kill Switch Active?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Kill Switch Active?": {
+      "main": [
+        [
+          {
+            "node": "Log Kill Switch Block",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Jobs Enabled?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Jobs Enabled?": {
+      "main": [
+        [
+          {
+            "node": "Determine Jobs to Run",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Determine Jobs to Run": {
+      "main": [
+        [
+          {
+            "node": "Any Jobs to Run?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Any Jobs to Run?": {
+      "main": [
+        [
+          {
+            "node": "Prepare Job Data",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Log No Jobs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Job Data": {
+      "main": [
+        [
+          {
+            "node": "Route to Job Handler",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route to Job Handler": {
+      "main": [
+        [
+          {
+            "node": "Log Job Started",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "1",
+  "meta": {
+    "instanceId": "your_instance_id"
+  },
+  "id": "god-mode-ops-orchestrator",
+  "tags": []
+}

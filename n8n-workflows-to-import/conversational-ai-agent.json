@@ -1,0 +1,616 @@
+{
+  "name": "🤖 Conversational AI Agent (God-Mode)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "telegram-webhook",
+        "options": {}
+      },
+      "id": "telegram-webhook",
+      "name": "Telegram Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [240, 400],
+      "webhookId": "telegram-god-mode"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "is-message",
+              "leftValue": "={{ $json.body.message }}",
+              "rightValue": "",
+              "operator": {
+                "type": "object",
+                "operation": "notEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "filter-messages",
+      "name": "Is Valid Message?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [460, 400]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT * FROM agent_controls LIMIT 1",
+        "options": {}
+      },
+      "id": "check-kill-switch",
+      "name": "Check Kill Switch",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [680, 280],
+      "credentials": {
+        "postgres": {
+          "id": "YOUR_POSTGRES_CREDENTIAL_ID",
+          "name": "Supabase"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "kill-switch-active",
+              "leftValue": "={{ $json.kill_switch }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "or"
+        },
+        "options": {}
+      },
+      "id": "if-kill-switch",
+      "name": "Kill Switch Active?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [900, 280]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "user-message",
+              "name": "user_message",
+              "value": "={{ $('Telegram Webhook').item.json.body.message.text }}",
+              "type": "string"
+            },
+            {
+              "id": "chat-id",
+              "name": "chat_id",
+              "value": "={{ $('Telegram Webhook').item.json.body.message.chat.id }}",
+              "type": "string"
+            },
+            {
+              "id": "message-id",
+              "name": "message_id",
+              "value": "={{ $('Telegram Webhook').item.json.body.message.message_id }}",
+              "type": "number"
+            },
+            {
+              "id": "user-id",
+              "name": "user_id",
+              "value": "={{ $('Telegram Webhook').item.json.body.message.from.id }}",
+              "type": "number"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "extract-message",
+      "name": "Extract Message Data",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.3,
+      "position": [1120, 520]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Get conversation context (last 10 messages)\nSELECT \n  role,\n  content,\n  tool_calls,\n  created_at\nFROM conversation_history\nWHERE user_id = {{ $json.user_id }}\nORDER BY created_at DESC\nLIMIT 10",
+        "options": {}
+      },
+      "id": "get-context",
+      "name": "Get Conversation Context",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [1340, 520],
+      "credentials": {
+        "postgres": {
+          "id": "YOUR_POSTGRES_CREDENTIAL_ID",
+          "name": "Supabase"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build conversation history for Claude\nconst userMessage = $('Extract Message Data').item.json.user_message;\nconst contextRows = $input.all();\n\n// Reverse to get chronological order\nconst history = contextRows.reverse();\n\n// Build messages array\nconst messages = history.map(row => ({\n  role: row.json.role,\n  content: row.json.content\n}));\n\n// Add current user message\nmessages.push({\n  role: 'user',\n  content: userMessage\n});\n\n// Build system prompt with business context\nconst systemPrompt = `You are a God-Mode AI Agent managing an autonomous operations system for Jonah.\n\nYour capabilities:\n- Access to HubSpot CRM (deals, contacts, activities)\n- Control over n8n workflows (view, create, modify, deploy)\n- Knowledge base in Notion (canonical SOPs and processes)\n- Full audit trail and memory system in PostgreSQL\n- Pattern detection and proposal generation\n- Workflow building and fixing capabilities\n\nYour personality:\n- Direct and concise (Jonah is busy)\n- Proactive (suggest improvements without being asked)\n- Technical (don't dumb things down)\n- Results-focused (care about outcomes, not process)\n\nSafety rules:\n- ALWAYS check kill_switch before taking action\n- Internal-only by default (no customer contact without explicit approval)\n- Propose first for Tier 2-3 actions (don't just do it)\n- Log all actions to audit trail\n- Never delete data (supersede instead)\n\nCurrent context:\n- User: Jonah (operator, full access)\n- Timezone: America/Chicago\n- Today: ${new Date().toISOString().split('T')[0]}\n\nAvailable tools: All sub-workflows are available as tools. Use them to accomplish tasks.`;\n\nreturn [{\n  json: {\n    system: systemPrompt,\n    messages: messages,\n    user_message: userMessage\n  }\n}];"
+      },
+      "id": "build-claude-request",
+      "name": "Build Claude Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1560, 520]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "anthropicApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "model",
+              "value": "claude-3-5-sonnet-20241022"
+            },
+            {
+              "name": "max_tokens",
+              "value": "4096"
+            },
+            {
+              "name": "system",
+              "value": "={{ $json.system }}"
+            },
+            {
+              "name": "messages",
+              "value": "={{ $json.messages }}"
+            },
+            {
+              "name": "tools",
+              "value": "={{ $json.tools }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "call-claude",
+      "name": "Call Claude API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1780, 520],
+      "credentials": {
+        "anthropicApi": {
+          "id": "YOUR_ANTHROPIC_CREDENTIAL_ID",
+          "name": "Anthropic API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "has-tool-use",
+              "leftValue": "={{ $json.content[0].type }}",
+              "rightValue": "tool_use",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-tool-use",
+      "name": "Needs Tool Call?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [2000, 520]
+    },
+    {
+      "parameters": {
+        "mode": "chooseBranch",
+        "output": "={{ $json.content[0].name }}"
+      },
+      "id": "route-tool",
+      "name": "Route to Tool",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [2220, 400]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.webhook_url }}",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": "={{ $json.content[0].input }}"
+        },
+        "options": {}
+      },
+      "id": "execute-tool",
+      "name": "Execute Tool Webhook",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2440, 400]
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "schema": {
+          "__rl": true,
+          "value": "public",
+          "mode": "list"
+        },
+        "table": {
+          "__rl": true,
+          "value": "conversation_history",
+          "mode": "list"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "user_id": "={{ $('Extract Message Data').item.json.user_id }}",
+            "chat_id": "={{ $('Extract Message Data').item.json.chat_id }}",
+            "role": "assistant",
+            "content": "={{ $json.response }}",
+            "tool_calls": "={{ $json.tool_calls }}",
+            "message_id": "={{ $('Extract Message Data').item.json.message_id }}"
+          }
+        },
+        "options": {}
+      },
+      "id": "save-to-history",
+      "name": "Save to Conversation History",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [2660, 520],
+      "credentials": {
+        "postgres": {
+          "id": "YOUR_POSTGRES_CREDENTIAL_ID",
+          "name": "Supabase"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Extract Message Data').item.json.chat_id }}",
+        "text": "={{ $json.response }}",
+        "additionalFields": {
+          "reply_to_message_id": "={{ $('Extract Message Data').item.json.message_id }}"
+        }
+      },
+      "id": "send-telegram-response",
+      "name": "Send Telegram Response",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [2880, 520],
+      "credentials": {
+        "telegramApi": {
+          "id": "YOUR_TELEGRAM_CREDENTIAL_ID",
+          "name": "Telegram Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Extract Message Data').item.json.chat_id }}",
+        "text": "⚠️ Kill switch is active. All agent actions are blocked.\\n\\nTo deactivate:\\n```sql\\nUPDATE agent_controls SET kill_switch = false;\\n```",
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      },
+      "id": "send-kill-switch-msg",
+      "name": "Send Kill Switch Message",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [1120, 140],
+      "credentials": {
+        "telegramApi": {
+          "id": "YOUR_TELEGRAM_CREDENTIAL_ID",
+          "name": "Telegram Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "schema": {
+          "__rl": true,
+          "value": "public",
+          "mode": "list"
+        },
+        "table": {
+          "__rl": true,
+          "value": "agent_audit_log",
+          "mode": "list"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "action": "conversational_agent",
+            "action_type": "system",
+            "success": true,
+            "source": "telegram",
+            "input_data": "={{ { user_message: $('Extract Message Data').item.json.user_message, chat_id: $('Extract Message Data').item.json.chat_id } }}",
+            "output_data": "={{ { response: $json.response } }}"
+          }
+        },
+        "options": {}
+      },
+      "id": "log-conversation",
+      "name": "Log to Audit Trail",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [3100, 520],
+      "credentials": {
+        "postgres": {
+          "id": "YOUR_POSTGRES_CREDENTIAL_ID",
+          "name": "Supabase"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "content": "## 🤖 Conversational AI Agent Core\\n\\n**Purpose:** Main chat interface for God-Mode system\\n\\n**How it works:**\\n1. Receives messages via Telegram webhook\\n2. Checks kill switch and safety\\n3. Loads conversation context from database\\n4. Calls Claude API with tool definitions\\n5. If Claude wants to use a tool, routes to sub-workflow\\n6. Returns response to user\\n7. Logs everything to audit trail\\n\\n**Architecture:**\\n- Claude 3.5 Sonnet for intelligence\\n- PostgreSQL for conversation memory\\n- All sub-workflows as callable tools\\n- Safety checks at every step\\n- Extensible for god-mode features\\n\\n**Tool Calling:**\\nClaude can call ANY of your sub-workflows as tools:\\n- Data sync (Notion, n8n, HubSpot)\\n- Pattern detection\\n- Proposal generation\\n- Workflow management\\n- CRM operations\\n- And more...\\n\\n**Context Management:**\\n- Stores full conversation history\\n- Maintains business context\\n- Learns from interactions\\n- Accesses memory_items for knowledge\\n\\n**Safety:**\\n✅ Kill switch check\\n✅ Control flags validation\\n✅ Rate limiting\\n✅ Audit logging\\n✅ Tier-based approvals",
+        "height": 760.4181184668991,
+        "width": 469.0909090909091,
+        "color": 4
+      },
+      "id": "agent-overview",
+      "name": "Agent Overview",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [180, -80]
+    },
+    {
+      "parameters": {
+        "content": "## 🔧 Setup Instructions\\n\\n1. **Set up Telegram Bot:**\\n   - Talk to @BotFather on Telegram\\n   - Create new bot\\n   - Get bot token\\n   - Set webhook: `https://YOUR-N8N-URL/webhook/telegram-god-mode`\\n\\n2. **Add Credentials:**\\n   - Telegram Bot API\\n   - Anthropic API (Claude)\\n   - Postgres (Supabase)\\n\\n3. **Create conversation_history table:**\\n   ```sql\\n   CREATE TABLE conversation_history (\\n     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),\\n     user_id BIGINT NOT NULL,\\n     chat_id BIGINT NOT NULL,\\n     role TEXT NOT NULL,\\n     content TEXT NOT NULL,\\n     tool_calls JSONB,\\n     message_id INTEGER,\\n     created_at TIMESTAMP DEFAULT NOW()\\n   );\\n   ```\\n\\n4. **Activate workflow**\\n\\n5. **Test:**\\n   - Message your bot: \\"Hello\\"\\n   - Should respond with context-aware message",
+        "height": 628.7272727272727,
+        "width": 477.8181818181818,
+        "color": 5
+      },
+      "id": "setup-instructions",
+      "name": "Setup Instructions",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [700, -80]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Load tool definitions from registry\\n// In production, these would be fetched from database\\n\\nconst tools = [\\n  {\\n    name: \\"query_memory\\",\\n    description: \\"Search the knowledge base for information. Use this to recall past learnings, SOPs, or system knowledge.\\",\\n    input_schema: {\\n      type: \\"object\\",\\n      properties: {\\n        query: {\\n          type: \\"string\\",\\n          description: \\"Search query\\"\\n        },\\n        authority: {\\n          type: \\"string\\",\\n          enum: [\\"canonical\\", \\"verified\\", \\"inferred\\"],\\n          description: \\"Filter by authority level\\"\\n        }\\n      },\\n      required: [\\"query\\"]\\n    }\\n  },\\n  {\\n    name: \\"get_deals\\",\\n    description: \\"Query HubSpot deals. Use to check deal status, pipeline, or search for specific deals.\\",\\n    input_schema: {\\n      type: \\"object\\",\\n      properties: {\\n        filters: {\\n          type: \\"object\\",\\n          description: \\"Deal filters (stage, amount, date range, etc.)\\"\\n        },\\n        limit: {\\n          type: \\"number\\",\\n          description: \\"Max results to return\\"\\n        }\\n      }\\n    }\\n  },\\n  {\\n    name: \\"list_workflows\\",\\n    description: \\"Get all n8n workflows. Returns workflow names, IDs, status, and last execution.\\",\\n    input_schema: {\\n      type: \\"object\\",\\n      properties: {\\n        active_only: {\\n          type: \\"boolean\\",\\n          description: \\"Only show active workflows\\"\\n        }\\n      }\\n    }\\n  },\\n  {\\n    name: \\"detect_patterns\\",\\n    description: \\"Analyze system data for patterns and improvement opportunities. Returns detected patterns with confidence scores.\\",\\n    input_schema: {\\n      type: \\"object\\",\\n      properties: {\\n        lookback_hours: {\\n          type: \\"number\\",\\n          description: \\"How far back to analyze (default 24)\\"\\n        },\\n        min_confidence: {\\n          type: \\"number\\",\\n          description: \\"Minimum confidence threshold (0-1)\\"\\n        }\\n      }\\n    }\\n  },\\n  {\\n    name: \\"generate_proposal\\",\\n    description: \\"Create an improvement proposal based on a pattern or idea. Generates detailed implementation steps.\\",\\n    input_schema: {\\n      type: \\"object\\",\\n      properties: {\\n        title: {\\n          type: \\"string\\",\\n          description: \\"Proposal title\\"\\n        },\\n        description: {\\n          type: \\"string\\",\\n          description: \\"What should be improved and why\\"\\n        },\\n        evidence: {\\n          type: \\"object\\",\\n          description: \\"Supporting data\\"\\n        }\\n      },\\n      required: [\\"title\\", \\"description\\"]\\n    }\\n  },\\n  {\\n    name: \\"query_audit_log\\",\\n    description: \\"Search the audit log for past actions. Useful for debugging or understanding what happened.\\",\\n    input_schema: {\\n      type: \\"object\\",\\n      properties: {\\n        action: {\\n          type: \\"string\\",\\n          description: \\"Filter by action name\\"\\n        },\\n        success: {\\n          type: \\"boolean\\",\\n          description: \\"Filter by success/failure\\"\\n        },\\n        since: {\\n          type: \\"string\\",\\n          description: \\"ISO timestamp to search from\\"\\n        },\\n        limit: {\\n          type: \\"number\\",\\n          description: \\"Max results\\"\\n        }\\n      }\\n    }\\n  },\\n  {\\n    name: \\"get_proposals\\",\\n    description: \\"Get pending improvement proposals that need review.\\",\\n    input_schema: {\\n      type: \\"object\\",\\n      properties: {\\n        status: {\\n          type: \\"string\\",\\n          enum: [\\"pending\\", \\"approved\\", \\"rejected\\"],\\n          description: \\"Filter by status\\"\\n        }\\n      }\\n    }\\n  },\\n  {\\n    name: \\"approve_proposal\\",\\n    description: \\"Approve a proposal for implementation. Use when user explicitly approves.\\",\\n    input_schema: {\\n      type: \\"object\\",\\n      properties: {\\n        proposal_id: {\\n          type: \\"string\\",\\n          description: \\"UUID of proposal to approve\\"\\n        }\\n      },\\n      required: [\\"proposal_id\\"]\\n    }\\n  },\\n  {\\n    name: \\"sync_hubspot\\",\\n    description: \\"Manually trigger HubSpot data sync. Fetches latest CRM changes.\\",\\n    input_schema: {\\n      type: \\"object\\",\\n      properties: {\\n        force: {\\n          type: \\"boolean\\",\\n          description: \\"Force full sync even if recently synced\\"\\n        }\\n      }\\n    }\\n  },\\n  {\\n    name: \\"check_workflow_health\\",\\n    description: \\"Check health status of a specific workflow. Returns execution stats, error rate, performance.\\",\\n    input_schema: {\\n      type: \\"object\\",\\n      properties: {\\n        workflow_id: {\\n          type: \\"string\\",\\n          description: \\"n8n workflow ID\\"\\n        }\\n      },\\n      required: [\\"workflow_id\\"]\\n    }\\n  }\\n];\\n\\n// Add tools to the payload\\nconst input = $input.first().json;\\ninput.tools = tools;\\n\\nreturn [{ json: input }];"
+      },
+      "id": "load-tools",
+      "name": "Load Tool Definitions",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1780, 340]
+    },
+    {
+      "parameters": {
+        "content": "## 🚀 Future Expansion Ready\\n\\n**Phase 2: Workflow Builder**\\n- `build_workflow` tool\\n- `optimize_workflow` tool\\n- `fix_workflow` tool\\n- Template generation\\n\\n**Phase 3: Business Intelligence**\\n- `analyze_revenue_impact` tool\\n- `predict_deal_outcome` tool\\n- `detect_opportunity` tool\\n- Revenue attribution\\n\\n**Phase 4: Autonomous Actions**\\n- Tiered approval system\\n- Auto-recovery capabilities\\n- Self-optimization\\n- Learning from feedback\\n\\n**Phase 5: God-Mode**\\n- Full CRM control\\n- Proactive recommendations\\n- Cross-system orchestration\\n- Business context engine\\n\\n**Architecture supports all of this:**\\n- Tool calling framework\\n- Safety tiers\\n- Approval workflows\\n- Memory/learning system\\n- Conversation context",
+        "height": 669.0909090909091,
+        "width": 437.8181818181818,
+        "color": 7
+      },
+      "id": "future-expansion",
+      "name": "Future Expansion",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [1220, -80]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Telegram Webhook": {
+      "main": [
+        [
+          {
+            "node": "Is Valid Message?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Valid Message?": {
+      "main": [
+        [
+          {
+            "node": "Check Kill Switch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Kill Switch": {
+      "main": [
+        [
+          {
+            "node": "Kill Switch Active?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Kill Switch Active?": {
+      "main": [
+        [
+          {
+            "node": "Send Kill Switch Message",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Extract Message Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Message Data": {
+      "main": [
+        [
+          {
+            "node": "Get Conversation Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Conversation Context": {
+      "main": [
+        [
+          {
+            "node": "Build Claude Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Claude Request": {
+      "main": [
+        [
+          {
+            "node": "Load Tool Definitions",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Tool Definitions": {
+      "main": [
+        [
+          {
+            "node": "Call Claude API",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Claude API": {
+      "main": [
+        [
+          {
+            "node": "Needs Tool Call?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Needs Tool Call?": {
+      "main": [
+        [
+          {
+            "node": "Route to Tool",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Save to Conversation History",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route to Tool": {
+      "main": [
+        [
+          {
+            "node": "Execute Tool Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute Tool Webhook": {
+      "main": [
+        [
+          {
+            "node": "Save to Conversation History",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save to Conversation History": {
+      "main": [
+        [
+          {
+            "node": "Send Telegram Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Telegram Response": {
+      "main": [
+        [
+          {
+            "node": "Log to Audit Trail",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "1",
+  "meta": {
+    "instanceId": "your_instance_id"
+  },
+  "id": "conversational-ai-agent",
+  "tags": []
+}

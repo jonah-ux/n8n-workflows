@@ -1,0 +1,462 @@
+{
+  "name": "📞 Safe Communication Hub v2",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "safe-comm-trigger",
+      "name": "When called by another workflow",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1,
+      "position": [250, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract and validate parameters\nconst severity = $json.severity || 'INFO';\nconst type = $json.type || 'agent_alert';\nconst title = $json.title || '';\nconst body = $json.body || '';\nconst requiresApproval = $json.requiresApproval !== false; // Default to true (safe)\nconst approvalToken = $json.approvalToken || '';\nconst channelOverride = $json.channelOverride || '';\nconst recipientPhone = $json.recipient?.phone || '';\nconst recipientTelegramChatId = $json.recipient?.telegramChatId || '';\n\nreturn [{\n  json: {\n    severity,\n    type,\n    title,\n    body,\n    requiresApproval,\n    approvalToken,\n    channelOverride,\n    recipient: {\n      phone: recipientPhone,\n      telegramChatId: recipientTelegramChatId\n    },\n    meta: $json.meta || {},\n    timestamp: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "extract-and-validate",
+      "name": "Extract & Validate Parameters",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [470, 400]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Check agent controls\nSELECT \n  kill_switch,\n  comms_enabled,\n  write_enabled,\n  destructive_enabled\nFROM agent_controls\nWHERE id = 1;",
+        "options": {}
+      },
+      "id": "check-agent-controls",
+      "name": "Check Agent Controls",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [690, 400],
+      "credentials": {
+        "postgres": {
+          "id": "xogKD739Qe4gqWBU",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "kill-switch-off",
+              "leftValue": "={{ $json.kill_switch }}",
+              "rightValue": "false",
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "comms-enabled",
+              "leftValue": "={{ $json.comms_enabled }}",
+              "rightValue": "true",
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "safety-check",
+      "name": "Safety Check",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [910, 400]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "=-- Check if recipient is on allowlist\nSELECT \n  '{{ $('Extract & Validate Parameters').item.json.recipient.phone }}' AS phone,\n  '{{ $('Extract & Validate Parameters').item.json.recipient.telegramChatId }}' AS telegram_chat_id,\n  CASE \n    WHEN '{{ $('Extract & Validate Parameters').item.json.recipient.phone }}' IN ('+13204064600') THEN true\n    ELSE false\n  END AS phone_allowed,\n  CASE\n    WHEN '{{ $('Extract & Validate Parameters').item.json.recipient.telegramChatId }}' != '' THEN false -- Add your chat IDs to allowlist\n    ELSE false\n  END AS telegram_allowed;",
+        "options": {}
+      },
+      "id": "check-allowlist",
+      "name": "Check Allowlist",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [1130, 300],
+      "credentials": {
+        "postgres": {
+          "id": "xogKD739Qe4gqWBU",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "=-- Check rate limits\nSELECT * FROM get_rate_limit_usage('salesmsg');",
+        "options": {}
+      },
+      "id": "check-rate-limit",
+      "name": "Check Rate Limit",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [1130, 500],
+      "credentials": {
+        "postgres": {
+          "id": "xogKD739Qe4gqWBU",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Comprehensive safety checks\nconst params = $('Extract & Validate Parameters').item.json;\nconst controls = $('Check Agent Controls').item.json;\nconst allowlist = $('Check Allowlist').item.json;\nconst rateLimit = $('Check Rate Limit').item.json;\n\nconst errors = [];\nconst warnings = [];\n\n// Check 1: Kill switch\nif (controls.kill_switch) {\n  errors.push('Kill switch is enabled');\n}\n\n// Check 2: Comms enabled\nif (!controls.comms_enabled) {\n  errors.push('Communications are disabled');\n}\n\n// Check 3: Allowlist\nif (!allowlist.phone_allowed && !allowlist.telegram_allowed) {\n  errors.push('Recipient not on allowlist');\n}\n\n// Check 4: Rate limit (for non-SEV1)\nif (params.severity !== 'SEV1' && rateLimit.current_count >= rateLimit.max_allowed) {\n  errors.push(`Rate limit exceeded (${rateLimit.current_count}/${rateLimit.max_allowed})`);\n}\n\n// Check 5: Approval required?\nif (params.requiresApproval && !params.approvalToken) {\n  const allowlistedTypes = ['agent_alert', 'workflow_failure', 'daily_digest', 'health_report'];\n  if (!allowlistedTypes.includes(params.type)) {\n    errors.push('Approval required but not provided');\n  }\n}\n\n// Check 6: Quiet hours (simple check - 21:00 to 07:00)\nconst now = new Date();\nconst currentHour = now.getHours();\nconst inQuietHours = currentHour >= 21 || currentHour < 7;\n\nif (inQuietHours && params.severity !== 'SEV1') {\n  warnings.push('In quiet hours - message will be queued');\n}\n\nreturn [{\n  json: {\n    can_proceed: errors.length === 0,\n    errors,\n    warnings,\n    should_queue: warnings.some(w => w.includes('quiet hours')),\n    params,\n    checks: {\n      kill_switch: controls.kill_switch,\n      comms_enabled: controls.comms_enabled,\n      allowlist_ok: allowlist.phone_allowed || allowlist.telegram_allowed,\n      rate_limit_ok: params.severity === 'SEV1' || rateLimit.current_count < rateLimit.max_allowed,\n      approval_ok: !params.requiresApproval || params.approvalToken || ['agent_alert', 'workflow_failure', 'daily_digest', 'health_report'].includes(params.type)\n    }\n  }\n}];"
+      },
+      "id": "safety-gate",
+      "name": "Safety Gate Logic",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1350, 400]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "can-proceed",
+              "leftValue": "={{ $json.can_proceed }}",
+              "rightValue": "true",
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "can-send",
+      "name": "Can Send?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1570, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Blocked - audit log and return error\nconst result = $input.first().json;\n\nconst auditEntry = {\n  ts: new Date().toISOString(),\n  action: 'send_blocked',\n  payload: result.params,\n  result: {\n    blocked: true,\n    errors: result.errors,\n    warnings: result.warnings,\n    checks: result.checks\n  },\n  success: false,\n  error: result.errors.join(', ')\n};\n\nreturn [{\n  json: {\n    success: false,\n    blocked: true,\n    errors: result.errors,\n    warnings: result.warnings,\n    message: `Message blocked: ${result.errors.join(', ')}`,\n    audit_entry: auditEntry\n  }\n}];"
+      },
+      "id": "format-blocked-response",
+      "name": "Format Blocked Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1790, 500]
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "schema": {
+          "__rl": true,
+          "value": "public",
+          "mode": "list",
+          "cachedResultName": "public"
+        },
+        "table": {
+          "__rl": true,
+          "value": "agent_audit_log",
+          "mode": "list",
+          "cachedResultName": "agent_audit_log"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "ts": "={{ $json.audit_entry.ts }}",
+            "action": "={{ $json.audit_entry.action }}",
+            "payload": "={{ JSON.stringify($json.audit_entry.payload) }}",
+            "result": "={{ JSON.stringify($json.audit_entry.result) }}",
+            "success": "={{ $json.audit_entry.success }}",
+            "error": "={{ $json.audit_entry.error }}"
+          },
+          "matchingColumns": [],
+          "schema": []
+        },
+        "options": {}
+      },
+      "id": "log-blocked-attempt",
+      "name": "Log Blocked Attempt",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [2010, 500],
+      "credentials": {
+        "postgres": {
+          "id": "xogKD739Qe4gqWBU",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// TODO: Implement actual Salesmsg/Telegram sending\n// For now, this is a placeholder that shows what would be sent\n\nconst params = $('Extract & Validate Parameters').item.json;\nconst channel = params.channelOverride || 'salesmsg';\n\nconst formattedMessage = `${params.severity === 'SEV1' ? '🚨' : params.severity === 'WARN' ? '⚠️' : 'ℹ️'} *${params.severity}*\\n\\n${params.title ? `*${params.title}*\\n\\n` : ''}${params.body}`;\n\n// Placeholder response (replace with actual API calls)\nreturn [{\n  json: {\n    success: true,\n    channel: channel,\n    message_id: 'placeholder-' + Date.now(),\n    formatted_message: formattedMessage,\n    note: 'PLACEHOLDER - Replace with actual Salesmsg/Telegram API call',\n    todo: [\n      'Replace this node with HTTP Request to Salesmsg/Telegram API',\n      'Use env vars for API keys (SALESMSG_API_KEY, TELEGRAM_BOT_TOKEN)',\n      'Implement retry logic',\n      'Handle errors appropriately'\n    ]\n  }\n}];"
+      },
+      "id": "send-message-placeholder",
+      "name": "Send Message (PLACEHOLDER)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1790, 300]
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "schema": {
+          "__rl": true,
+          "value": "public",
+          "mode": "list",
+          "cachedResultName": "public"
+        },
+        "table": {
+          "__rl": true,
+          "value": "agent_audit_log",
+          "mode": "list",
+          "cachedResultName": "agent_audit_log"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "ts": "={{ new Date().toISOString() }}",
+            "action": "=send_{{ $json.channel }}",
+            "payload": "={{ JSON.stringify($('Extract & Validate Parameters').item.json) }}",
+            "result": "={{ JSON.stringify($json) }}",
+            "success": "={{ $json.success }}",
+            "error": "={{ $json.error || null }}"
+          },
+          "matchingColumns": [],
+          "schema": []
+        },
+        "options": {}
+      },
+      "id": "log-send-attempt",
+      "name": "Log Send Attempt",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [2010, 300],
+      "credentials": {
+        "postgres": {
+          "id": "xogKD739Qe4gqWBU",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "=-- Increment rate limit\nSELECT increment_rate_limit('{{ $('Send Message (PLACEHOLDER)').item.json.channel }}');",
+        "options": {}
+      },
+      "id": "increment-rate-limit",
+      "name": "Increment Rate Limit",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [2230, 300],
+      "credentials": {
+        "postgres": {
+          "id": "xogKD739Qe4gqWBU",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Format final output\nconst sendResult = $('Send Message (PLACEHOLDER)').item.json;\n\nreturn [{\n  json: {\n    success: sendResult.success,\n    channel: sendResult.channel,\n    message_id: sendResult.message_id,\n    message: 'Message sent successfully (placeholder)',\n    note: sendResult.note,\n    formatted_output: `✅ Message sent via ${sendResult.channel}\\n\\nMessage ID: ${sendResult.message_id}\\n\\n${sendResult.formatted_message}`\n  }\n}];"
+      },
+      "id": "format-success-response",
+      "name": "Format Success Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2450, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Format error for safety check failure\nreturn [{\n  json: {\n    success: false,\n    blocked: true,\n    reason: 'Failed safety check',\n    message: 'Kill switch enabled or communications disabled',\n    formatted_output: '🛑 Message blocked: Kill switch enabled or communications disabled'\n  }\n}];"
+      },
+      "id": "safety-check-failed",
+      "name": "Safety Check Failed",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1130, 600]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "When called by another workflow": {
+      "main": [
+        [
+          {
+            "node": "Extract & Validate Parameters",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract & Validate Parameters": {
+      "main": [
+        [
+          {
+            "node": "Check Agent Controls",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Agent Controls": {
+      "main": [
+        [
+          {
+            "node": "Safety Check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Safety Check": {
+      "main": [
+        [
+          {
+            "node": "Check Allowlist",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Check Rate Limit",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Safety Check Failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Allowlist": {
+      "main": [
+        [
+          {
+            "node": "Safety Gate Logic",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Rate Limit": {
+      "main": [
+        [
+          {
+            "node": "Safety Gate Logic",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Safety Gate Logic": {
+      "main": [
+        [
+          {
+            "node": "Can Send?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Can Send?": {
+      "main": [
+        [
+          {
+            "node": "Send Message (PLACEHOLDER)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Format Blocked Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Blocked Response": {
+      "main": [
+        [
+          {
+            "node": "Log Blocked Attempt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Message (PLACEHOLDER)": {
+      "main": [
+        [
+          {
+            "node": "Log Send Attempt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Send Attempt": {
+      "main": [
+        [
+          {
+            "node": "Increment Rate Limit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Increment Rate Limit": {
+      "main": [
+        [
+          {
+            "node": "Format Success Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "initial",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "eb47830968c19640d461725e22e2e82f18382dcdabd1739e2b75698b31e1a0c9"
+  },
+  "id": "safe-communication-hub-v2",
+  "tags": [],
+  "notes": "SAFE Communication Hub with:\n- Kill switch check\n- Allowlist enforcement\n- Rate limiting\n- Quiet hours\n- Approval gating\n- Comprehensive audit logging\n\nREPLACE PLACEHOLDER NODE with actual Salesmsg/Telegram HTTP Request nodes using env vars for API keys."
+}

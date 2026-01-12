@@ -1,0 +1,89 @@
+# Communication Configuration
+# This file controls how the AI agent sends notifications
+
+# Allowed channels (in priority order)
+allowed_channels:
+  - salesmsg
+  - telegram
+
+# Primary channel (used first)
+primary_channel: salesmsg
+
+# Fallback channel (used if primary fails)
+fallback_channel: telegram
+
+# Quiet hours - suppress non-critical notifications
+quiet_hours:
+  enabled: true
+  start: "21:00"  # 9:00 PM
+  end: "07:00"    # 7:00 AM
+  timezone: "America/Chicago"  # Your local timezone
+  # During quiet hours:
+  # - SEV1 messages still send
+  # - WARN/INFO messages are queued until morning
+
+# Rate limits (per hour, sliding window)
+rate_limits:
+  salesmsg:
+    max_per_hour: 5
+    # SEV1 messages bypass this limit
+  telegram:
+    max_per_hour: 10
+    # SEV1 messages bypass this limit
+
+# Retry configuration
+retry:
+  max_attempts: 5
+  initial_delay_ms: 2000
+  backoff_multiplier: 2
+  # Exponential backoff: 2s, 4s, 8s, 16s, 32s
+
+# Channel-specific settings
+channels:
+  salesmsg:
+    enabled: true
+    timeout_ms: 30000
+    # If Salesmsg fails after all retries, fall back to Telegram
+    auto_fallback: true
+
+  telegram:
+    enabled: true
+    timeout_ms: 10000
+    # Parse mode for rich formatting
+    parse_mode: "Markdown"
+
+# Severity routing (which channel for each severity)
+severity_routing:
+  SEV1:
+    preferred_channel: salesmsg
+    bypass_quiet_hours: true
+    bypass_rate_limit: true
+    require_approval: false  # SEV1 always requires approval unless explicitly allowed
+
+  WARN:
+    preferred_channel: salesmsg
+    bypass_quiet_hours: false
+    bypass_rate_limit: false
+    require_approval: true
+
+  INFO:
+    preferred_channel: telegram
+    bypass_quiet_hours: false
+    bypass_rate_limit: false
+    require_approval: false  # INFO can be auto-approved for allowlisted types
+
+# Logging
+logging:
+  enabled: true
+  log_payloads: true  # Log full message content (sanitized)
+  log_responses: true
+  retention_days: 90
+  retention_days_sev1: 365  # Keep critical logs longer
+
+# Feature flags
+features:
+  enable_quiet_hours: true
+  enable_rate_limiting: true
+  enable_fallback: true
+  enable_idempotency: true
+  enable_audit_logging: true

@@ -1,0 +1,79 @@
+# Communication Allowlists
+# Only contacts on these lists can receive messages from the agent
+
+# Phone numbers that can receive SMS/calls via Salesmsg
+# Format: E.164 format with + prefix
+allowlisted_phone_numbers:
+  - "+13204064600"  # Jonah (primary)
+  # Add more numbers here as needed
+  # - "+15551234567"
+
+# Telegram chat IDs that can receive messages
+# To find your chat ID:
+# 1. Message your bot with /start
+# 2. Check agent logs or use: https://api.telegram.org/bot<TOKEN>/getUpdates
+# 3. Look for "chat":{"id": 123456789}
+allowlisted_telegram_chat_ids:
+  # Add your chat IDs here
+  # - 123456789
+  # - 987654321
+
+# Message types that are pre-approved (no manual approval needed)
+# These can be sent automatically if other conditions are met
+allowlisted_message_types:
+  - "agent_alert"         # General agent notifications
+  - "workflow_failure"    # Workflow execution failures
+  - "daily_digest"        # Daily summary reports
+  - "health_report"       # System health updates
+  - "security_alert"      # Security-related notifications
+  - "performance_warning" # Performance degradation warnings
+  # Add custom types as needed
+
+# Action types that are pre-approved for execution
+# CAUTION: These bypass normal approval flow
+allowlisted_action_types:
+  # By default, nothing is pre-approved
+  # Uncomment to enable specific actions:
+  # - "deploy_workflow"
+  # - "update_workflow"
+  # - "create_integration"
+
+# Allowed severity levels
+# All severity levels are allowed by default, but you can restrict
+allowed_severities:
+  - "SEV1"   # Critical - immediate attention
+  - "WARN"   # Warning - needs attention soon
+  - "INFO"   # Informational - FYI
+
+# Emergency contacts (always receive SEV1 regardless of quiet hours)
+emergency_contacts:
+  phone_numbers:
+    - "+13204064600"  # Jonah
+  telegram_chat_ids: []
+  # These contacts receive SEV1 messages even during quiet hours
+
+# Blocked patterns (messages matching these patterns are rejected)
+blocked_patterns:
+  # Prevent accidental spam or abuse
+  - pattern: "test.*test.*test"
+    reason: "Appears to be spam/testing"
+  # Add more patterns as needed
+
+# IP allowlist (if agent is accessed via API)
+# Leave empty to allow all
+allowlisted_ips: []
+  # - "127.0.0.1"
+  # - "192.168.1.0/24"
+
+# Webhook allowlist (for external triggers)
+# If you have webhooks that trigger agent actions
+allowlisted_webhook_sources: []
+  # - "github.com"
+  # - "n8n.cloud"
+
+# Notes:
+# - Changes to this file require agent restart or config reload
+# - Always use E.164 format for phone numbers (+CountryCodeAreaNumber)
+# - Telegram chat IDs are numeric (can be negative for groups)
+# - Message types are case-sensitive
+# - Use extreme caution when allowlisting action types

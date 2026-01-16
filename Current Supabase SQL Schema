@@ -1,0 +1,878 @@
+-- WARNING: This schema is for context only and is not meant to be run.
+-- Table order and constraints may not be valid for execution.
+
+CREATE TABLE public.Jonah (
+  id bigint GENERATED ALWAYS AS IDENTITY NOT NULL,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT Jonah_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.agent_action_log (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  actor text NOT NULL,
+  tool_name text NOT NULL,
+  dry_run boolean NOT NULL DEFAULT true,
+  reason text NOT NULL,
+  method text NOT NULL,
+  path text NOT NULL,
+  request jsonb NOT NULL,
+  status integer,
+  response jsonb,
+  error text,
+  CONSTRAINT agent_action_log_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.agent_audit_log (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  action text NOT NULL,
+  action_type text NOT NULL CHECK (action_type = ANY (ARRAY['read'::text, 'write'::text, 'propose'::text, 'alert'::text, 'api_call'::text, 'system'::text])),
+  success boolean NOT NULL,
+  error text,
+  duration_ms integer,
+  input_data jsonb,
+  output_data jsonb,
+  ts timestamp with time zone DEFAULT now(),
+  session_id uuid,
+  cost_cents integer DEFAULT 0,
+  ip_address text,
+  user_agent text,
+  source text,
+  target text,
+  CONSTRAINT agent_audit_log_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.agent_chat_messages (
+  id integer NOT NULL DEFAULT nextval('agent_chat_messages_id_seq'::regclass),
+  session_id character varying NOT NULL,
+  message jsonb NOT NULL,
+  CONSTRAINT agent_chat_messages_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.agent_controls (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  kill_switch boolean NOT NULL DEFAULT false,
+  kill_switch_reason text,
+  comms_enabled boolean NOT NULL DEFAULT true,
+  write_enabled boolean NOT NULL DEFAULT true,
+  jobs_enabled boolean NOT NULL DEFAULT true,
+  external_comms_enabled boolean NOT NULL DEFAULT false,
+  system_state text DEFAULT 'normal'::text,
+  updated_at timestamp with time zone DEFAULT now(),
+  destructive_enabled boolean NOT NULL DEFAULT false,
+  notes text,
+  updated_by text,
+  kill_switch_activated_at timestamp with time zone,
+  kill_switch_activated_by text,
+  CONSTRAINT agent_controls_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.agent_conversations (
+  id integer NOT NULL DEFAULT nextval('agent_conversations_id_seq'::regclass),
+  conversation_id character varying,
+  user_message text,
+  agent_response text,
+  tools_used jsonb,
+  outcome character varying,
+  user_feedback text,
+  error_occurred boolean DEFAULT false,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT agent_conversations_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.agent_improvements (
+  id integer NOT NULL DEFAULT nextval('agent_improvements_id_seq'::regclass),
+  analysis_date timestamp with time zone DEFAULT now(),
+  improvements_identified integer,
+  prompt_additions jsonb,
+  applied boolean DEFAULT false,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT agent_improvements_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.agent_metacognition (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  created_at timestamp with time zone DEFAULT now(),
+  session_id text,
+  workflow_id text,
+  user_intent text,
+  task_type text,
+  tools_used jsonb,
+  predicted_confidence double precision,
+  actual_outcome_score double precision,
+  calibration_error double precision DEFAULT abs((predicted_confidence - actual_outcome_score)),
+  reflection_notes text,
+  suggested_improvements jsonb,
+  CONSTRAINT agent_metacognition_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.agent_notes (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  scope text NOT NULL,
+  note_key text NOT NULL,
+  note jsonb NOT NULL,
+  CONSTRAINT agent_notes_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.agent_sessions (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  user_id bigint NOT NULL,
+  chat_id bigint NOT NULL,
+  started_at timestamp with time zone DEFAULT now(),
+  ended_at timestamp with time zone,
+  message_count integer DEFAULT 0,
+  tool_calls_count integer DEFAULT 0,
+  session_summary text,
+  topics ARRAY,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT agent_sessions_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.chat_messages (
+  id integer NOT NULL DEFAULT nextval('chat_messages_id_seq'::regclass),
+  session_id text NOT NULL,
+  agent_id text,
+  user_id text,
+  sender_type text NOT NULL,
+  message_content text NOT NULL,
+  timestamp timestamp with time zone DEFAULT now(),
+  CONSTRAINT chat_messages_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.communication_allowlist (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  identifier_type text NOT NULL,
+  identifier_value text NOT NULL,
+  allowed_channels ARRAY NOT NULL,
+  is_active boolean DEFAULT true,
+  purpose text,
+  updated_at timestamp with time zone DEFAULT now(),
+  created_by text,
+  CONSTRAINT communication_allowlist_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.communication_queue (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  severity text NOT NULL CHECK (severity = ANY (ARRAY['SEV1'::text, 'WARN'::text, 'INFO'::text])),
+  type text NOT NULL,
+  title text,
+  body text NOT NULL,
+  channel text CHECK (channel = ANY (ARRAY['salesmsg'::text, 'telegram'::text])),
+  recipient_phone text,
+  recipient_telegram_chat_id text,
+  queued_at timestamp with time zone NOT NULL DEFAULT now(),
+  scheduled_for timestamp with time zone,
+  status text DEFAULT 'queued'::text CHECK (status = ANY (ARRAY['queued'::text, 'processing'::text, 'sent'::text, 'failed'::text, 'cancelled'::text])),
+  attempts integer DEFAULT 0,
+  last_attempt_at timestamp with time zone,
+  last_error text,
+  sent_at timestamp with time zone,
+  meta jsonb,
+  CONSTRAINT communication_queue_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.companies (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  place_id text NOT NULL UNIQUE,
+  business_name text,
+  domain text,
+  website_url text,
+  phone text,
+  address text,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT companies_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.company_contexts (
+  company_id text NOT NULL,
+  context_jsonb jsonb NOT NULL DEFAULT '{}'::jsonb,
+  context_summary text,
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  last_research_run_id text,
+  last_log_id uuid,
+  CONSTRAINT company_contexts_pkey PRIMARY KEY (company_id)
+);
+CREATE TABLE public.company_current (
+  company_id text NOT NULL,
+  latest_run_id text,
+  CONSTRAINT company_current_pkey PRIMARY KEY (company_id),
+  CONSTRAINT company_current_latest_run_id_fkey FOREIGN KEY (latest_run_id) REFERENCES public.research_runs(id)
+);
+CREATE TABLE public.contacts (
+  id integer NOT NULL DEFAULT nextval('contacts_id_seq'::regclass),
+  contact_name character varying NOT NULL UNIQUE,
+  email character varying,
+  phone_number character varying,
+  preferred_method character varying DEFAULT 'email'::character varying,
+  active boolean DEFAULT true,
+  CONSTRAINT contacts_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.conversation_history (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  user_id bigint NOT NULL,
+  chat_id bigint NOT NULL,
+  role text NOT NULL CHECK (role = ANY (ARRAY['user'::text, 'assistant'::text, 'system'::text])),
+  content text NOT NULL,
+  tool_calls jsonb,
+  tool_results jsonb,
+  message_id integer,
+  created_at timestamp with time zone DEFAULT now(),
+  session_id uuid,
+  tokens_used integer,
+  CONSTRAINT conversation_history_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.corrections (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  incorrect_item_id uuid,
+  incorrect_value text NOT NULL,
+  correct_value text NOT NULL,
+  correct_source text,
+  evidence jsonb,
+  confidence numeric CHECK (confidence >= 0::numeric AND confidence <= 1::numeric),
+  status text NOT NULL DEFAULT 'pending'::text CHECK (status = ANY (ARRAY['pending'::text, 'applied'::text, 'rejected'::text, 'superseded'::text])),
+  applied_at timestamp with time zone,
+  applied_by text,
+  rejection_reason text,
+  triggered_by text,
+  context jsonb,
+  created_at timestamp with time zone DEFAULT now(),
+  created_by text,
+  CONSTRAINT corrections_pkey PRIMARY KEY (id),
+  CONSTRAINT corrections_incorrect_item_id_fkey FOREIGN KEY (incorrect_item_id) REFERENCES public.memory_items(id)
+);
+CREATE TABLE public.data_source_sync (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  source_name text NOT NULL UNIQUE,
+  last_sync_started_at timestamp with time zone,
+  last_sync_completed_at timestamp with time zone,
+  last_sync_success boolean,
+  last_sync_error text,
+  items_synced integer DEFAULT 0,
+  items_failed integer DEFAULT 0,
+  created_at timestamp with time zone DEFAULT now(),
+  updated_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT data_source_sync_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.dead_letter_queue (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  original_job_id uuid,
+  type text NOT NULL,
+  payload jsonb NOT NULL,
+  attempts integer NOT NULL,
+  final_error text NOT NULL,
+  created_at timestamp with time zone,
+  failed_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT dead_letter_queue_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.document_chunks (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  document_id bigint,
+  chunk_index integer NOT NULL,
+  chunk_text text NOT NULL,
+  chunk_sha256 text,
+  metadata jsonb DEFAULT '{}'::jsonb,
+  embedding USER-DEFINED,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT document_chunks_pkey PRIMARY KEY (id),
+  CONSTRAINT document_chunks_document_id_fkey FOREIGN KEY (document_id) REFERENCES public.documents(id)
+);
+CREATE TABLE public.documents (
+  id bigint NOT NULL DEFAULT nextval('documents_id_seq'::regclass),
+  content text,
+  metadata jsonb,
+  embedding USER-DEFINED,
+  CONSTRAINT documents_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.documents_meta (
+  id bigint NOT NULL DEFAULT nextval('documents_meta_id_seq'::regclass),
+  source_type text NOT NULL,
+  title text,
+  summary text,
+  tags jsonb DEFAULT '[]'::jsonb,
+  use_cases jsonb DEFAULT '[]'::jsonb,
+  storage_path text,
+  preview_text text,
+  metadata jsonb DEFAULT '{}'::jsonb,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT documents_meta_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.enrichment_results (
+  id integer NOT NULL DEFAULT nextval('enrichment_results_id_seq'::regclass),
+  research_run_id character varying NOT NULL,
+  company_id character varying NOT NULL,
+  workflow_name character varying NOT NULL,
+  status character varying NOT NULL,
+  data jsonb,
+  data_points_collected integer,
+  has_errors boolean DEFAULT false,
+  completed_at timestamp without time zone NOT NULL DEFAULT now(),
+  CONSTRAINT enrichment_results_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.execution_traces (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  session_id text,
+  user_input text,
+  agent_plan text,
+  tool_calls jsonb DEFAULT '[]'::jsonb,
+  final_output text,
+  error text,
+  created_at timestamp with time zone DEFAULT now(),
+  embedding USER-DEFINED,
+  CONSTRAINT execution_traces_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.hubspot_objects (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  object_type text NOT NULL,
+  hs_object_id text NOT NULL,
+  properties jsonb NOT NULL DEFAULT '{}'::jsonb,
+  raw jsonb NOT NULL DEFAULT '{}'::jsonb,
+  archived boolean NOT NULL DEFAULT false,
+  search_text text,
+  embedding USER-DEFINED,
+  domain_id uuid,
+  document_id uuid,
+  chat_history_id uuid,
+  session_id text,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  last_synced_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT hubspot_objects_pkey PRIMARY KEY (id),
+  CONSTRAINT hubspot_objects_domain_id_fkey FOREIGN KEY (domain_id) REFERENCES public.knowledge_domains(id),
+  CONSTRAINT hubspot_objects_document_id_fkey FOREIGN KEY (document_id) REFERENCES public.knowledge_documents(id),
+  CONSTRAINT hubspot_objects_chat_history_id_fkey FOREIGN KEY (chat_history_id) REFERENCES public.memory_chat_history(id)
+);
+CREATE TABLE public.hubspot_schema_cache (
+  id bigint NOT NULL DEFAULT nextval('hubspot_schema_cache_id_seq'::regclass),
+  portal_id bigint NOT NULL,
+  kind text NOT NULL,
+  object_type text,
+  fetched_at timestamp with time zone NOT NULL DEFAULT now(),
+  expires_at timestamp with time zone NOT NULL,
+  data jsonb NOT NULL,
+  CONSTRAINT hubspot_schema_cache_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.hubspot_syncs (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  company_id uuid NOT NULL,
+  research_run_id text NOT NULL,
+  hubspot_contact_id text,
+  hubspot_deal_id text,
+  sync_status text NOT NULL CHECK (sync_status = ANY (ARRAY['pending'::text, 'completed'::text, 'failed'::text])),
+  sync_error text,
+  synced_at timestamp with time zone,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT hubspot_syncs_pkey PRIMARY KEY (id),
+  CONSTRAINT hubspot_syncs_company_id_fkey FOREIGN KEY (company_id) REFERENCES public.companies(id),
+  CONSTRAINT hubspot_syncs_research_run_id_fkey FOREIGN KEY (research_run_id) REFERENCES public.research_runs(id)
+);
+CREATE TABLE public.incidents (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  type text NOT NULL CHECK (type = ANY (ARRAY['repeated_failures'::text, 'rate_limits'::text, 'cost_anomaly'::text, 'performance_degradation'::text, 'data_drift'::text, 'integration_failure'::text, 'manual'::text])),
+  severity text NOT NULL CHECK (severity = ANY (ARRAY['SEV0'::text, 'SEV1'::text, 'WARN'::text, 'INFO'::text])),
+  title text NOT NULL,
+  description text NOT NULL,
+  status text NOT NULL DEFAULT 'open'::text CHECK (status = ANY (ARRAY['open'::text, 'acknowledged'::text, 'investigating'::text, 'resolved'::text, 'closed'::text])),
+  created_at timestamp with time zone DEFAULT now(),
+  metrics jsonb,
+  resolved_at timestamp with time zone,
+  resolved_by text,
+  resolution_notes text,
+  root_cause text,
+  related_workflow_id text,
+  related_memory_item_id uuid,
+  generated_proposal_id uuid,
+  updated_at timestamp with time zone DEFAULT now(),
+  created_by text DEFAULT 'system'::text,
+  CONSTRAINT incidents_pkey PRIMARY KEY (id),
+  CONSTRAINT incidents_related_memory_item_id_fkey FOREIGN KEY (related_memory_item_id) REFERENCES public.memory_items(id),
+  CONSTRAINT incidents_generated_proposal_id_fkey FOREIGN KEY (generated_proposal_id) REFERENCES public.proposals(id)
+);
+CREATE TABLE public.knowledge_chunks (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  document_id uuid NOT NULL,
+  domain_id uuid NOT NULL,
+  chunk_index integer NOT NULL,
+  content text NOT NULL,
+  embedding USER-DEFINED NOT NULL,
+  metadata jsonb DEFAULT '{}'::jsonb,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone DEFAULT now(),
+  content_tsv tsvector,
+  chunk_hash text,
+  embedding_model text,
+  CONSTRAINT knowledge_chunks_pkey PRIMARY KEY (id),
+  CONSTRAINT knowledge_chunks_document_id_fkey FOREIGN KEY (document_id) REFERENCES public.knowledge_documents(id),
+  CONSTRAINT knowledge_chunks_domain_id_fkey FOREIGN KEY (domain_id) REFERENCES public.knowledge_domains(id)
+);
+CREATE TABLE public.knowledge_documents (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  domain_id uuid NOT NULL,
+  source_url text UNIQUE,
+  title text,
+  content_html text,
+  content_text text,
+  checksum text UNIQUE,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  last_scraped_at timestamp with time zone,
+  last_processed_at timestamp with time zone,
+  processing_error text,
+  CONSTRAINT knowledge_documents_pkey PRIMARY KEY (id),
+  CONSTRAINT knowledge_documents_domain_id_fkey FOREIGN KEY (domain_id) REFERENCES public.knowledge_domains(id)
+);
+CREATE TABLE public.knowledge_domains (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  name text NOT NULL UNIQUE,
+  slug text DEFAULT regexp_replace(lower(name), '[^a-z0-9]+'::text, '-'::text, 'g'::text) UNIQUE,
+  description text,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT knowledge_domains_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.learning_examples (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  user_input text NOT NULL,
+  expected_behavior text NOT NULL,
+  actual_behavior text,
+  example_type text CHECK (example_type = ANY (ARRAY['success'::text, 'failure'::text, 'edge_case'::text, 'preference'::text])),
+  category text,
+  user_feedback text,
+  corrected_by text,
+  times_referenced integer DEFAULT 0,
+  created_at timestamp with time zone DEFAULT now(),
+  updated_at timestamp with time zone DEFAULT now(),
+  embedding USER-DEFINED,
+  lesson_summary text,
+  CONSTRAINT learning_examples_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.memory_chat_history (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  ts timestamp with time zone NOT NULL DEFAULT now(),
+  session_id text NOT NULL,
+  user_id text,
+  user_input text,
+  agent_plan text,
+  tools_used jsonb DEFAULT '[]'::jsonb,
+  agent_output text,
+  meta jsonb DEFAULT '{}'::jsonb,
+  embedding USER-DEFINED,
+  message text,
+  CONSTRAINT memory_chat_history_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.memory_embeddings (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  chat_log_id uuid,
+  session_id text,
+  text text,
+  embedding USER-DEFINED,
+  created_at timestamp with time zone DEFAULT now(),
+  metadata jsonb,
+  CONSTRAINT memory_embeddings_pkey PRIMARY KEY (id),
+  CONSTRAINT memory_embeddings_chat_log_id_fkey FOREIGN KEY (chat_log_id) REFERENCES public.memory_chat_history(id)
+);
+CREATE TABLE public.memory_feedback (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  ts timestamp with time zone DEFAULT now(),
+  user_id text,
+  session_id text,
+  chat_history_id uuid,
+  feedback_label text,
+  feedback_text text,
+  corrected_output text,
+  meta jsonb,
+  CONSTRAINT memory_feedback_pkey PRIMARY KEY (id),
+  CONSTRAINT memory_feedback_chat_history_id_fkey FOREIGN KEY (chat_history_id) REFERENCES public.memory_chat_history(id)
+);
+CREATE TABLE public.memory_items (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  key text NOT NULL,
+  value text NOT NULL,
+  value_type text NOT NULL,
+  authority text NOT NULL CHECK (authority = ANY (ARRAY['canonical'::text, 'verified'::text, 'inferred'::text])),
+  confidence numeric,
+  source_type text NOT NULL,
+  status text NOT NULL DEFAULT 'active'::text,
+  created_at timestamp with time zone DEFAULT now(),
+  updated_at timestamp with time zone DEFAULT now(),
+  tags ARRAY DEFAULT '{}'::text[],
+  version integer DEFAULT 1,
+  source_id text,
+  source_url text,
+  canonical_reference_id uuid,
+  notion_page_id text,
+  superseded_by uuid,
+  superseded_at timestamp with time zone,
+  superseded_reason text,
+  created_by text,
+  CONSTRAINT memory_items_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.memory_preferences (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  ts timestamp with time zone DEFAULT now(),
+  user_id text,
+  version integer,
+  summary text,
+  tags ARRAY,
+  meta jsonb,
+  CONSTRAINT memory_preferences_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.memory_supersessions (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  old_item_id uuid NOT NULL,
+  new_item_id uuid NOT NULL,
+  reason text NOT NULL CHECK (reason = ANY (ARRAY['user_correction'::text, 'canonical_update'::text, 'new_evidence'::text, 'deprecated'::text, 'consolidation'::text])),
+  reason_detail text,
+  evidence jsonb,
+  created_at timestamp with time zone DEFAULT now(),
+  created_by text,
+  CONSTRAINT memory_supersessions_pkey PRIMARY KEY (id),
+  CONSTRAINT memory_supersessions_old_item_id_fkey FOREIGN KEY (old_item_id) REFERENCES public.memory_items(id),
+  CONSTRAINT memory_supersessions_new_item_id_fkey FOREIGN KEY (new_item_id) REFERENCES public.memory_items(id)
+);
+CREATE TABLE public.n8n_chat_histories (
+  id integer NOT NULL DEFAULT nextval('n8n_chat_histories_id_seq'::regclass),
+  session_id character varying NOT NULL,
+  message jsonb NOT NULL,
+  CONSTRAINT n8n_chat_histories_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.n8n_vectors (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  text text,
+  metadata jsonb,
+  embedding USER-DEFINED,
+  CONSTRAINT n8n_vectors_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.outreach_messages (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  company_id uuid NOT NULL,
+  research_run_id text NOT NULL,
+  channel text NOT NULL CHECK (channel = ANY (ARRAY['email'::text, 'sms'::text, 'voicemail'::text, 'ai_call'::text])),
+  subject text,
+  body text NOT NULL,
+  personalization_data jsonb,
+  status text NOT NULL DEFAULT 'generated'::text CHECK (status = ANY (ARRAY['generated'::text, 'sent'::text, 'delivered'::text, 'bounced'::text, 'failed'::text])),
+  external_id text,
+  call_status text,
+  generated_at timestamp with time zone NOT NULL DEFAULT now(),
+  sent_at timestamp with time zone,
+  delivered_at timestamp with time zone,
+  opened_at timestamp with time zone,
+  clicked_at timestamp with time zone,
+  replied_at timestamp with time zone,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT outreach_messages_pkey PRIMARY KEY (id),
+  CONSTRAINT outreach_messages_company_id_fkey FOREIGN KEY (company_id) REFERENCES public.companies(id),
+  CONSTRAINT outreach_messages_research_run_id_fkey FOREIGN KEY (research_run_id) REFERENCES public.research_runs(id)
+);
+CREATE TABLE public.outreach_performance (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  date date NOT NULL,
+  channel text NOT NULL,
+  total_sent integer DEFAULT 0,
+  total_delivered integer DEFAULT 0,
+  total_opened integer DEFAULT 0,
+  total_clicked integer DEFAULT 0,
+  total_replied integer DEFAULT 0,
+  total_bounced integer DEFAULT 0,
+  delivery_rate numeric DEFAULT 
+CASE
+    WHEN (total_sent > 0) THEN round(((100.0 * (total_delivered)::numeric) / (total_sent)::numeric), 2)
+    ELSE (0)::numeric
+END,
+  open_rate numeric DEFAULT 
+CASE
+    WHEN (total_delivered > 0) THEN round(((100.0 * (total_opened)::numeric) / (total_delivered)::numeric), 2)
+    ELSE (0)::numeric
+END,
+  click_rate numeric DEFAULT 
+CASE
+    WHEN (total_delivered > 0) THEN round(((100.0 * (total_clicked)::numeric) / (total_delivered)::numeric), 2)
+    ELSE (0)::numeric
+END,
+  reply_rate numeric DEFAULT 
+CASE
+    WHEN (total_delivered > 0) THEN round(((100.0 * (total_replied)::numeric) / (total_delivered)::numeric), 2)
+    ELSE (0)::numeric
+END,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT outreach_performance_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.outreach_responses (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  sequence_id text NOT NULL,
+  company_id uuid NOT NULL,
+  response_channel text NOT NULL CHECK (response_channel = ANY (ARRAY['email'::text, 'sms'::text, 'phone'::text, 'form'::text, 'other'::text])),
+  response_type text NOT NULL CHECK (response_type = ANY (ARRAY['positive'::text, 'negative'::text, 'neutral'::text, 'question'::text, 'unsubscribe'::text])),
+  response_content text,
+  response_sentiment numeric,
+  requires_human_followup boolean DEFAULT false,
+  ai_analysis jsonb,
+  responded_at timestamp with time zone NOT NULL DEFAULT now(),
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT outreach_responses_pkey PRIMARY KEY (id),
+  CONSTRAINT outreach_responses_sequence_id_fkey FOREIGN KEY (sequence_id) REFERENCES public.outreach_sequences(sequence_id),
+  CONSTRAINT outreach_responses_company_id_fkey FOREIGN KEY (company_id) REFERENCES public.companies(id)
+);
+CREATE TABLE public.outreach_sequences (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  sequence_id text NOT NULL UNIQUE,
+  company_id uuid NOT NULL,
+  research_run_id text NOT NULL,
+  status text NOT NULL DEFAULT 'active'::text CHECK (status = ANY (ARRAY['active'::text, 'paused'::text, 'completed'::text, 'responded'::text, 'unsubscribed'::text, 'failed'::text])),
+  current_step text NOT NULL,
+  next_step_date date,
+  contact_data jsonb NOT NULL,
+  response_data jsonb,
+  total_touches integer DEFAULT 0,
+  started_at timestamp with time zone NOT NULL DEFAULT now(),
+  completed_at timestamp with time zone,
+  last_touch_at timestamp with time zone,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT outreach_sequences_pkey PRIMARY KEY (id),
+  CONSTRAINT outreach_sequences_company_id_fkey FOREIGN KEY (company_id) REFERENCES public.companies(id),
+  CONSTRAINT outreach_sequences_research_run_id_fkey FOREIGN KEY (research_run_id) REFERENCES public.research_runs(id)
+);
+CREATE TABLE public.proposals (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  title text NOT NULL,
+  description text NOT NULL,
+  proposal_type text NOT NULL,
+  evidence jsonb NOT NULL,
+  confidence numeric NOT NULL CHECK (confidence >= 0::numeric AND confidence <= 1::numeric),
+  priority text NOT NULL CHECK (priority = ANY (ARRAY['critical'::text, 'high'::text, 'medium'::text, 'low'::text])),
+  status text NOT NULL DEFAULT 'pending'::text CHECK (status = ANY (ARRAY['pending'::text, 'approved'::text, 'rejected'::text, 'implemented'::text, 'superseded'::text])),
+  created_at timestamp with time zone DEFAULT now(),
+  estimated_time_savings_minutes integer,
+  estimated_cost_savings_cents integer,
+  estimated_error_reduction_percent integer,
+  affected_systems ARRAY DEFAULT '{}'::text[],
+  implementation_steps jsonb,
+  rollback_steps jsonb,
+  test_plan text,
+  approved_at timestamp with time zone,
+  approved_by text,
+  rejected_at timestamp with time zone,
+  rejected_by text,
+  rejection_reason text,
+  implemented_at timestamp with time zone,
+  implemented_by text,
+  related_memory_item_id uuid,
+  related_incident_id uuid,
+  superseded_by uuid,
+  created_by text DEFAULT 'system'::text,
+  tags ARRAY DEFAULT '{}'::text[],
+  CONSTRAINT proposals_pkey PRIMARY KEY (id),
+  CONSTRAINT proposals_related_memory_item_id_fkey FOREIGN KEY (related_memory_item_id) REFERENCES public.memory_items(id),
+  CONSTRAINT proposals_superseded_by_fkey FOREIGN KEY (superseded_by) REFERENCES public.proposals(id)
+);
+CREATE TABLE public.query_cache (
+  query_hash text NOT NULL,
+  answer text NOT NULL,
+  ts timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT query_cache_pkey PRIMARY KEY (query_hash)
+);
+CREATE TABLE public.rag_gap_runs (
+  id bigint NOT NULL DEFAULT nextval('rag_gap_runs_id_seq'::regclass),
+  started_at timestamp with time zone NOT NULL DEFAULT now(),
+  finished_at timestamp with time zone,
+  status text NOT NULL DEFAULT 'running'::text,
+  gaps_created integer NOT NULL DEFAULT 0,
+  gaps_processed integer NOT NULL DEFAULT 0,
+  notes jsonb NOT NULL DEFAULT '{}'::jsonb,
+  CONSTRAINT rag_gap_runs_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.rag_gaps (
+  id bigint NOT NULL DEFAULT nextval('rag_gaps_id_seq'::regclass),
+  status text NOT NULL DEFAULT 'queued'::text,
+  priority integer NOT NULL DEFAULT 5,
+  gap_type text NOT NULL,
+  title text NOT NULL,
+  description text NOT NULL,
+  proposed_sources jsonb NOT NULL DEFAULT '[]'::jsonb,
+  payload jsonb NOT NULL DEFAULT '{}'::jsonb,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  last_error text,
+  CONSTRAINT rag_gaps_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.rate_limit_buckets (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  channel text NOT NULL CHECK (channel = ANY (ARRAY['salesmsg'::text, 'telegram'::text])),
+  window_start timestamp with time zone NOT NULL,
+  count integer NOT NULL DEFAULT 0,
+  updated_at timestamp with time zone DEFAULT now(),
+  window_end timestamp with time zone,
+  max_allowed integer,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT rate_limit_buckets_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.research_logs (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  run_id text,
+  log_data jsonb,
+  CONSTRAINT research_logs_pkey PRIMARY KEY (id),
+  CONSTRAINT research_logs_run_id_fkey FOREIGN KEY (run_id) REFERENCES public.research_runs(id)
+);
+CREATE TABLE public.research_runs (
+  id text NOT NULL,
+  company_id text NOT NULL,
+  status text DEFAULT 'processing'::text,
+  created_at timestamp with time zone DEFAULT now(),
+  context_jsonb jsonb NOT NULL DEFAULT '{}'::jsonb,
+  context_summary text,
+  context_updated_at timestamp with time zone,
+  CONSTRAINT research_runs_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.retry_jobs (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  type text NOT NULL CHECK (type = ANY (ARRAY['send_message'::text, 'deploy_workflow'::text, 'api_call'::text, 'custom'::text])),
+  payload jsonb NOT NULL,
+  run_at timestamp with time zone NOT NULL,
+  attempts integer DEFAULT 0,
+  max_attempts integer DEFAULT 5,
+  last_error text,
+  status text DEFAULT 'pending'::text CHECK (status = ANY (ARRAY['pending'::text, 'processing'::text, 'completed'::text, 'failed'::text])),
+  created_at timestamp with time zone DEFAULT now(),
+  updated_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT retry_jobs_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.tool_execution_log (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  tool_name text NOT NULL,
+  input_data jsonb NOT NULL,
+  output_data jsonb,
+  success boolean NOT NULL,
+  error text,
+  duration_ms integer,
+  conversation_id uuid,
+  user_id bigint,
+  required_approval boolean DEFAULT false,
+  approved_by text,
+  approved_at timestamp with time zone,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT tool_execution_log_pkey PRIMARY KEY (id),
+  CONSTRAINT tool_execution_log_conversation_id_fkey FOREIGN KEY (conversation_id) REFERENCES public.conversation_history(id)
+);
+CREATE TABLE public.tool_registry (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  name text NOT NULL UNIQUE,
+  description text NOT NULL,
+  workflow_id text,
+  webhook_url text NOT NULL,
+  input_schema jsonb NOT NULL,
+  output_schema jsonb,
+  safety_tier integer NOT NULL DEFAULT 1 CHECK (safety_tier >= 0 AND safety_tier <= 3),
+  requires_approval boolean NOT NULL DEFAULT false,
+  max_executions_per_hour integer DEFAULT 60,
+  is_active boolean NOT NULL DEFAULT true,
+  is_beta boolean NOT NULL DEFAULT false,
+  created_at timestamp with time zone DEFAULT now(),
+  updated_at timestamp with time zone DEFAULT now(),
+  total_calls integer DEFAULT 0,
+  success_count integer DEFAULT 0,
+  failure_count integer DEFAULT 0,
+  avg_duration_ms integer,
+  CONSTRAINT tool_registry_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.universal_integrations (
+  id integer NOT NULL DEFAULT nextval('universal_integrations_id_seq'::regclass),
+  service_name character varying NOT NULL UNIQUE,
+  service_category character varying,
+  integration_config jsonb NOT NULL,
+  active boolean DEFAULT true,
+  needs_configuration boolean DEFAULT false,
+  usage_count integer DEFAULT 0,
+  last_used_at timestamp with time zone,
+  CONSTRAINT universal_integrations_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.user_preferences (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  user_id bigint NOT NULL UNIQUE,
+  preferred_communication_style text,
+  notification_frequency text DEFAULT 'normal'::text,
+  timezone text DEFAULT 'America/Chicago'::text,
+  max_auto_approve_tier integer DEFAULT 1,
+  allowed_tools ARRAY,
+  business_context jsonb,
+  common_queries ARRAY,
+  interaction_count integer DEFAULT 0,
+  last_interaction timestamp with time zone,
+  created_at timestamp with time zone DEFAULT now(),
+  updated_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT user_preferences_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.workflow_embeddings (
+  workflow_id text NOT NULL,
+  embedding_type text NOT NULL DEFAULT 'full'::text,
+  embedding USER-DEFINED NOT NULL,
+  model text NOT NULL,
+  created_at timestamp with time zone DEFAULT now(),
+  updated_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT workflow_embeddings_pkey PRIMARY KEY (workflow_id, embedding_type),
+  CONSTRAINT workflow_embeddings_workflow_id_fkey FOREIGN KEY (workflow_id) REFERENCES public.workflows(workflow_id)
+);
+CREATE TABLE public.workflow_execution_errors (
+  execution_id text NOT NULL,
+  workflow_id text,
+  status text,
+  started_at timestamp with time zone,
+  finished_at timestamp with time zone,
+  error_message text,
+  error_stack text,
+  last_node text,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  http_status integer,
+  response_body text,
+  response_headers jsonb,
+  correlation_id text,
+  raw_error_payload jsonb,
+  error_category text,
+  suggested_fixes jsonb DEFAULT '[]'::jsonb,
+  lesson_learned text,
+  CONSTRAINT workflow_execution_errors_pkey PRIMARY KEY (execution_id)
+);
+CREATE TABLE public.workflow_executions (
+  execution_id text NOT NULL,
+  workflow_id text,
+  workflow_name text,
+  status text,
+  mode text,
+  started_at timestamp with time zone,
+  finished_at timestamp with time zone,
+  duration_ms integer,
+  error_message text,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT workflow_executions_pkey PRIMARY KEY (execution_id)
+);
+CREATE TABLE public.workflow_step_logs (
+  log_id uuid NOT NULL DEFAULT gen_random_uuid(),
+  research_run_id text NOT NULL,
+  company_id text NOT NULL,
+  enrichment_id text NOT NULL,
+  node_name text NOT NULL,
+  node_id text NOT NULL,
+  node_type text NOT NULL,
+  stage text,
+  status text NOT NULL DEFAULT 'started'::text,
+  started_at timestamp with time zone NOT NULL DEFAULT now(),
+  completed_at timestamp with time zone,
+  duration_ms integer,
+  input_data jsonb,
+  output_data jsonb,
+  error_details jsonb,
+  api_call_count integer DEFAULT 0,
+  estimated_cost_usd numeric DEFAULT 0.0000,
+  data_quality_score numeric,
+  extracted_fields_count integer,
+  workflow_version text,
+  instance_id text,
+  metadata jsonb,
+  CONSTRAINT workflow_step_logs_pkey PRIMARY KEY (log_id),
+  CONSTRAINT workflow_step_logs_research_run_id_fkey FOREIGN KEY (research_run_id) REFERENCES public.research_runs(id)
+);
+CREATE TABLE public.workflows (
+  workflow_id text NOT NULL,
+  name text NOT NULL,
+  description text,
+  category text,
+  tags jsonb DEFAULT '[]'::jsonb,
+  source text,
+  workflow_json jsonb NOT NULL,
+  node_count integer,
+  is_active boolean DEFAULT false,
+  created_at timestamp with time zone DEFAULT now(),
+  updated_at timestamp with time zone DEFAULT now(),
+  searchable_text text,
+  rag_text text,
+  CONSTRAINT workflows_pkey PRIMARY KEY (workflow_id)
+);

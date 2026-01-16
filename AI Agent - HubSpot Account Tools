@@ -1,0 +1,1411 @@
+{
+  "nodes": [
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ \n[\n  \"USER_REQUEST:\",\n  ($json.user_message || \"\").toString(),\n  \"\",\n  \"RUNTIME:\",\n  JSON.stringify({\n    tool_name: $json.tool_name || \"hubspot.account\",\n    dry_run: $json.dry_run ?? true,\n    session_id: $json.session_id,\n    request_id: $json.request_id,\n    conversation_id: $json.conversation_id,\n    chat_id: $json.chat_id,\n    user_id: $json.user_id,\n    caller_workflow_id: $json.caller_workflow_id,\n    caller_execution_id: $json.caller_execution_id\n  }, null, 2),\n  \"\",\n  \"CONTEXT_PACK (DB):\",\n  JSON.stringify($json.context_pack ?? {}, null, 2)\n].join(\"\\n\")\n}}\n",
+        "options": {
+          "systemMessage": "You are the HubSpot ACCOUNT Agent.\n\nYour job:\n- Answer account-level HubSpot questions using tools.\n- Return ONLY valid JSON in the specified output schema.\n\nINPUTS YOU RECEIVE:\n- USER_REQUEST (plain text)\n- RUNTIME (json): includes tool_name, dry_run, ids\n- CONTEXT_PACK (json): database context if available\n\nHARD RULES:\n1) Always use tools for factual data. Do NOT guess.\n2) DRY RUN ENFORCEMENT:\n   - If runtime.dry_run is true: DO NOT call ANY write tools.\n   - If the user requests a write and dry_run=true: return a proposed plan + exact tool + payload, but do not execute.\n3) If a required argument is missing (ex: userId, propertyName, pipelineId), ask for it in errors[] and do not call the tool.\n\nAVAILABLE TOOLS IN THIS WORKFLOW (USE THESE NAMES EXACTLY):\nACCOUNT / USAGE / ACTIVITY\n- Get Account Details\n- Get Account Information\n- Get API Usage\n- Get Daily API Limit\n- Get Daily Private App Usage (Legacy)\n- Get Audit Logs\n- Get Login Activity\n- Get Security Activity\n\nCOUNTS / STATS\n- Count Contacts\n- Count Deals\n- Count Companies\n- Count Tickets\n\nOWNERS / ORG / SETTINGS\n- Get Account Owners/Users\n- Get Business Units\n- Get Currencies\n\nUSER PROVISIONING (WRITE TOOLS — ONLY IF dry_run=false AND user explicitly requested)\n- List Users (Provisioning)\n- Get User (Provisioning)\n- Create User (Provisioning)\n- Update User (Provisioning)\n- Delete User (Provisioning)\n- List Teams (Provisioning)\n- List Roles (Provisioning)\n\nSCHEMA / PIPELINES / PROPERTIES (Create Property is WRITE)\n- List Pipelines\n- Get Pipeline\n- List Custom Object Schemas\n- List Properties\n- Get Property\n- Create Property\n\nASSOCIATIONS (WRITE)\n- Associate Records (Default)\n- Delete Association (All)\n\nOUTPUT FORMAT (RETURN JSON ONLY):\n{\n  \"summary\": \"short human summary\",\n  \"data\": { \"any\": \"tool results or extracted fields\" },\n  \"tool_calls\": [\n    { \"tool\": \"Tool Name\", \"arguments\": { } }\n  ],\n  \"errors\": [\n    { \"code\": \"MISSING_ARG|DRY_RUN_BLOCK|TOOL_ERROR\", \"message\": \"...\" }\n  ],\n  \"notes_to_save\": null\n}",
+          "maxIterations": 20
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        928,
+        -432
+      ],
+      "id": "6a708d94-6bab-419a-babc-639bb66878a6",
+      "name": "AI Agent - Account"
+    },
+    {
+      "parameters": {
+        "sessionIdType": "customKey",
+        "sessionKey": "session_Id"
+      },
+      "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
+      "typeVersion": 1.3,
+      "position": [
+        432,
+        -144
+      ],
+      "id": "78809984-a2e5-4ef0-a541-19afb09f3416",
+      "name": "Memory"
+    },
+    {
+      "parameters": {
+        "url": "https://api.hubapi.com/account-info/v3/details",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        624,
+        144
+      ],
+      "id": "29ef5662-a2db-4689-b077-a5aec45857af",
+      "name": "Get Account Details",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "https://api.hubapi.com/account-info/v3/api-usage",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        624,
+        -16
+      ],
+      "id": "c3f4bf6b-3e49-4dd7-8f36-96b7c0200014",
+      "name": "Get API Usage",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "https://api.hubapi.com/account-info/v3/api-usage/daily-limit",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        624,
+        -176
+      ],
+      "id": "873f100f-626d-4033-bd2f-280a4050cd58",
+      "name": "Get Daily API Limit",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "https://api.hubapi.com/account-info/v3/account",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        736,
+        144
+      ],
+      "id": "d91f0112-ffec-46f9-874a-aa80c0fae65b",
+      "name": "Get Account Information",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "https://api.hubapi.com/crm/v3/objects/contacts/count",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        864,
+        144
+      ],
+      "id": "6cc96d58-f9b0-44cd-80a7-054f00ea210a",
+      "name": "Count Contacts",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "https://api.hubapi.com/crm/v3/objects/deals/count",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        992,
+        144
+      ],
+      "id": "ddf27f6c-d179-4a9b-baf5-90b275afb7ea",
+      "name": "Count Deals",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "https://api.hubapi.com/crm/v3/objects/companies/count",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        1120,
+        144
+      ],
+      "id": "2014da84-47a0-4ec9-9bf8-cf83b6f09d59",
+      "name": "Count Companies",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "https://api.hubapi.com/crm/v3/objects/tickets/count",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        1248,
+        144
+      ],
+      "id": "0f1f1b06-7729-455c-b843-24286189e24f",
+      "name": "Count Tickets",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "https://api.hubapi.com/crm/v3/owners",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        1376,
+        144
+      ],
+      "id": "b7719f20-6aa6-47c4-8711-aa20a742403c",
+      "name": "Get Account Owners/Users",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "https://api.hubapi.com/settings/v3/business-units",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        1504,
+        144
+      ],
+      "id": "84e2d005-0147-4b08-80d5-b418fec5ab21",
+      "name": "Get Business Units",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "https://api.hubapi.com/settings/v3/currencies",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        1632,
+        144
+      ],
+      "id": "d3ca0aac-851d-42ae-b579-d31ad4e5de0b",
+      "name": "Get Currencies",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "toolDescription": "Get daily API usage/limit for legacy private apps (account-wide).",
+        "url": "https://api.hubapi.com/account-info/v3/api-usage/daily/private-apps",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        864,
+        -176
+      ],
+      "id": "3e0d0762-bcc7-4841-9e22-60870b86f9ce",
+      "name": "Get Daily Private App Usage (Legacy)",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "toolDescription": "Audit logs. Optional args: occurredAfter, occurredBefore, objectType, userId, limit, after.",
+        "url": "={{ (() => { const base = 'https://api.hubapi.com/account-info/v3/activity/audit-logs'; const a = $json.params?.arguments || {}; const q = []; if (a.occurredAfter) q.push(`occurredAfter=${encodeURIComponent(a.occurredAfter)}`); if (a.occurredBefore) q.push(`occurredBefore=${encodeURIComponent(a.occurredBefore)}`); if (a.objectType) q.push(`objectType=${encodeURIComponent(a.objectType)}`); if (a.userId) q.push(`userId=${encodeURIComponent(a.userId)}`); if (a.limit) q.push(`limit=${encodeURIComponent(a.limit)}`); if (a.after) q.push(`after=${encodeURIComponent(a.after)}`); return q.length ? `${base}?${q.join('&')}` : base; })() }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        736,
+        -176
+      ],
+      "id": "ae1e906a-09e0-4006-baa1-7d468d9e25ef",
+      "name": "Get Audit Logs",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "toolDescription": "Login activity. Optional args: userId, occurredAfter, occurredBefore, limit, after.",
+        "url": "={{ (() => { const base = 'https://api.hubapi.com/account-info/v3/activity/login'; const a = $json.params?.arguments || {}; const q = []; if (a.userId) q.push(`userId=${encodeURIComponent(a.userId)}`); if (a.occurredAfter) q.push(`occurredAfter=${encodeURIComponent(a.occurredAfter)}`); if (a.occurredBefore) q.push(`occurredBefore=${encodeURIComponent(a.occurredBefore)}`); if (a.limit) q.push(`limit=${encodeURIComponent(a.limit)}`); if (a.after) q.push(`after=${encodeURIComponent(a.after)}`); return q.length ? `${base}?${q.join('&')}` : base; })() }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        1760,
+        144
+      ],
+      "id": "073b9536-3dfd-48ab-8926-db368d1a69a7",
+      "name": "Get Login Activity",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "toolDescription": "Security activity. Optional args: userId, occurredAfter, occurredBefore, limit, after.",
+        "url": "={{ (() => { const base = 'https://api.hubapi.com/account-info/v3/activity/security'; const a = $json.params?.arguments || {}; const q = []; if (a.userId) q.push(`userId=${encodeURIComponent(a.userId)}`); if (a.occurredAfter) q.push(`occurredAfter=${encodeURIComponent(a.occurredAfter)}`); if (a.occurredBefore) q.push(`occurredBefore=${encodeURIComponent(a.occurredBefore)}`); if (a.limit) q.push(`limit=${encodeURIComponent(a.limit)}`); if (a.after) q.push(`after=${encodeURIComponent(a.after)}`); return q.length ? `${base}?${q.join('&')}` : base; })() }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        1504,
+        -176
+      ],
+      "id": "9c50258d-8c67-4095-b10d-0e150fe4ace8",
+      "name": "Get Security Activity",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "toolDescription": "List users (User Provisioning). Optional args: limit, after.",
+        "url": "={{ (() => { const base = 'https://api.hubapi.com/settings/v3/users/'; const a = $json.params?.arguments || {}; const q = []; if (a.limit) q.push(`limit=${encodeURIComponent(a.limit)}`); if (a.after) q.push(`after=${encodeURIComponent(a.after)}`); return q.length ? `${base}?${q.join('&')}` : base; })() }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        992,
+        -176
+      ],
+      "id": "04b2cd6b-49cf-4a35-acbc-59e3dca624b1",
+      "name": "List Users (Provisioning)",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "toolDescription": "Get a user by userId or email. Args: userId (required), idProperty (optional EMAIL|USER_ID).",
+        "url": "={{ (() => { const a = $json.params?.arguments || {}; const userId = a.userId; const idProperty = a.idProperty; if (!userId) return 'https://api.hubapi.com/settings/v3/users/'; const base = `https://api.hubapi.com/settings/v3/users/${encodeURIComponent(userId)}`; return idProperty ? `${base}?idProperty=${encodeURIComponent(idProperty)}` : base; })() }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        1120,
+        -176
+      ],
+      "id": "84742583-14ab-4a30-b790-af26262c488f",
+      "name": "Get User (Provisioning)",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "toolDescription": "Create a user (User Provisioning). Provide JSON body with at least email.",
+        "method": "POST",
+        "url": "https://api.hubapi.com/settings/v3/users/",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $fromAI('create_user_body', 'JSON body for creating a user. Example fields: email, firstName, lastName, roleId, primaryTeamId, secondaryTeamIds, sendWelcomeEmail', 'json') }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        1248,
+        -176
+      ],
+      "id": "94c4ca6e-9512-4e91-9b2f-a0cfa7672cf9",
+      "name": "Create User (Provisioning)",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "toolDescription": "Update a user (User Provisioning). Args: userId. Body: roleId/teams/etc.",
+        "method": "PUT",
+        "url": "={{ (() => { const a = $json.params?.arguments || {}; const userId = a.userId; if (!userId) return 'https://api.hubapi.com/settings/v3/users/'; return `https://api.hubapi.com/settings/v3/users/${encodeURIComponent(userId)}`; })() }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $fromAI('update_user_body', 'JSON body for updating a user provisioning record. Example fields: roleId, primaryTeamId, secondaryTeamIds', 'json') }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        1376,
+        -176
+      ],
+      "id": "e2a7a506-8804-4158-8c7a-d63614ba44b3",
+      "name": "Update User (Provisioning)",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "toolDescription": "Delete a user (User Provisioning). Args: userId (required), idProperty (optional EMAIL|USER_ID).",
+        "method": "DELETE",
+        "url": "={{ (() => { const a = $json.params?.arguments || {}; const userId = a.userId; const idProperty = a.idProperty; if (!userId) return 'https://api.hubapi.com/settings/v3/users/'; const base = `https://api.hubapi.com/settings/v3/users/${encodeURIComponent(userId)}`; return idProperty ? `${base}?idProperty=${encodeURIComponent(idProperty)}` : base; })() }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        1632,
+        -176
+      ],
+      "id": "83d153c1-e972-4862-9690-c4d0db319be3",
+      "name": "Delete User (Provisioning)",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "toolDescription": "List teams in the account (User Provisioning).",
+        "url": "https://api.hubapi.com/settings/v3/users/teams",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        1760,
+        -176
+      ],
+      "id": "7ebb882a-ea9e-4e1a-a43b-06f674e0a4bf",
+      "name": "List Teams (Provisioning)",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "toolDescription": "List roles/permission sets in the account (User Provisioning).",
+        "url": "https://api.hubapi.com/settings/v3/users/roles",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        736,
+        -16
+      ],
+      "id": "d85ea454-6b18-4e46-b322-0c4e231b2ec1",
+      "name": "List Roles (Provisioning)",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "toolDescription": "List pipelines for an objectType. Arg: objectType (e.g. deals, tickets, leads).",
+        "url": "={{ (() => { const a = $json.params?.arguments || {}; const objectType = a.objectType || 'deals'; return `https://api.hubapi.com/crm/v3/pipelines/${encodeURIComponent(objectType)}`; })() }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        864,
+        -16
+      ],
+      "id": "70ebcf12-d2d7-433d-94c2-e946f7dd280a",
+      "name": "List Pipelines",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "toolDescription": "Get a pipeline. Args: objectType, pipelineId.",
+        "url": "={{ (() => { const a = $json.params?.arguments || {}; const objectType = a.objectType || 'deals'; const pipelineId = a.pipelineId; if (!pipelineId) return `https://api.hubapi.com/crm/v3/pipelines/${encodeURIComponent(objectType)}`; return `https://api.hubapi.com/crm/v3/pipelines/${encodeURIComponent(objectType)}/${encodeURIComponent(pipelineId)}`; })() }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        992,
+        -16
+      ],
+      "id": "6142f2d8-1879-45df-bf43-e38a0c33ef75",
+      "name": "Get Pipeline",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "toolDescription": "List custom object schemas (and definitions) in the account.",
+        "url": "https://api.hubapi.com/crm/v3/schemas",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        1120,
+        -16
+      ],
+      "id": "5f90d09c-f932-40d4-9011-680ed5b50d2c",
+      "name": "List Custom Object Schemas",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "toolDescription": "List properties for an objectType. Arg: objectType (contacts, companies, deals, tickets, etc.).",
+        "url": "={{ (() => { const a = $json.params?.arguments || {}; const objectType = a.objectType || 'contacts'; return `https://api.hubapi.com/crm/v3/properties/${encodeURIComponent(objectType)}`; })() }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        1248,
+        -16
+      ],
+      "id": "c94aa686-3d1c-45ae-93e1-84b9852b6e83",
+      "name": "List Properties",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "toolDescription": "Get a property definition. Args: objectType, propertyName.",
+        "url": "={{ (() => { const a = $json.params?.arguments || {}; const objectType = a.objectType || 'contacts'; const propertyName = a.propertyName; if (!propertyName) return `https://api.hubapi.com/crm/v3/properties/${encodeURIComponent(objectType)}`; return `https://api.hubapi.com/crm/v3/properties/${encodeURIComponent(objectType)}/${encodeURIComponent(propertyName)}`; })() }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        1376,
+        -16
+      ],
+      "id": "a4152190-8485-4129-967a-c327c7ba7dc4",
+      "name": "Get Property",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "toolDescription": "Create a property on an objectType. Args: objectType. Body: groupName,name,label,type,fieldType.",
+        "method": "POST",
+        "url": "={{ (() => { const a = $json.params?.arguments || {}; const objectType = a.objectType || 'contacts'; return `https://api.hubapi.com/crm/v3/properties/${encodeURIComponent(objectType)}`; })() }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $fromAI('create_property_body', 'JSON body to create a property. Required: groupName, name, label, type, fieldType (plus optional flags).', 'json') }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        1504,
+        -16
+      ],
+      "id": "6fa4dd7c-bec7-4da5-81b8-c1631e738398",
+      "name": "Create Property",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "toolDescription": "Create default (unlabeled) association between two records. Args: fromObjectType, fromObjectId, toObjectType, toObjectId.",
+        "method": "PUT",
+        "url": "={{ (() => { const a = $json.params?.arguments || {}; const fromObjectType = a.fromObjectType || 'contact'; const fromObjectId = a.fromObjectId; const toObjectType = a.toObjectType || 'company'; const toObjectId = a.toObjectId; if (!fromObjectId || !toObjectId) return 'https://api.hubapi.com/crm/v4/objects/contact/0/associations/default/company/0'; return `https://api.hubapi.com/crm/v4/objects/${encodeURIComponent(fromObjectType)}/${encodeURIComponent(fromObjectId)}/associations/default/${encodeURIComponent(toObjectType)}/${encodeURIComponent(toObjectId)}`; })() }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        1632,
+        -16
+      ],
+      "id": "bca74318-c6ab-409e-897d-5b2b98d5c23f",
+      "name": "Associate Records (Default)",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "toolDescription": "Delete ALL associations between two records. Args: objectType, objectId, toObjectType, toObjectId.",
+        "method": "DELETE",
+        "url": "={{ (() => { const a = $json.params?.arguments || {}; const objectType = a.objectType || 'contact'; const objectId = a.objectId; const toObjectType = a.toObjectType || 'company'; const toObjectId = a.toObjectId; if (!objectId || !toObjectId) return 'https://api.hubapi.com/crm/v4/objects/contact/0/associations/company/0'; return `https://api.hubapi.com/crm/v4/objects/${encodeURIComponent(objectType)}/${encodeURIComponent(objectId)}/associations/${encodeURIComponent(toObjectType)}/${encodeURIComponent(toObjectId)}`; })() }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        1760,
+        -16
+      ],
+      "id": "a40ed60c-8818-4b1f-93d0-b15cec9065b9",
+      "name": "Delete Association (All)",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "request_id"
+            },
+            {
+              "name": "session_id"
+            },
+            {
+              "name": "chat_id"
+            },
+            {
+              "name": "user_id"
+            },
+            {
+              "name": "user_message"
+            },
+            {
+              "name": "object_type"
+            },
+            {
+              "name": "object_id"
+            },
+            {
+              "name": "company_id"
+            },
+            {
+              "name": "contact_id"
+            },
+            {
+              "name": "caller_workflow_id"
+            },
+            {
+              "name": "caller_execution_id"
+            },
+            {
+              "name": "tool_name"
+            },
+            {
+              "name": "dry_run",
+              "type": "boolean"
+            },
+            {
+              "name": "conversation_id"
+            },
+            {
+              "name": "hs_portal_id"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        -336,
+        -432
+      ],
+      "id": "97b27b12-0080-4012-b295-5458d2c1947f",
+      "name": "When Executed by Another Workflow"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1,
+      "position": [
+        432,
+        16
+      ],
+      "id": "9991e1c5-dbe3-44a2-abd3-7aa71e4445bd",
+      "name": "Google Gemini Chat Model",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "k7o7AgCLGREP3jWo",
+          "name": "Google Gemini Chat API Key"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\n\nconst nowIso = new Date().toISOString();\nconst startedMs = Date.now();\n\nconst tool_name = input.tool_name || 'hubspot.TOOL_NAME';\nconst dry_run = (input.dry_run === undefined || input.dry_run === null) ? true : !!input.dry_run;\n\nconst safeJson = (obj) => {\n  const s = JSON.stringify(obj ?? {});\n  // escape single quotes for SQL string literals\n  return s.replace(/'/g, \"''\");\n};\nconst q = (v) => (v === undefined || v === null || v === '') ? null : String(v);\nconst qSql = (v) => {\n  const s = q(v);\n  if (s === null) return 'null';\n  return `'${s.replace(/'/g, \"''\")}'`;\n};\nconst nSql = (v) => {\n  if (v === undefined || v === null || v === '') return 'null';\n  const num = Number(v);\n  return Number.isFinite(num) ? String(num) : 'null';\n};\n\n// Build deterministic note_key (optional): use object_type + hs_object_id when available\nconst note_scope = 'hubspot';\nconst note_key = input.object_type && input.hs_object_id\n  ? `${input.object_type}.${input.hs_object_id}`\n  : (input.object_type ? `${input.object_type}.unknown` : 'unknown');\n\nconst payload_for_log = {\n  ...input,\n  tool_name,\n  dry_run,\n  note_scope,\n  note_key,\n  started_at: nowIso,\n  _started_ms: startedMs\n};\n\n// tool_execution_log schema (confirmed):\n// id uuid, tool_name text, input_data jsonb, output_data jsonb, success bool, error text,\n// duration_ms int, conversation_id uuid, user_id bigint, required_approval bool, created_at timestamptz\nconst log_start_sql = `\nINSERT INTO tool_execution_log (\n  tool_name,\n  input_data,\n  success,\n  conversation_id,\n  user_id,\n  required_approval\n)\nVALUES (\n  ${qSql(tool_name)},\n  '${safeJson(payload_for_log)}'::jsonb,\n  false,\n  ${qSql(input.conversation_id)},\n  ${nSql(input.user_id)},\n  ${dry_run ? 'false' : 'true'}\n)\nRETURNING id;\n`;\n\n// Pull context (hubspot_objects + most recent notes + schema cache for this portal/object_type)\nconst ctx_sql = `\nSELECT jsonb_build_object(\n  'hubspot_object', (\n    SELECT to_jsonb(h)\n    FROM hubspot_objects h\n    WHERE h.object_type = ${qSql(input.object_type)}\n      AND h.hs_object_id = ${qSql(input.hs_object_id)}\n    ORDER BY h.updated_at DESC\n    LIMIT 1\n  ),\n  'agent_notes', (\n    SELECT COALESCE(jsonb_agg(n ORDER BY n.updated_at DESC), '[]'::jsonb)\n    FROM agent_notes n\n    WHERE n.scope = ${qSql(note_scope)}\n      AND n.note_key = ${qSql(note_key)}\n    LIMIT 10\n  ),\n  'schema_cache', (\n    SELECT to_jsonb(s)\n    FROM hubspot_schema_cache s\n    WHERE s.portal_id = ${nSql(input.hs_portal_id)}\n      AND (s.object_type IS NULL OR s.object_type = ${qSql(input.object_type)})\n    ORDER BY s.fetched_at DESC\n    LIMIT 1\n  )\n) AS context;\n`;\n\nreturn [{\n  json: {\n    ...payload_for_log,\n    log_start_sql,\n    ctx_sql\n  }\n}];"
+      },
+      "id": "1ba9b4d8-77fb-45d0-bd0c-8236c40f51b6",
+      "name": "Normalize + Build SQL",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -112,
+        -432
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{$json.log_start_sql}}",
+        "options": {}
+      },
+      "id": "021c882a-521a-4d8f-b9fe-e718e0de9678",
+      "name": "Log Start (tool_execution_log)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [
+        160,
+        -512
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "BwXy2JHETe47vH1I",
+          "name": "Postgres account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{$json.ctx_sql}}",
+        "options": {}
+      },
+      "id": "1a2b2af4-f63e-4269-8b89-860ace43229c",
+      "name": "Load Context",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [
+        160,
+        -352
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "BwXy2JHETe47vH1I",
+          "name": "Postgres account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const base = $input.first().json;\n\n// Log row id is output of Postgres node: [{ id: '...' }]\nconst logStart = $node['Log Start (tool_execution_log)'].json;\nconst tool_execution_id = (Array.isArray(logStart) && logStart[0] && logStart[0].id) ? logStart[0].id : null;\n\nconst ctxRows = $node['Load Context'].json;\nconst context_pack = (Array.isArray(ctxRows) && ctxRows[0] && ctxRows[0].context) ? ctxRows[0].context : {};\n\nreturn [{\n  json: {\n    ...base,\n    tool_execution_id,\n    context_pack\n  }\n}];"
+      },
+      "id": "2b19f1ec-b1c6-4383-af69-421cb7b24aed",
+      "name": "Assemble Context Pack",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        656,
+        -432
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const merged = $input.first().json;\n\nconst started = Number(merged._started_ms || Date.now());\nconst duration_ms = Math.max(0, Date.now() - started);\n\n// Agent output is usually in merged.output (string) OR merged.text\nconst raw = merged.output ?? merged.text ?? merged;\n\nconst coerceJson = (val) => {\n  if (val === null || val === undefined) return null;\n  if (typeof val === 'object') return val;\n  if (typeof val !== 'string') return { value: val };\n  const s = val.trim().replace(/^```json\\s*/i, '').replace(/```$/,'').trim();\n  try { return JSON.parse(s); } catch { return { raw: val }; }\n};\n\nconst agentOut = coerceJson(raw);\nconst ok = !(agentOut?.errors && agentOut.errors.length);\n\nconst final = {\n  ok,\n  tool_name: merged.tool_name,\n  tool_execution_id: merged.tool_execution_id,\n  session_id: merged.session_id,\n  conversation_id: merged.conversation_id,\n  dry_run: merged.dry_run,\n  summary: agentOut?.summary ?? (ok ? 'ok' : 'error'),\n  data: agentOut?.data ?? null,\n  tool_calls: agentOut?.tool_calls ?? [],\n  errors: agentOut?.errors ?? [],\n  notes_to_save: agentOut?.notes_to_save ?? null,\n  context_used: merged.context_pack ?? {},\n  duration_ms\n};\n\nconst esc = (s) => String(s ?? '').replace(/'/g, \"''\");\nconst outJson = esc(JSON.stringify(final));\nconst errText = final.errors?.length ? esc(JSON.stringify(final.errors)) : null;\n\nfinal.log_end_sql = `\nUPDATE tool_execution_log\nSET\n  output_data = '${outJson}'::jsonb,\n  success = ${final.ok ? 'true' : 'false'},\n  error = ${errText ? `'${errText}'` : 'null'},\n  duration_ms = ${Number.isFinite(final.duration_ms) ? final.duration_ms : 'null'}\nWHERE id = '${esc(merged.tool_execution_id)}'::uuid;\n`;\n\nreturn [{ json: final }];"
+      },
+      "id": "f6bd16e1-a3d8-4c40-9d3e-1aac183e9e55",
+      "name": "Parse + Finalize Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1456,
+        -528
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{$json.log_end_sql}}",
+        "options": {}
+      },
+      "id": "3dea2e3b-7ccb-4509-8215-b7731b806fe4",
+      "name": "Log End (tool_execution_log)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [
+        1664,
+        -528
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "BwXy2JHETe47vH1I",
+          "name": "Postgres account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        400,
+        -432
+      ],
+      "id": "ef31a4f1-3116-48ff-8437-272a7b7ec39d",
+      "name": "Merge"
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        1248,
+        -528
+      ],
+      "id": "9777bb9e-67db-4d0f-b7a8-b89b73642554",
+      "name": "Merge (post-agent)"
+    }
+  ],
+  "connections": {
+    "AI Agent - Account": {
+      "main": [
+        [
+          {
+            "node": "Merge (post-agent)",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Memory": {
+      "ai_memory": [
+        [
+          {
+            "node": "AI Agent - Account",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Account Details": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Account",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get API Usage": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Account",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Daily API Limit": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Account",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Account Information": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Account",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Count Contacts": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Account",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Count Deals": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Account",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Count Companies": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Account",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Count Tickets": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Account",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Account Owners/Users": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Account",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Business Units": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Account",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Currencies": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Account",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Daily Private App Usage (Legacy)": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Account",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Audit Logs": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Account",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Login Activity": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Account",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Security Activity": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Account",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "List Users (Provisioning)": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Account",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get User (Provisioning)": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Account",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create User (Provisioning)": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Account",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update User (Provisioning)": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Account",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Delete User (Provisioning)": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Account",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "List Teams (Provisioning)": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Account",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "List Roles (Provisioning)": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Account",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "List Pipelines": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Account",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Pipeline": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Account",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "List Custom Object Schemas": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Account",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "List Properties": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Account",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Property": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Account",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Property": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Account",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Associate Records (Default)": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Account",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Delete Association (All)": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Account",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "When Executed by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "Normalize + Build SQL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Gemini Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent - Account",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize + Build SQL": {
+      "main": [
+        [
+          {
+            "node": "Log Start (tool_execution_log)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Load Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Start (tool_execution_log)": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Context": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Assemble Context Pack": {
+      "main": [
+        [
+          {
+            "node": "AI Agent - Account",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Merge (post-agent)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse + Finalize Output": {
+      "main": [
+        [
+          {
+            "node": "Log End (tool_execution_log)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "Assemble Context Pack",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge (post-agent)": {
+      "main": [
+        [
+          {
+            "node": "Parse + Finalize Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "2d82e0d27c2a88970c7ba9693b6bad225f1d31f9cf0d392d33dd9cabf99f185f"
+  }
+}

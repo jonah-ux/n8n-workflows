@@ -1,0 +1,546 @@
+{
+  "name": "📤 Lead Outreach Compiler v2 — 3-Route AI Extraction",
+  "nodes": [
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "research_run_id"
+            },
+            {
+              "name": "company_id"
+            },
+            {
+              "name": "airtable_id"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [-480, 400],
+      "id": "7e1b4ea7-9198-41b1-ac14-e7ce970011a2",
+      "name": "When Executed by Another Workflow"
+    },
+    {
+      "parameters": {
+        "base": {
+          "__rl": true,
+          "value": "appUmr7c5VACTjiJj",
+          "mode": "list",
+          "cachedResultName": "ASM Lead Intelligence Hub"
+        },
+        "table": {
+          "__rl": true,
+          "value": "tblLxOBg1zHfLYyUJ",
+          "mode": "list",
+          "cachedResultName": "Companies (Canonical)"
+        },
+        "id": "={{ $json.company_id }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2.1,
+      "position": [-256, 256],
+      "id": "1054dcb9-d6da-4abd-9056-8aff314e9ce8",
+      "name": "📥 Get Original Airtable Record",
+      "credentials": {
+        "airtableTokenApi": {
+          "id": "mP0iHEaWU9UB0y9B",
+          "name": "Jonah's n8n Personal Access Token Confirmed"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT COALESCE(context_jsonb, '{}'::jsonb) AS context_jsonb, COALESCE(context_summary, '') AS context_summary, updated_at FROM public.company_contexts WHERE company_id = $1 LIMIT 1;",
+        "options": {
+          "queryReplacement": "={{ [ $('When Executed by Another Workflow').first().json.company_id ] }}"
+        }
+      },
+      "id": "64447b6b-a059-4d6b-b9ea-85523eb4be8d",
+      "name": "📥 Get Company Context",
+      "type": "n8n-nodes-base.postgres",
+      "position": [-256, 400],
+      "typeVersion": 2.6,
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "xogKD739Qe4gqWBU",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT COALESCE(\n  json_agg(t ORDER BY COALESCE(t.completed_at, t.started_at) ASC, t.log_id ASC),\n  '[]'::json\n) AS step_logs\nFROM (\n  SELECT\n    log_id,\n    node_name,\n    node_id,\n    node_type,\n    stage,\n    status,\n    started_at,\n    completed_at,\n    duration_ms,\n    metadata,\n    output_data\n  FROM public.workflow_step_logs\n  WHERE research_run_id = $1\n  ORDER BY COALESCE(completed_at, started_at) ASC, log_id ASC\n) t;",
+        "options": {
+          "queryReplacement": "={{ [ $('When Executed by Another Workflow').first().json.research_run_id ] }}"
+        }
+      },
+      "id": "fab7eec5-9d32-4eee-a10b-05b8bcfb6d46",
+      "name": "📥 Get Step Logs",
+      "type": "n8n-nodes-base.postgres",
+      "position": [-256, 544],
+      "typeVersion": 2.6,
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "xogKD739Qe4gqWBU",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "numberInputs": 3,
+        "options": {
+          "includeUnpaired": true
+        }
+      },
+      "id": "deab8ded-1450-4f4d-9c70-eb91b83a9e11",
+      "name": "🤝 Merge All Sources",
+      "type": "n8n-nodes-base.merge",
+      "position": [-32, 400],
+      "typeVersion": 3.2
+    },
+    {
+      "parameters": {
+        "jsCode": "// 📦 Assemble Unified Payload\n// Combines: Airtable (original), Company Context (enriched), Step Logs\n\nconst allInputs = $input.all().map(i => i.json);\nconst trigger = $('When Executed by Another Workflow').first().json;\n\n// Find each data source\nlet airtableRecord = {};\nlet contextRow = {};\nlet stepLogs = [];\n\nfor (const item of allInputs) {\n  // Airtable record has 'fields' or direct field names from Airtable\n  if (item.fields || item['Company Name'] || item['HQ Address']) {\n    airtableRecord = item.fields || item;\n  }\n  // Context row has context_jsonb\n  else if (item.context_jsonb !== undefined) {\n    contextRow = item;\n    if (typeof contextRow.context_jsonb === 'string') {\n      try { contextRow.context_jsonb = JSON.parse(contextRow.context_jsonb); } catch(e) {}\n    }\n  }\n  // Step logs\n  else if (item.step_logs || Array.isArray(item)) {\n    stepLogs = item.step_logs || item;\n  }\n}\n\n// Parse step_logs if it's a string\nif (typeof stepLogs === 'string') {\n  try { stepLogs = JSON.parse(stepLogs); } catch(e) { stepLogs = []; }\n}\nstepLogs = Array.isArray(stepLogs) ? stepLogs : [];\n\n// Extract ORIGINAL data from Airtable (this is the source of truth for location)\nconst original = {\n  company_name: airtableRecord['Company Name'] || airtableRecord.company_name || null,\n  address: airtableRecord['HQ Address'] || airtableRecord['Address'] || airtableRecord.address || null,\n  phone: airtableRecord['Phone'] || airtableRecord.phone || null,\n  website: airtableRecord['Website'] || airtableRecord.website || null,\n  place_id: airtableRecord['Places Place_id'] || airtableRecord.place_id || null,\n  google_rating: airtableRecord['Google Rating'] || null,\n  google_review_count: airtableRecord['Google Review Count'] || null\n};\n\n// Parse address into components\nlet city = '', state = '', zip = '';\nif (original.address) {\n  const parts = original.address.split(',').map(s => s.trim());\n  if (parts.length >= 2) {\n    city = parts[parts.length - 2] || '';\n    const stateZip = parts[parts.length - 1] || '';\n    const stateZipMatch = stateZip.match(/([A-Z]{2})\\s*(\\d{5})?/);\n    if (stateZipMatch) {\n      state = stateZipMatch[1] || '';\n      zip = stateZipMatch[2] || '';\n    }\n  }\n}\n\nconst ctx = contextRow.context_jsonb || {};\n\nreturn [{\n  json: {\n    // IDs\n    research_run_id: trigger.research_run_id,\n    company_id: trigger.company_id,\n    airtable_id: trigger.airtable_id,\n    \n    // Original Airtable data (SOURCE OF TRUTH for location)\n    original: original,\n    original_city: city,\n    original_state: state,\n    original_zip: zip,\n    \n    // Enriched context\n    context: ctx,\n    context_summary: contextRow.context_summary || '',\n    \n    // All step logs for AI to analyze\n    step_logs: stepLogs,\n    step_log_count: stepLogs.length,\n    \n    // Pre-extracted for convenience\n    identity: ctx.identity || {},\n    contacts: ctx.contacts || {},\n    digital_footprint: ctx.digital_footprint || {},\n    tech_metrics: ctx.tech_metrics || {},\n    notes: ctx.notes || {}\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [192, 400],
+      "id": "aa66ed7b-cb0c-4474-ab28-a2d401807490",
+      "name": "📦 Assemble Unified Payload"
+    },
+    {
+      "parameters": {
+        "jsCode": "// 🔀 Fan Out to 3 AI Routes\n// Each route gets the same payload but will have a specialized prompt\n\nconst payload = $json;\n\n// Create 3 items, one for each AI route\nreturn [\n  { json: { ...payload, ai_route: 'owner_contact' } },\n  { json: { ...payload, ai_route: 'company_business' } },\n  { json: { ...payload, ai_route: 'sales_intel' } }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [416, 400],
+      "id": "fanout-routes",
+      "name": "🔀 Fan Out to 3 Routes"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+                "conditions": [{ "leftValue": "={{ $json.ai_route }}", "rightValue": "owner_contact", "operator": { "type": "string", "operation": "equals" } }],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Owner & Contact"
+            },
+            {
+              "conditions": {
+                "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+                "conditions": [{ "leftValue": "={{ $json.ai_route }}", "rightValue": "company_business", "operator": { "type": "string", "operation": "equals" } }],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Company & Business"
+            },
+            {
+              "conditions": {
+                "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+                "conditions": [{ "leftValue": "={{ $json.ai_route }}", "rightValue": "sales_intel", "operator": { "type": "string", "operation": "equals" } }],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Sales Intel"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [640, 400],
+      "id": "route-switch",
+      "name": "🔀 Route Switch"
+    },
+    {
+      "parameters": {
+        "jsCode": "// 📜 Build Owner & Contact Prompt\nconst p = $json;\n\nconst prompt = `TASK: Extract OWNER and CONTACT information ONLY.\n\nORIGINAL COMPANY (from Airtable - use this for location):\n- Company Name: ${p.original.company_name || 'Unknown'}\n- Address: ${p.original.address || 'Unknown'}\n- Phone: ${p.original.phone || 'Unknown'}\n- Website: ${p.original.website || 'Unknown'}\n\nENRICHED IDENTITY:\n${JSON.stringify(p.identity, null, 2)}\n\nENRICHED CONTACTS:\n${JSON.stringify(p.contacts, null, 2)}\n\nSTEP LOGS (scan for owner/contact mentions):\n${JSON.stringify(p.step_logs.slice(0, 10), null, 2)}\n\nEXTRACT and return ONLY this JSON:\n{\n  \"owner_firstname\": \"...\",\n  \"owner_lastname\": \"...\",\n  \"owner_title\": \"Owner|CEO|President|GM|...\",\n  \"owner_email\": \"...\",\n  \"owner_phone\": \"...\",\n  \"owner_linkedin\": \"...\",\n  \"contact_emails\": [\"...\"],\n  \"contact_phones\": [\"...\"],\n  \"confidence\": 0-100,\n  \"sources\": [\"hunter\", \"linkedin\", \"firecrawl\", ...]\n}\n\nRULES:\n- IGNORE privacy placeholders like \"Domains By Proxy\", \"WhoisGuard\", \"REDACTED\"\n- Prefer Hunter.io emails (highest confidence)\n- LinkedIn profiles are gold for owner verification\n- If owner name found in multiple sources, confidence is higher\n- Return null for fields you can't find`;\n\nreturn [{ json: { prompt, route: 'owner_contact', payload: p } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [880, 240],
+      "id": "prompt-owner",
+      "name": "📜 Owner & Contact Prompt"
+    },
+    {
+      "parameters": {
+        "jsCode": "// 📜 Build Company & Business Prompt\nconst p = $json;\n\nconst prompt = `TASK: Extract COMPANY and BUSINESS information ONLY.\n\nORIGINAL COMPANY (from Airtable - SOURCE OF TRUTH for address):\n- Company Name: ${p.original.company_name || 'Unknown'}\n- Address: ${p.original.address || 'Unknown'}\n- City: ${p.original_city || 'Unknown'}\n- State: ${p.original_state || 'Unknown'}\n- ZIP: ${p.original_zip || 'Unknown'}\n- Phone: ${p.original.phone || 'Unknown'}\n- Website: ${p.original.website || 'Unknown'}\n- Google Place ID: ${p.original.place_id || 'Unknown'}\n- Google Rating: ${p.original.google_rating || 'Unknown'}\n- Google Reviews: ${p.original.google_review_count || 'Unknown'}\n\nENRICHED DIGITAL FOOTPRINT:\n${JSON.stringify(p.digital_footprint, null, 2)}\n\nENRICHED TECH METRICS:\n${JSON.stringify(p.tech_metrics, null, 2)}\n\nEXTRACT and return ONLY this JSON:\n{\n  \"company_name\": \"...\",\n  \"company_address\": \"USE ORIGINAL ADDRESS FROM AIRTABLE\",\n  \"company_city\": \"...\",\n  \"company_state\": \"...\",\n  \"company_zip\": \"...\",\n  \"company_phone\": \"...\",\n  \"company_website\": \"...\",\n  \"company_domain\": \"...\",\n  \"google_place_id\": \"...\",\n  \"google_rating\": 0.0,\n  \"google_review_count\": 0,\n  \"employee_count\": 0,\n  \"years_in_business\": 0,\n  \"services\": [\"...\"],\n  \"tech_stack\": [\"...\"],\n  \"hours_of_operation\": \"...\",\n  \"certifications\": [\"ASE\", \"AAA\", ...]\n}\n\nRULES:\n- ALWAYS use the ORIGINAL Airtable address - do not override with enriched addresses\n- Domain should be extracted from website (e.g., \"smithauto.com\")\n- Services should be specific (e.g., \"Oil Change\", \"Brake Repair\", not just \"Auto Repair\")\n- Return null for fields you can't find`;\n\nreturn [{ json: { prompt, route: 'company_business', payload: p } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [880, 400],
+      "id": "prompt-company",
+      "name": "📜 Company & Business Prompt"
+    },
+    {
+      "parameters": {
+        "jsCode": "// 📜 Build Sales Intel Prompt\nconst p = $json;\n\nconst prompt = `TASK: Extract SALES INTELLIGENCE information ONLY.\n\nCOMPANY CONTEXT:\n- Company: ${p.original.company_name || 'Unknown'}\n- Rating: ${p.original.google_rating || 'Unknown'} (${p.original.google_review_count || 0} reviews)\n\nCONTEXT SUMMARY:\n${p.context_summary || 'No summary available'}\n\nENRICHED NOTES:\n${JSON.stringify(p.notes, null, 2)}\n\nSTEP LOGS (scan for intel):\n${JSON.stringify(p.step_logs.slice(0, 15), null, 2)}\n\nEXTRACT and return ONLY this JSON:\n{\n  \"personalization_hooks\": [\"Family-owned since...\", \"4.8★ rating\", \"Specializes in...\"],\n  \"pain_points\": [\"Manual booking\", \"No online scheduling\", ...],\n  \"buying_signals\": [\"Hiring technicians\", \"Recent expansion\", \"New equipment\", ...],\n  \"red_flags\": [\"Recent bad reviews\", \"Closing soon\", ...],\n  \"talking_points\": [\"Their high rating\", \"Growth opportunity\", ...],\n  \"recommended_channel\": \"call|email|linkedin\",\n  \"best_time_to_contact\": \"morning|afternoon|evening\",\n  \"intel_summary\": \"2-3 sentence summary of this lead\",\n  \"outreach_ready\": true|false,\n  \"priority_score\": 0-100\n}\n\nRULES:\n- Personalization hooks = things to mention in outreach that show you did research\n- Pain points = problems they might have that you can solve\n- Buying signals = indicators they're ready to buy (hiring, expanding, upgrading)\n- Red flags = reasons to deprioritize or skip this lead\n- recommended_channel: \"call\" for local businesses, \"email\" if you have verified email, \"linkedin\" if owner is active\n- outreach_ready = true if we have phone OR email\n- priority_score: 80+ = hot lead, 50-79 = warm, <50 = cold`;\n\nreturn [{ json: { prompt, route: 'sales_intel', payload: p } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [880, 560],
+      "id": "prompt-sales",
+      "name": "📜 Sales Intel Prompt"
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "gpt-4o-mini",
+          "mode": "list",
+          "cachedResultName": "gpt-4o-mini"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "={{ $json.prompt }}"
+            }
+          ]
+        },
+        "options": {
+          "temperature": 0.2,
+          "responseFormat": "json_object",
+          "systemMessage": "You are an expert at extracting owner and contact information from company data. Return ONLY valid JSON matching the requested schema. Be precise and conservative - only include data you're confident about."
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1.8,
+      "position": [1104, 240],
+      "id": "ai-owner",
+      "name": "🤖 AI — Owner & Contact",
+      "credentials": {
+        "openAiApi": {
+          "id": "Lb7LQd5GQa1bZ9yX",
+          "name": "OpenAi account 4"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "gpt-4o-mini",
+          "mode": "list",
+          "cachedResultName": "gpt-4o-mini"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "={{ $json.prompt }}"
+            }
+          ]
+        },
+        "options": {
+          "temperature": 0.2,
+          "responseFormat": "json_object",
+          "systemMessage": "You are an expert at extracting company and business information. Return ONLY valid JSON matching the requested schema. ALWAYS preserve the original Airtable address - never override it with enriched data."
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1.8,
+      "position": [1104, 400],
+      "id": "ai-company",
+      "name": "🤖 AI — Company & Business",
+      "credentials": {
+        "openAiApi": {
+          "id": "Lb7LQd5GQa1bZ9yX",
+          "name": "OpenAi account 4"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "gpt-4o-mini",
+          "mode": "list",
+          "cachedResultName": "gpt-4o-mini"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "={{ $json.prompt }}"
+            }
+          ]
+        },
+        "options": {
+          "temperature": 0.3,
+          "responseFormat": "json_object",
+          "systemMessage": "You are an expert sales intelligence analyst. Extract actionable sales insights from company data. Return ONLY valid JSON matching the requested schema. Be specific with personalization hooks and pain points."
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1.8,
+      "position": [1104, 560],
+      "id": "ai-sales",
+      "name": "🤖 AI — Sales Intel",
+      "credentials": {
+        "openAiApi": {
+          "id": "Lb7LQd5GQa1bZ9yX",
+          "name": "OpenAi account 4"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// ⚙️ Parse Owner & Contact Response\nconst ai = $json;\nconst payload = $('📜 Owner & Contact Prompt').first().json.payload;\n\nlet parsed = {};\ntry {\n  let text = ai.message?.content || ai.choices?.[0]?.message?.content || '';\n  text = text.replace(/```json/g, '').replace(/```/g, '').trim();\n  parsed = JSON.parse(text);\n} catch (e) {\n  parsed = {};\n}\n\nreturn [{\n  json: {\n    route: 'owner_contact',\n    data: parsed,\n    research_run_id: payload.research_run_id,\n    company_id: payload.company_id,\n    airtable_id: payload.airtable_id\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1328, 240],
+      "id": "parse-owner",
+      "name": "⚙️ Parse Owner Response"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ⚙️ Parse Company & Business Response\nconst ai = $json;\nconst payload = $('📜 Company & Business Prompt').first().json.payload;\n\nlet parsed = {};\ntry {\n  let text = ai.message?.content || ai.choices?.[0]?.message?.content || '';\n  text = text.replace(/```json/g, '').replace(/```/g, '').trim();\n  parsed = JSON.parse(text);\n} catch (e) {\n  parsed = {};\n}\n\n// ENFORCE original Airtable address\nparsed.company_address = payload.original.address || parsed.company_address;\nparsed.company_city = payload.original_city || parsed.company_city;\nparsed.company_state = payload.original_state || parsed.company_state;\nparsed.company_zip = payload.original_zip || parsed.company_zip;\n\nreturn [{\n  json: {\n    route: 'company_business',\n    data: parsed,\n    research_run_id: payload.research_run_id,\n    company_id: payload.company_id,\n    airtable_id: payload.airtable_id\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1328, 400],
+      "id": "parse-company",
+      "name": "⚙️ Parse Company Response"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ⚙️ Parse Sales Intel Response\nconst ai = $json;\nconst payload = $('📜 Sales Intel Prompt').first().json.payload;\n\nlet parsed = {};\ntry {\n  let text = ai.message?.content || ai.choices?.[0]?.message?.content || '';\n  text = text.replace(/```json/g, '').replace(/```/g, '').trim();\n  parsed = JSON.parse(text);\n} catch (e) {\n  parsed = {};\n}\n\nreturn [{\n  json: {\n    route: 'sales_intel',\n    data: parsed,\n    research_run_id: payload.research_run_id,\n    company_id: payload.company_id,\n    airtable_id: payload.airtable_id\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1328, 560],
+      "id": "parse-sales",
+      "name": "⚙️ Parse Sales Response"
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "numberInputs": 3,
+        "options": {
+          "includeUnpaired": true
+        }
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [1552, 400],
+      "id": "merge-ai-results",
+      "name": "🤝 Merge AI Results"
+    },
+    {
+      "parameters": {
+        "jsCode": "// 🧾 Build Final Enriched Row\n// Combines all 3 AI route outputs into final record\n\nconst allInputs = $input.all().map(i => i.json);\n\n// Find each route's data\nlet ownerData = {};\nlet companyData = {};\nlet salesData = {};\nlet ids = {};\n\nfor (const item of allInputs) {\n  if (item.route === 'owner_contact') {\n    ownerData = item.data || {};\n    ids = { research_run_id: item.research_run_id, company_id: item.company_id, airtable_id: item.airtable_id };\n  } else if (item.route === 'company_business') {\n    companyData = item.data || {};\n  } else if (item.route === 'sales_intel') {\n    salesData = item.data || {};\n  }\n}\n\n// Build final record\nconst final = {\n  // IDs\n  research_run_id: ids.research_run_id,\n  company_id: ids.company_id,\n  airtable_id: ids.airtable_id,\n  \n  // Company info (from company route)\n  company_name: companyData.company_name || null,\n  company_domain: companyData.company_domain || null,\n  company_website: companyData.company_website || null,\n  company_phone: companyData.company_phone || ownerData.contact_phones?.[0] || null,\n  company_address: companyData.company_address || null,\n  company_city: companyData.company_city || null,\n  company_state: companyData.company_state || null,\n  company_zip: companyData.company_zip || null,\n  google_place_id: companyData.google_place_id || null,\n  google_rating: companyData.google_rating || null,\n  google_review_count: companyData.google_review_count || null,\n  employee_count: companyData.employee_count || null,\n  years_in_business: companyData.years_in_business || null,\n  services: companyData.services || [],\n  tech_stack: companyData.tech_stack || [],\n  hours_of_operation: companyData.hours_of_operation || null,\n  certifications: companyData.certifications || [],\n  \n  // Owner/Contact info (from owner route)\n  contact_firstname: ownerData.owner_firstname || null,\n  contact_lastname: ownerData.owner_lastname || null,\n  contact_title: ownerData.owner_title || null,\n  contact_email: ownerData.owner_email || ownerData.contact_emails?.[0] || null,\n  contact_phone: ownerData.owner_phone || ownerData.contact_phones?.[0] || null,\n  contact_linkedin: ownerData.owner_linkedin || null,\n  contact_emails: ownerData.contact_emails || [],\n  contact_phones: ownerData.contact_phones || [],\n  contact_confidence: ownerData.confidence || 0,\n  contact_sources: ownerData.sources || [],\n  \n  // Sales intel (from sales route)\n  personalization_hooks: salesData.personalization_hooks || [],\n  pain_points: salesData.pain_points || [],\n  buying_signals: salesData.buying_signals || [],\n  red_flags: salesData.red_flags || [],\n  talking_points: salesData.talking_points || [],\n  recommended_channel: salesData.recommended_channel || 'call',\n  best_time_to_contact: salesData.best_time_to_contact || 'morning',\n  intel_summary: salesData.intel_summary || null,\n  outreach_ready: salesData.outreach_ready || (ownerData.owner_email || companyData.company_phone ? true : false),\n  priority_score: salesData.priority_score || 50,\n  \n  // DCS calculation\n  dcs_score: 0,\n  dcs_tier: 'Bronze',\n  \n  // HubSpot payload\n  hubspot_payload: {\n    company: {\n      name: companyData.company_name,\n      domain: companyData.company_domain,\n      website: companyData.company_website,\n      phone: companyData.company_phone,\n      address: companyData.company_address,\n      city: companyData.company_city,\n      state: companyData.company_state,\n      zip: companyData.company_zip\n    },\n    contact: {\n      firstname: ownerData.owner_firstname,\n      lastname: ownerData.owner_lastname,\n      email: ownerData.owner_email,\n      phone: ownerData.owner_phone,\n      jobtitle: ownerData.owner_title,\n      linkedin: ownerData.owner_linkedin\n    }\n  },\n  \n  enriched_at: new Date().toISOString()\n};\n\n// Calculate DCS score\nconst weights = {\n  contact_email: 20,\n  contact_firstname: 10,\n  contact_lastname: 5,\n  contact_phone: 10,\n  contact_linkedin: 7,\n  company_phone: 8,\n  company_domain: 5,\n  google_rating: 5,\n  employee_count: 5,\n  services: 5,\n  personalization_hooks: 10,\n  buying_signals: 10\n};\n\nlet dcs = 0;\nif (final.contact_email) dcs += weights.contact_email;\nif (final.contact_firstname) dcs += weights.contact_firstname;\nif (final.contact_lastname) dcs += weights.contact_lastname;\nif (final.contact_phone) dcs += weights.contact_phone;\nif (final.contact_linkedin) dcs += weights.contact_linkedin;\nif (final.company_phone) dcs += weights.company_phone;\nif (final.company_domain) dcs += weights.company_domain;\nif (final.google_rating) dcs += weights.google_rating;\nif (final.employee_count) dcs += weights.employee_count;\nif (final.services?.length > 0) dcs += weights.services;\nif (final.personalization_hooks?.length > 0) dcs += weights.personalization_hooks;\nif (final.buying_signals?.length > 0) dcs += weights.buying_signals;\n\nfinal.dcs_score = Math.min(100, dcs);\nfinal.dcs_tier = dcs >= 85 ? 'Platinum' : dcs >= 70 ? 'Gold' : dcs >= 50 ? 'Silver' : 'Bronze';\n\nreturn [{ json: final }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1776, 400],
+      "id": "build-final",
+      "name": "🧾 Build Final Enriched Row"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO public.enriched_leads (\n  research_run_id, company_id, airtable_id,\n  company_name, company_domain, company_website, company_phone,\n  company_address, company_city, company_state, company_zip,\n  google_place_id, google_rating, google_review_count,\n  company_employee_count, company_specialties,\n  contact_firstname, contact_lastname, contact_title,\n  contact_email, contact_phone, contact_linkedin,\n  contact_confidence,\n  dcs_score, dcs_tier,\n  personalization_hooks, pain_points, buying_signals,\n  red_flags, talking_points,\n  recommended_channel, best_time_to_contact, intel_summary,\n  outreach_ready, hubspot_payload,\n  enriched_at, updated_at\n) VALUES (\n  $1, $2, $3,\n  $4, $5, $6, $7,\n  $8, $9, $10, $11,\n  $12, $13, $14,\n  $15, $16::text[],\n  $17, $18, $19,\n  $20, $21, $22,\n  $23,\n  $24, $25,\n  $26::jsonb, $27::jsonb, $28::jsonb,\n  $29::jsonb, $30::jsonb,\n  $31, $32, $33,\n  $34, $35::jsonb,\n  NOW(), NOW()\n)\nON CONFLICT (research_run_id) DO UPDATE SET\n  company_name = COALESCE(NULLIF(EXCLUDED.company_name, ''), enriched_leads.company_name),\n  company_domain = COALESCE(NULLIF(EXCLUDED.company_domain, ''), enriched_leads.company_domain),\n  company_website = COALESCE(NULLIF(EXCLUDED.company_website, ''), enriched_leads.company_website),\n  company_phone = COALESCE(NULLIF(EXCLUDED.company_phone, ''), enriched_leads.company_phone),\n  company_address = COALESCE(NULLIF(EXCLUDED.company_address, ''), enriched_leads.company_address),\n  company_city = COALESCE(NULLIF(EXCLUDED.company_city, ''), enriched_leads.company_city),\n  company_state = COALESCE(NULLIF(EXCLUDED.company_state, ''), enriched_leads.company_state),\n  company_zip = COALESCE(NULLIF(EXCLUDED.company_zip, ''), enriched_leads.company_zip),\n  google_place_id = COALESCE(NULLIF(EXCLUDED.google_place_id, ''), enriched_leads.google_place_id),\n  google_rating = COALESCE(EXCLUDED.google_rating, enriched_leads.google_rating),\n  google_review_count = COALESCE(EXCLUDED.google_review_count, enriched_leads.google_review_count),\n  company_employee_count = COALESCE(EXCLUDED.company_employee_count, enriched_leads.company_employee_count),\n  company_specialties = COALESCE(EXCLUDED.company_specialties, enriched_leads.company_specialties),\n  contact_firstname = COALESCE(NULLIF(EXCLUDED.contact_firstname, ''), enriched_leads.contact_firstname),\n  contact_lastname = COALESCE(NULLIF(EXCLUDED.contact_lastname, ''), enriched_leads.contact_lastname),\n  contact_title = COALESCE(NULLIF(EXCLUDED.contact_title, ''), enriched_leads.contact_title),\n  contact_email = COALESCE(NULLIF(EXCLUDED.contact_email, ''), enriched_leads.contact_email),\n  contact_phone = COALESCE(NULLIF(EXCLUDED.contact_phone, ''), enriched_leads.contact_phone),\n  contact_linkedin = COALESCE(NULLIF(EXCLUDED.contact_linkedin, ''), enriched_leads.contact_linkedin),\n  contact_confidence = COALESCE(EXCLUDED.contact_confidence, enriched_leads.contact_confidence),\n  dcs_score = COALESCE(EXCLUDED.dcs_score, enriched_leads.dcs_score),\n  dcs_tier = COALESCE(EXCLUDED.dcs_tier, enriched_leads.dcs_tier),\n  personalization_hooks = COALESCE(EXCLUDED.personalization_hooks, enriched_leads.personalization_hooks),\n  pain_points = COALESCE(EXCLUDED.pain_points, enriched_leads.pain_points),\n  buying_signals = COALESCE(EXCLUDED.buying_signals, enriched_leads.buying_signals),\n  red_flags = COALESCE(EXCLUDED.red_flags, enriched_leads.red_flags),\n  talking_points = COALESCE(EXCLUDED.talking_points, enriched_leads.talking_points),\n  recommended_channel = COALESCE(EXCLUDED.recommended_channel, enriched_leads.recommended_channel),\n  best_time_to_contact = COALESCE(EXCLUDED.best_time_to_contact, enriched_leads.best_time_to_contact),\n  intel_summary = COALESCE(EXCLUDED.intel_summary, enriched_leads.intel_summary),\n  outreach_ready = COALESCE(EXCLUDED.outreach_ready, enriched_leads.outreach_ready),\n  hubspot_payload = COALESCE(EXCLUDED.hubspot_payload, enriched_leads.hubspot_payload),\n  enriched_at = NOW(),\n  updated_at = NOW()\nRETURNING *;",
+        "options": {
+          "queryReplacement": "={{\n[\n  $json.research_run_id,\n  $json.company_id,\n  $json.airtable_id,\n  $json.company_name || null,\n  $json.company_domain || null,\n  $json.company_website || null,\n  $json.company_phone || null,\n  $json.company_address || null,\n  $json.company_city || null,\n  $json.company_state || null,\n  $json.company_zip || null,\n  $json.google_place_id || null,\n  $json.google_rating || null,\n  $json.google_review_count || null,\n  $json.employee_count || null,\n  $json.services ? '{' + $json.services.map(s => '\"' + (s || '').replace(/\"/g, '\\\\\"') + '\"').join(',') + '}' : null,\n  $json.contact_firstname || null,\n  $json.contact_lastname || null,\n  $json.contact_title || null,\n  $json.contact_email || null,\n  $json.contact_phone || null,\n  $json.contact_linkedin || null,\n  $json.contact_confidence || null,\n  $json.dcs_score || null,\n  $json.dcs_tier || null,\n  JSON.stringify($json.personalization_hooks || []),\n  JSON.stringify($json.pain_points || []),\n  JSON.stringify($json.buying_signals || []),\n  JSON.stringify($json.red_flags || []),\n  JSON.stringify($json.talking_points || []),\n  $json.recommended_channel || null,\n  $json.best_time_to_contact || null,\n  $json.intel_summary || null,\n  $json.outreach_ready || false,\n  JSON.stringify($json.hubspot_payload || {})\n]\n}}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [2000, 400],
+      "id": "upsert-enriched",
+      "name": "🗄️ Upsert enriched_leads",
+      "credentials": {
+        "postgres": {
+          "id": "xogKD739Qe4gqWBU",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// 📤 Return Final Result\nconst final = $('🧾 Build Final Enriched Row').first().json;\nconst dbResult = $json;\n\nreturn [{\n  json: {\n    success: true,\n    research_run_id: final.research_run_id,\n    company_id: final.company_id,\n    company_name: final.company_name,\n    dcs_score: final.dcs_score,\n    dcs_tier: final.dcs_tier,\n    outreach_ready: final.outreach_ready,\n    contact_email: final.contact_email,\n    contact_phone: final.contact_phone,\n    priority_score: final.priority_score,\n    recommended_channel: final.recommended_channel\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2224, 400],
+      "id": "return-result",
+      "name": "📤 Return Result"
+    }
+  ],
+  "connections": {
+    "When Executed by Another Workflow": {
+      "main": [
+        [
+          { "node": "📥 Get Original Airtable Record", "type": "main", "index": 0 },
+          { "node": "📥 Get Company Context", "type": "main", "index": 0 },
+          { "node": "📥 Get Step Logs", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "📥 Get Original Airtable Record": {
+      "main": [
+        [
+          { "node": "🤝 Merge All Sources", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "📥 Get Company Context": {
+      "main": [
+        [
+          { "node": "🤝 Merge All Sources", "type": "main", "index": 1 }
+        ]
+      ]
+    },
+    "📥 Get Step Logs": {
+      "main": [
+        [
+          { "node": "🤝 Merge All Sources", "type": "main", "index": 2 }
+        ]
+      ]
+    },
+    "🤝 Merge All Sources": {
+      "main": [
+        [
+          { "node": "📦 Assemble Unified Payload", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "📦 Assemble Unified Payload": {
+      "main": [
+        [
+          { "node": "🔀 Fan Out to 3 Routes", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "🔀 Fan Out to 3 Routes": {
+      "main": [
+        [
+          { "node": "🔀 Route Switch", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "🔀 Route Switch": {
+      "main": [
+        [
+          { "node": "📜 Owner & Contact Prompt", "type": "main", "index": 0 }
+        ],
+        [
+          { "node": "📜 Company & Business Prompt", "type": "main", "index": 0 }
+        ],
+        [
+          { "node": "📜 Sales Intel Prompt", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "📜 Owner & Contact Prompt": {
+      "main": [
+        [
+          { "node": "🤖 AI — Owner & Contact", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "📜 Company & Business Prompt": {
+      "main": [
+        [
+          { "node": "🤖 AI — Company & Business", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "📜 Sales Intel Prompt": {
+      "main": [
+        [
+          { "node": "🤖 AI — Sales Intel", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "🤖 AI — Owner & Contact": {
+      "main": [
+        [
+          { "node": "⚙️ Parse Owner Response", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "🤖 AI — Company & Business": {
+      "main": [
+        [
+          { "node": "⚙️ Parse Company Response", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "🤖 AI — Sales Intel": {
+      "main": [
+        [
+          { "node": "⚙️ Parse Sales Response", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "⚙️ Parse Owner Response": {
+      "main": [
+        [
+          { "node": "🤝 Merge AI Results", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "⚙️ Parse Company Response": {
+      "main": [
+        [
+          { "node": "🤝 Merge AI Results", "type": "main", "index": 1 }
+        ]
+      ]
+    },
+    "⚙️ Parse Sales Response": {
+      "main": [
+        [
+          { "node": "🤝 Merge AI Results", "type": "main", "index": 2 }
+        ]
+      ]
+    },
+    "🤝 Merge AI Results": {
+      "main": [
+        [
+          { "node": "🧾 Build Final Enriched Row", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "🧾 Build Final Enriched Row": {
+      "main": [
+        [
+          { "node": "🗄️ Upsert enriched_leads", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "🗄️ Upsert enriched_leads": {
+      "main": [
+        [
+          { "node": "📤 Return Result", "type": "main", "index": 0 }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "2d82e0d27c2a88970c7ba9693b6bad225f1d31f9cf0d392d33dd9cabf99f185f"
+  }
+}

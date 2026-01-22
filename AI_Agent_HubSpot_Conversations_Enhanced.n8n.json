@@ -1,0 +1,127 @@
+{
+  "name": "AI Agent - HubSpot Conversations (Enhanced)",
+  "nodes": [
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {"name": "request_id", "type": "string"},
+            {"name": "session_id", "type": "string"},
+            {"name": "user_id", "type": "string"},
+            {"name": "user_message", "type": "string"},
+            {"name": "thread_id", "type": "string"},
+            {"name": "channel_id", "type": "string"},
+            {"name": "tool_name", "type": "string"},
+            {"name": "dry_run", "type": "boolean"},
+            {"name": "conversation_id", "type": "string"}
+          ]
+        }
+      },
+      "id": "trigger-1",
+      "name": "When Executed by Another Workflow",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [-800, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst tool_name = input.tool_name || 'hubspot.conversations';\nconst dry_run = input.dry_run ?? true;\nconst q = (v) => (v === undefined || v === null || v === '') ? null : String(v);\nconst payload = {...input, tool_name, dry_run, _started_ms: Date.now()};\nconst log_sql = `INSERT INTO tool_execution_log (tool_name, input_data, success, conversation_id, user_id, required_approval) VALUES ($1, $2::jsonb, false, $3, $4, $5) RETURNING id;`;\nconst log_params = [tool_name, JSON.stringify(payload), q(input.conversation_id), q(input.user_id), !dry_run];\nreturn [{json: {...payload, log_start_sql: log_sql, log_start_params: log_params}}];"
+      },
+      "id": "normalize-1",
+      "name": "Normalize",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-560, 0]
+    },
+    {
+      "parameters": {"operation": "executeQuery", "query": "={{$json.log_start_sql}}", "options": {"queryReplacement": "={{ $json.log_start_params }}"}},
+      "id": "log-start-1",
+      "name": "Log Start",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [-320, 0],
+      "credentials": {"postgres": {"id": "BwXy2JHETe47vH1I", "name": "Postgres account 2"}}
+    },
+    {
+      "parameters": {
+        "jsCode": "const base = $('Normalize').first().json;\nconst logStart = $('Log Start').first().json;\nreturn [{json: {...base, tool_execution_id: logStart?.id || null}}];"
+      },
+      "id": "assemble-1",
+      "name": "Assemble",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-80, 0]
+    },
+    {
+      "parameters": {
+        "text": "={{ ['USER_REQUEST:', $json.user_message, 'RUNTIME:', JSON.stringify({tool_name: $json.tool_name, dry_run: $json.dry_run, thread_id: $json.thread_id})].join('\\n') }}",
+        "options": {
+          "maxIterations": 15,
+          "systemMessage": "You are the HubSpot CONVERSATIONS Agent.\n\nYour job:\n- Manage HubSpot Conversations Inbox\n- Handle threads, messages, and channels\n- Manage chatflows and chat widgets\n- Work with conversation participants\n\nAVAILABLE TOOLS:\n\nINBOX/CHANNELS:\n- List Inboxes - Get all conversation inboxes\n- Get Inbox by ID - Single inbox details\n- List Channels - Get channels for inbox\n- Get Channel by ID - Single channel details\n\nTHREADS:\n- List Threads - Get conversation threads\n- Get Thread by ID - Single thread with messages\n- Create Thread - Start new conversation\n- Update Thread - Modify thread status/assignment\n- Archive Thread - Close/archive thread\n\nMESSAGES:\n- Get Thread Messages - Messages in a thread\n- Send Message - Send message to thread\n- Get Message by ID - Single message details\n\nACTORS/PARTICIPANTS:\n- Get Thread Actors - Participants in thread\n- Get Actor by ID - Single actor details\n\nCHATFLOWS:\n- List Chatflows - Get all chatflows/bots\n- Get Chatflow by ID - Single chatflow details\n\nOUTPUT FORMAT:\n{\"summary\": \"...\", \"data\": {}, \"errors\": []}"
+        },
+        "promptType": "define"
+      },
+      "id": "agent-1",
+      "name": "AI Agent - Conversations",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [160, 0],
+      "alwaysOutputData": true,
+      "retryOnFail": true,
+      "onError": "continueRegularOutput"
+    },
+    {"parameters": {"model": {"__rl": true, "mode": "list", "value": "gpt-4o"}, "options": {}}, "id": "llm-1", "name": "OpenAI Chat Model", "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi", "typeVersion": 1.3, "position": [-80, 200], "credentials": {"openAiApi": {"id": "Lb7LQd5GQa1bZ9yX", "name": "OpenAi account 4"}}},
+    {"parameters": {"sessionKey": "session_id", "sessionIdType": "customKey"}, "id": "memory-1", "name": "Memory", "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow", "typeVersion": 1.3, "position": [40, 200]},
+    {"parameters": {"url": "https://api.hubapi.com/conversations/v3/conversations/inboxes", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "options": {}, "toolDescription": "List all conversation inboxes."}, "id": "tool-list-inboxes", "name": "List Inboxes", "type": "n8n-nodes-base.httpRequestTool", "typeVersion": 4.3, "position": [160, 200], "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}},
+    {"parameters": {"url": "=https://api.hubapi.com/conversations/v3/conversations/inboxes/{{ $json.inboxId }}", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "options": {}, "toolDescription": "Get inbox by ID."}, "id": "tool-get-inbox", "name": "Get Inbox by ID", "type": "n8n-nodes-base.httpRequestTool", "typeVersion": 4.3, "position": [280, 200], "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}},
+    {"parameters": {"url": "=https://api.hubapi.com/conversations/v3/conversations/inboxes/{{ $json.inboxId }}/channels", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "options": {}, "toolDescription": "List channels for an inbox."}, "id": "tool-list-channels", "name": "List Channels", "type": "n8n-nodes-base.httpRequestTool", "typeVersion": 4.3, "position": [400, 200], "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}},
+    {"parameters": {"url": "=https://api.hubapi.com/conversations/v3/conversations/channels/{{ $json.channelId }}", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "options": {}, "toolDescription": "Get channel by ID."}, "id": "tool-get-channel", "name": "Get Channel by ID", "type": "n8n-nodes-base.httpRequestTool", "typeVersion": 4.3, "position": [520, 200], "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}},
+    {"parameters": {"url": "https://api.hubapi.com/conversations/v3/conversations/threads", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "sendQuery": true, "specifyQuery": "json", "options": {}, "toolDescription": "List conversation threads. Query: limit, after, inboxId, latestMessageTimestampAfter."}, "id": "tool-list-threads", "name": "List Threads", "type": "n8n-nodes-base.httpRequestTool", "typeVersion": 4.3, "position": [640, 200], "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}},
+    {"parameters": {"url": "=https://api.hubapi.com/conversations/v3/conversations/threads/{{ $json.threadId }}", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "options": {}, "toolDescription": "Get thread by ID with full details."}, "id": "tool-get-thread", "name": "Get Thread by ID", "type": "n8n-nodes-base.httpRequestTool", "typeVersion": 4.3, "position": [760, 200], "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}},
+    {"parameters": {"method": "POST", "url": "https://api.hubapi.com/conversations/v3/conversations/threads", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "sendBody": true, "specifyBody": "json", "options": {}, "toolDescription": "Create new thread. Body: {channelId, channelAccountId, subject, ...}. WRITE."}, "id": "tool-create-thread", "name": "Create Thread", "type": "n8n-nodes-base.httpRequestTool", "typeVersion": 4.3, "position": [880, 200], "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}},
+    {"parameters": {"method": "PATCH", "url": "=https://api.hubapi.com/conversations/v3/conversations/threads/{{ $json.threadId }}", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "sendBody": true, "specifyBody": "json", "options": {}, "toolDescription": "Update thread status/assignment. WRITE."}, "id": "tool-update-thread", "name": "Update Thread", "type": "n8n-nodes-base.httpRequestTool", "typeVersion": 4.3, "position": [1000, 200], "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}},
+    {"parameters": {"method": "DELETE", "url": "=https://api.hubapi.com/conversations/v3/conversations/threads/{{ $json.threadId }}", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "options": {}, "toolDescription": "Archive/close thread. WRITE."}, "id": "tool-archive-thread", "name": "Archive Thread", "type": "n8n-nodes-base.httpRequestTool", "typeVersion": 4.3, "position": [1120, 200], "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}},
+    {"parameters": {"url": "=https://api.hubapi.com/conversations/v3/conversations/threads/{{ $json.threadId }}/messages", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "options": {}, "toolDescription": "Get messages in a thread."}, "id": "tool-get-messages", "name": "Get Thread Messages", "type": "n8n-nodes-base.httpRequestTool", "typeVersion": 4.3, "position": [160, 360], "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}},
+    {"parameters": {"method": "POST", "url": "=https://api.hubapi.com/conversations/v3/conversations/threads/{{ $json.threadId }}/messages", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "sendBody": true, "specifyBody": "json", "options": {}, "toolDescription": "Send message to thread. Body: {type, text, richText, senderActorId}. WRITE."}, "id": "tool-send-message", "name": "Send Message", "type": "n8n-nodes-base.httpRequestTool", "typeVersion": 4.3, "position": [280, 360], "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}},
+    {"parameters": {"url": "=https://api.hubapi.com/conversations/v3/conversations/threads/{{ $json.threadId }}/messages/{{ $json.messageId }}", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "options": {}, "toolDescription": "Get single message by ID."}, "id": "tool-get-message", "name": "Get Message by ID", "type": "n8n-nodes-base.httpRequestTool", "typeVersion": 4.3, "position": [400, 360], "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}},
+    {"parameters": {"url": "=https://api.hubapi.com/conversations/v3/conversations/threads/{{ $json.threadId }}/actors", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "options": {}, "toolDescription": "Get actors/participants in thread."}, "id": "tool-get-actors", "name": "Get Thread Actors", "type": "n8n-nodes-base.httpRequestTool", "typeVersion": 4.3, "position": [520, 360], "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}},
+    {"parameters": {"url": "=https://api.hubapi.com/conversations/v3/conversations/actors/{{ $json.actorId }}", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "options": {}, "toolDescription": "Get actor details by ID."}, "id": "tool-get-actor", "name": "Get Actor by ID", "type": "n8n-nodes-base.httpRequestTool", "typeVersion": 4.3, "position": [640, 360], "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}},
+    {"parameters": {"url": "https://api.hubapi.com/conversations/v3/chatflows", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "options": {}, "toolDescription": "List all chatflows/bots."}, "id": "tool-list-chatflows", "name": "List Chatflows", "type": "n8n-nodes-base.httpRequestTool", "typeVersion": 4.3, "position": [760, 360], "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}},
+    {"parameters": {"url": "=https://api.hubapi.com/conversations/v3/chatflows/{{ $json.chatflowId }}", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "options": {}, "toolDescription": "Get chatflow by ID."}, "id": "tool-get-chatflow", "name": "Get Chatflow by ID", "type": "n8n-nodes-base.httpRequestTool", "typeVersion": 4.3, "position": [880, 360], "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}},
+    {"parameters": {"jsCode": "const base = $('Assemble').first().json;\nconst agentRaw = $('AI Agent - Conversations').first().json;\nconst agentOut = typeof agentRaw.output === 'object' ? agentRaw.output : (typeof agentRaw.output === 'string' ? JSON.parse(agentRaw.output.replace(/^```json|```$/g,'')) : {});\nconst ok = !agentOut?.errors?.length;\nconst esc = s => String(s??'').replace(/'/g,\"''\");\nconst final = {ok, summary: agentOut?.summary || 'done', data: agentOut?.data, errors: agentOut?.errors || []};\nfinal.log_end_sql = `UPDATE tool_execution_log SET output_data = '${esc(JSON.stringify(final))}'::jsonb, success = ${ok} WHERE id = '${esc(base.tool_execution_id)}'::uuid;`;\nreturn [{json: final}];"}, "id": "parse-1", "name": "Parse Output", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [400, 0]},
+    {"parameters": {"operation": "executeQuery", "query": "={{$json.log_end_sql}}", "options": {}}, "id": "log-end-1", "name": "Log End", "type": "n8n-nodes-base.postgres", "typeVersion": 2.5, "position": [640, 0], "credentials": {"postgres": {"id": "BwXy2JHETe47vH1I", "name": "Postgres account 2"}}, "onError": "continueRegularOutput"},
+    {"parameters": {"options": {}}, "type": "@n8n/n8n-nodes-langchain.chatTrigger", "typeVersion": 1.4, "position": [-800, -200], "id": "chat-trigger-1", "name": "Chat Trigger", "webhookId": "conversations-test"},
+    {"parameters": {"jsCode": "return [{json: {user_message: $input.first().json.chatInput || '', dry_run: true, tool_name: 'hubspot.conversations', session_id: 'test'}}];"}, "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [-560, -200], "id": "chat-norm", "name": "Normalize Chat"}
+  ],
+  "connections": {
+    "When Executed by Another Workflow": {"main": [[{"node": "Normalize", "type": "main", "index": 0}]]},
+    "Chat Trigger": {"main": [[{"node": "Normalize Chat", "type": "main", "index": 0}]]},
+    "Normalize Chat": {"main": [[{"node": "Normalize", "type": "main", "index": 0}]]},
+    "Normalize": {"main": [[{"node": "Log Start", "type": "main", "index": 0}]]},
+    "Log Start": {"main": [[{"node": "Assemble", "type": "main", "index": 0}]]},
+    "Assemble": {"main": [[{"node": "AI Agent - Conversations", "type": "main", "index": 0}]]},
+    "AI Agent - Conversations": {"main": [[{"node": "Parse Output", "type": "main", "index": 0}]]},
+    "Parse Output": {"main": [[{"node": "Log End", "type": "main", "index": 0}]]},
+    "OpenAI Chat Model": {"ai_languageModel": [[{"node": "AI Agent - Conversations", "type": "ai_languageModel", "index": 0}]]},
+    "Memory": {"ai_memory": [[{"node": "AI Agent - Conversations", "type": "ai_memory", "index": 0}]]},
+    "List Inboxes": {"ai_tool": [[{"node": "AI Agent - Conversations", "type": "ai_tool", "index": 0}]]},
+    "Get Inbox by ID": {"ai_tool": [[{"node": "AI Agent - Conversations", "type": "ai_tool", "index": 0}]]},
+    "List Channels": {"ai_tool": [[{"node": "AI Agent - Conversations", "type": "ai_tool", "index": 0}]]},
+    "Get Channel by ID": {"ai_tool": [[{"node": "AI Agent - Conversations", "type": "ai_tool", "index": 0}]]},
+    "List Threads": {"ai_tool": [[{"node": "AI Agent - Conversations", "type": "ai_tool", "index": 0}]]},
+    "Get Thread by ID": {"ai_tool": [[{"node": "AI Agent - Conversations", "type": "ai_tool", "index": 0}]]},
+    "Create Thread": {"ai_tool": [[{"node": "AI Agent - Conversations", "type": "ai_tool", "index": 0}]]},
+    "Update Thread": {"ai_tool": [[{"node": "AI Agent - Conversations", "type": "ai_tool", "index": 0}]]},
+    "Archive Thread": {"ai_tool": [[{"node": "AI Agent - Conversations", "type": "ai_tool", "index": 0}]]},
+    "Get Thread Messages": {"ai_tool": [[{"node": "AI Agent - Conversations", "type": "ai_tool", "index": 0}]]},
+    "Send Message": {"ai_tool": [[{"node": "AI Agent - Conversations", "type": "ai_tool", "index": 0}]]},
+    "Get Message by ID": {"ai_tool": [[{"node": "AI Agent - Conversations", "type": "ai_tool", "index": 0}]]},
+    "Get Thread Actors": {"ai_tool": [[{"node": "AI Agent - Conversations", "type": "ai_tool", "index": 0}]]},
+    "Get Actor by ID": {"ai_tool": [[{"node": "AI Agent - Conversations", "type": "ai_tool", "index": 0}]]},
+    "List Chatflows": {"ai_tool": [[{"node": "AI Agent - Conversations", "type": "ai_tool", "index": 0}]]},
+    "Get Chatflow by ID": {"ai_tool": [[{"node": "AI Agent - Conversations", "type": "ai_tool", "index": 0}]]}
+  },
+  "settings": {"executionOrder": "v1"},
+  "tags": [],
+  "pinData": {}
+}

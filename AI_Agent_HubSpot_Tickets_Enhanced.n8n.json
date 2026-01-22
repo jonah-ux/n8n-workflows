@@ -5,74 +5,23 @@
       "parameters": {
         "workflowInputs": {
           "values": [
-            {
-              "name": "request_id",
-              "type": "string"
-            },
-            {
-              "name": "session_id",
-              "type": "string"
-            },
-            {
-              "name": "chat_id",
-              "type": "string"
-            },
-            {
-              "name": "user_id",
-              "type": "string"
-            },
-            {
-              "name": "user_message",
-              "type": "string"
-            },
-            {
-              "name": "object_type",
-              "type": "string"
-            },
-            {
-              "name": "object_id",
-              "type": "string"
-            },
-            {
-              "name": "company_id",
-              "type": "string"
-            },
-            {
-              "name": "contact_id",
-              "type": "string"
-            },
-            {
-              "name": "deal_id",
-              "type": "string"
-            },
-            {
-              "name": "ticket_id",
-              "type": "string"
-            },
-            {
-              "name": "caller_workflow_id",
-              "type": "string"
-            },
-            {
-              "name": "caller_execution_id",
-              "type": "string"
-            },
-            {
-              "name": "tool_name",
-              "type": "string"
-            },
-            {
-              "name": "dry_run",
-              "type": "boolean"
-            },
-            {
-              "name": "conversation_id",
-              "type": "string"
-            },
-            {
-              "name": "hs_portal_id",
-              "type": "string"
-            }
+            {"name": "request_id", "type": "string"},
+            {"name": "session_id", "type": "string"},
+            {"name": "chat_id", "type": "string"},
+            {"name": "user_id", "type": "string"},
+            {"name": "user_message", "type": "string"},
+            {"name": "object_type", "type": "string"},
+            {"name": "object_id", "type": "string"},
+            {"name": "company_id", "type": "string"},
+            {"name": "contact_id", "type": "string"},
+            {"name": "deal_id", "type": "string"},
+            {"name": "ticket_id", "type": "string"},
+            {"name": "caller_workflow_id", "type": "string"},
+            {"name": "caller_execution_id", "type": "string"},
+            {"name": "tool_name", "type": "string"},
+            {"name": "dry_run", "type": "boolean"},
+            {"name": "conversation_id", "type": "string"},
+            {"name": "hs_portal_id", "type": "string"}
           ]
         }
       },
@@ -80,89 +29,60 @@
       "name": "When Executed by Another Workflow",
       "type": "n8n-nodes-base.executeWorkflowTrigger",
       "typeVersion": 1.1,
-      "position": [
-        -800,
-        0
-      ]
+      "position": [-800, 0]
     },
     {
       "parameters": {
-        "jsCode": "const input = $input.first().json;\n\nconst nowIso = new Date().toISOString();\nconst startedMs = Date.now();\n\nconst tool_name = input.tool_name || 'hubspot.tickets';\nconst dry_run = (input.dry_run === undefined || input.dry_run === null) ? true : !!input.dry_run;\n\nconst q = (v) => (v === undefined || v === null || v === '') ? null : String(v);\n\nconst note_scope = 'hubspot';\nconst note_key = input.ticket_id \n  ? `ticket.${input.ticket_id}` \n  : (input.object_type && input.object_id ? `${input.object_type}.${input.object_id}` : 'tickets.unknown');\n\nconst payload_for_log = {\n  ...input,\n  tool_name,\n  dry_run,\n  note_scope,\n  note_key,\n  started_at: nowIso,\n  _started_ms: startedMs\n};\n\n// Parameterized SQL for log_start\nconst log_start_sql = `\nINSERT INTO tool_execution_log (\n  tool_name,\n  input_data,\n  success,\n  conversation_id,\n  user_id,\n  required_approval\n)\nVALUES ($1, $2::jsonb, false, $3, $4, $5)\nRETURNING id;\n`;\n\nconst log_start_params = [\n  tool_name,\n  JSON.stringify(payload_for_log),\n  q(input.conversation_id),\n  q(input.user_id),\n  !dry_run\n];\n\n// Parameterized SQL for context loading\nconst ctx_sql = `\nSELECT jsonb_build_object(\n  'hubspot_ticket', (\n    SELECT to_jsonb(t)\n    FROM hubspot_tickets t\n    WHERE t.id = $1\n    LIMIT 1\n  ),\n  'associated_company', (\n    SELECT to_jsonb(c)\n    FROM hubspot_companies c\n    WHERE c.id = $2\n    LIMIT 1\n  ),\n  'associated_contact', (\n    SELECT to_jsonb(ct)\n    FROM hubspot_contacts ct\n    WHERE ct.id = $3\n    LIMIT 1\n  ),\n  'associated_deal', (\n    SELECT to_jsonb(d)\n    FROM hubspot_deals d\n    WHERE d.id = $4\n    LIMIT 1\n  ),\n  'agent_notes', (\n    SELECT COALESCE(jsonb_agg(n ORDER BY n.updated_at DESC), '[]'::jsonb)\n    FROM agent_notes n\n    WHERE n.scope = $5\n      AND n.note_key = $6\n    LIMIT 10\n  ),\n  'ticket_properties_sample', (\n    SELECT jsonb_agg(p.attrs->'properties')\n    FROM hubspot_tickets p\n    LIMIT 3\n  )\n) AS context;\n`;\n\nconst ctx_params = [\n  q(input.ticket_id),\n  q(input.company_id),\n  q(input.contact_id),\n  q(input.deal_id),\n  note_scope,\n  note_key\n];\n\nreturn [{\n  json: {\n    ...payload_for_log,\n    log_start_sql,\n    log_start_params,\n    ctx_sql,\n    ctx_params\n  }\n}];"
+        "jsCode": "const input = $input.first().json;\n\nconst nowIso = new Date().toISOString();\nconst startedMs = Date.now();\n\nconst tool_name = input.tool_name || 'hubspot.tickets';\nconst dry_run = (input.dry_run === undefined || input.dry_run === null) ? true : !!input.dry_run;\n\nconst q = (v) => (v === undefined || v === null || v === '') ? null : String(v);\n\nconst note_scope = 'hubspot';\nconst note_key = input.ticket_id \n  ? `ticket.${input.ticket_id}` \n  : (input.object_type && input.object_id ? `${input.object_type}.${input.object_id}` : 'tickets.unknown');\n\nconst payload_for_log = {\n  ...input,\n  tool_name,\n  dry_run,\n  note_scope,\n  note_key,\n  started_at: nowIso,\n  _started_ms: startedMs\n};\n\nconst log_start_sql = `\nINSERT INTO tool_execution_log (\n  tool_name,\n  input_data,\n  success,\n  conversation_id,\n  user_id,\n  required_approval\n)\nVALUES ($1, $2::jsonb, false, $3, $4, $5)\nRETURNING id;\n`;\n\nconst log_start_params = [\n  tool_name,\n  JSON.stringify(payload_for_log),\n  q(input.conversation_id),\n  q(input.user_id),\n  !dry_run\n];\n\nconst ctx_sql = `\nSELECT jsonb_build_object(\n  'hubspot_ticket', (\n    SELECT to_jsonb(t)\n    FROM hubspot_tickets t\n    WHERE t.id = $1\n    LIMIT 1\n  ),\n  'associated_company', (\n    SELECT to_jsonb(c)\n    FROM hubspot_companies c\n    WHERE c.id = $2\n    LIMIT 1\n  ),\n  'associated_contact', (\n    SELECT to_jsonb(ct)\n    FROM hubspot_contacts ct\n    WHERE ct.id = $3\n    LIMIT 1\n  ),\n  'associated_deal', (\n    SELECT to_jsonb(d)\n    FROM hubspot_deals d\n    WHERE d.id = $4\n    LIMIT 1\n  ),\n  'agent_notes', (\n    SELECT COALESCE(jsonb_agg(n ORDER BY n.updated_at DESC), '[]'::jsonb)\n    FROM agent_notes n\n    WHERE n.scope = $5\n      AND n.note_key = $6\n    LIMIT 10\n  )\n) AS context;\n`;\n\nconst ctx_params = [\n  q(input.ticket_id),\n  q(input.company_id),\n  q(input.contact_id),\n  q(input.deal_id),\n  note_scope,\n  note_key\n];\n\nreturn [{\n  json: {\n    ...payload_for_log,\n    log_start_sql,\n    log_start_params,\n    ctx_sql,\n    ctx_params\n  }\n}];"
       },
       "id": "normalize-1",
       "name": "Normalize + Build SQL",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [
-        -560,
-        0
-      ]
+      "position": [-560, 0]
     },
     {
       "parameters": {
         "operation": "executeQuery",
         "query": "={{$json.log_start_sql}}",
-        "options": {
-          "queryReplacement": "={{ $json.log_start_params }}"
-        }
+        "options": {"queryReplacement": "={{ $json.log_start_params }}"}
       },
       "id": "log-start-1",
       "name": "Log Start (tool_execution_log)",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
-      "position": [
-        -320,
-        -80
-      ],
-      "credentials": {
-        "postgres": {
-          "id": "BwXy2JHETe47vH1I",
-          "name": "Postgres account 2"
-        }
-      }
+      "position": [-320, -80],
+      "credentials": {"postgres": {"id": "BwXy2JHETe47vH1I", "name": "Postgres account 2"}}
     },
     {
       "parameters": {
         "operation": "executeQuery",
         "query": "={{$json.ctx_sql}}",
-        "options": {
-          "queryReplacement": "={{ $json.ctx_params }}"
-        }
+        "options": {"queryReplacement": "={{ $json.ctx_params }}"}
       },
       "id": "load-context-1",
       "name": "Load Context",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
-      "position": [
-        -320,
-        80
-      ],
-      "credentials": {
-        "postgres": {
-          "id": "BwXy2JHETe47vH1I",
-          "name": "Postgres account 2"
-        }
-      }
+      "position": [-320, 80],
+      "credentials": {"postgres": {"id": "BwXy2JHETe47vH1I", "name": "Postgres account 2"}}
     },
     {
       "parameters": {
-        "jsCode": "const base = $('Normalize + Build SQL').first().json;\n\nconst logStart = $('Log Start (tool_execution_log)').first().json;\nconst tool_execution_id = (logStart && logStart.id) ? logStart.id : null;\n\nconst ctxRows = $('Load Context').first().json;\nconst context_pack = (ctxRows && ctxRows.context) ? ctxRows.context : {};\n\nreturn [{\n  json: {\n    ...base,\n    tool_execution_id,\n    context_pack\n  }\n}];"
+        "jsCode": "const base = $('Normalize + Build SQL').first().json;\nconst logStart = $('Log Start (tool_execution_log)').first().json;\nconst tool_execution_id = (logStart && logStart.id) ? logStart.id : null;\nconst ctxRows = $('Load Context').first().json;\nconst context_pack = (ctxRows && ctxRows.context) ? ctxRows.context : {};\nreturn [{json: {...base, tool_execution_id, context_pack}}];"
       },
       "id": "assemble-1",
       "name": "Assemble Context Pack",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [
-        -80,
-        0
-      ]
+      "position": [-80, 0]
     },
     {
       "parameters": {
-        "text": "={{ \n[\n  \"USER_REQUEST:\",\n  ($json.user_message || \"\").toString(),\n  \"\",\n  \"RUNTIME:\",\n  JSON.stringify({\n    tool_name: $json.tool_name || \"hubspot.tickets\",\n    dry_run: $json.dry_run ?? true,\n    session_id: $json.session_id,\n    request_id: $json.request_id,\n    conversation_id: $json.conversation_id,\n    ticket_id: $json.ticket_id,\n    deal_id: $json.deal_id,\n    company_id: $json.company_id,\n    contact_id: $json.contact_id,\n    user_id: $json.user_id,\n    caller_workflow_id: $json.caller_workflow_id,\n    caller_execution_id: $json.caller_execution_id\n  }, null, 2),\n  \"\",\n  \"CONTEXT_PACK (DB):\",\n  JSON.stringify($json.context_pack ?? {}, null, 2)\n].join(\"\\n\")\n}}\n",
+        "text": "={{ \n[\n  \"USER_REQUEST:\",\n  ($json.user_message || \"\").toString(),\n  \"\",\n  \"RUNTIME:\",\n  JSON.stringify({\n    tool_name: $json.tool_name || \"hubspot.tickets\",\n    dry_run: $json.dry_run ?? true,\n    session_id: $json.session_id,\n    request_id: $json.request_id,\n    conversation_id: $json.conversation_id,\n    ticket_id: $json.ticket_id,\n    deal_id: $json.deal_id,\n    company_id: $json.company_id,\n    contact_id: $json.contact_id,\n    user_id: $json.user_id\n  }, null, 2),\n  \"\",\n  \"CONTEXT_PACK (DB):\",\n  JSON.stringify($json.context_pack ?? {}, null, 2)\n].join(\"\\n\")\n}}",
         "options": {
           "maxIterations": 15,
-          "systemMessage": "You are the HubSpot TICKETS Agent.\n\nYour job:\n- Manage HubSpot tickets: list, search, create, update, delete, associate.\n- Return ONLY valid JSON in the specified output schema.\n\nINPUTS YOU RECEIVE:\n- USER_REQUEST (plain text)\n- RUNTIME (json): includes tool_name, dry_run, ids\n- CONTEXT_PACK (json): database context if available\n\nHARD RULES:\n1) Always use tools for factual data. Do NOT guess.\n2) DRY RUN ENFORCEMENT:\n   - If runtime.dry_run is true: DO NOT call ANY write tools (Create, Update, Delete, Associate).\n   - If the user requests a write and dry_run=true: return a proposed plan + exact tool + payload, but do not execute.\n3) If a required argument is missing (ex: ticketId, subject, hs_pipeline, hs_pipeline_stage), ask for it in errors[] and do not call the tool.\n\nAVAILABLE TOOLS (USE THESE NAMES EXACTLY):\nREAD OPERATIONS:\n- List All Tickets - Get paginated list of all tickets\n- Get Ticket by ID - Get a specific ticket by ID\n- Search Tickets - Search tickets with filters\n- List Ticket Properties - Get all ticket property definitions\n- Get Ticket Pipelines - Get all ticket pipelines and stages (essential for valid hs_pipeline_stage values)\n- Get Ticket Associations - Get contacts/companies/deals associated with a ticket\n\nWRITE OPERATIONS (ONLY IF dry_run=false AND user explicitly requested):\n- Create Ticket - Create a new ticket (requires subject, hs_pipeline, hs_pipeline_stage)\n- Update Ticket - Update ticket properties\n- Delete Ticket - Delete a ticket\n\nCOMMON TICKET PROPERTIES:\n- subject (required for create) - ticket title/subject line\n- content - ticket description/body\n- hs_pipeline (required for create) - which pipeline the ticket belongs to\n- hs_pipeline_stage (required for create) - current stage in the pipeline\n- hs_ticket_priority - LOW, MEDIUM, HIGH\n- hs_ticket_category - category of the ticket\n- hubspot_owner_id - assigned rep/owner\n- source_type - where the ticket originated (CHAT, EMAIL, FORM, PHONE, etc.)\n- createdate, hs_lastmodifieddate\n- hs_resolution - resolution notes when closing\n- closed_date - when ticket was closed\n\nTICKET PIPELINE STAGES (typical):\n- New/Open -> Waiting on contact -> Waiting on us -> Closed\n- Always use Get Ticket Pipelines to get valid stage IDs for a specific portal\n\nSEARCH OPERATORS:\n- EQ, NEQ, LT, LTE, GT, GTE\n- CONTAINS_TOKEN, NOT_CONTAINS_TOKEN\n- HAS_PROPERTY, NOT_HAS_PROPERTY\n- BETWEEN, IN, NOT_IN\n\nASSOCIATION TYPES:\n- ticket_to_contact (16)\n- ticket_to_company (26)\n- ticket_to_deal (28)\n\nIMPORTANT NOTES:\n- Tickets require hs_pipeline and hs_pipeline_stage - always verify valid values first\n- Use Get Ticket Pipelines before creating tickets to ensure valid stage IDs\n- Tickets can be associated with contacts, companies, and deals\n\nOUTPUT FORMAT (RETURN JSON ONLY):\n{\n  \"summary\": \"short human summary\",\n  \"data\": { \"any\": \"tool results or extracted fields\" },\n  \"tool_calls\": [\n    { \"tool\": \"Tool Name\", \"arguments\": { } }\n  ],\n  \"errors\": [\n    { \"code\": \"MISSING_ARG|DRY_RUN_BLOCK|TOOL_ERROR\", \"message\": \"...\" }\n  ],\n  \"notes_to_save\": null\n}"
+          "systemMessage": "You are the HubSpot TICKETS Agent.\n\nYour job:\n- Full ticket lifecycle: list, search, create, update, delete, merge\n- Batch operations for efficiency\n- Manage associations to contacts, companies, deals\n- Track ticket property history\n- Return ONLY valid JSON.\n\nAVAILABLE TOOLS:\n\nREAD OPERATIONS:\n- List All Tickets - Paginated list of tickets\n- Get Ticket by ID - Single ticket with properties\n- Search Tickets - Filter/search tickets\n- List Ticket Properties - All property definitions\n- Get Ticket Property - Single property details\n- Get Ticket Property History - Historical property values\n- Get Ticket Pipelines - All pipelines and stages\n- Get Ticket Associations - Associated objects\n- Get Ticket Association Labels - Available association types\n- List Owners - HubSpot users for assignment\n- Batch Read Tickets - Read multiple tickets by ID\n\nWRITE OPERATIONS (respect dry_run):\n- Create Ticket - New ticket (requires subject, hs_pipeline, hs_pipeline_stage)\n- Update Ticket - Modify properties\n- Delete Ticket - Archive ticket\n- Merge Tickets - Combine two tickets\n- Associate Ticket - Link to contact/company/deal\n- Remove Ticket Association - Unlink from object\n- Batch Create Tickets - Create multiple\n- Batch Update Tickets - Update multiple\n- Batch Archive Tickets - Delete multiple\n\nINTER-AGENT TOOLS:\n- Call Contacts Agent - Contact lookups\n- Call Companies Agent - Company lookups\n- Call Deals Agent - Deal lookups\n- Call Engagements Agent - Notes, tasks, activities\n\nOUTPUT FORMAT:\n{\"summary\": \"...\", \"data\": {}, \"tool_calls\": [], \"errors\": [], \"notes_to_save\": null}"
         },
         "promptType": "define"
       },
@@ -170,10 +90,7 @@
       "name": "AI Agent - Tickets",
       "type": "@n8n/n8n-nodes-langchain.agent",
       "typeVersion": 3.1,
-      "position": [
-        160,
-        0
-      ],
+      "position": [160, 0],
       "alwaysOutputData": true,
       "retryOnFail": true,
       "waitBetweenTries": 3000,
@@ -181,42 +98,23 @@
     },
     {
       "parameters": {
-        "model": {
-          "__rl": true,
-          "mode": "list",
-          "value": "gpt-4o",
-          "cachedResultName": "gpt-4o"
-        },
+        "model": {"__rl": true, "mode": "list", "value": "gpt-4o"},
         "options": {}
       },
       "id": "llm-1",
       "name": "OpenAI Chat Model",
       "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
       "typeVersion": 1.3,
-      "position": [
-        -80,
-        200
-      ],
-      "credentials": {
-        "openAiApi": {
-          "id": "Lb7LQd5GQa1bZ9yX",
-          "name": "OpenAi account 4"
-        }
-      }
+      "position": [-80, 200],
+      "credentials": {"openAiApi": {"id": "Lb7LQd5GQa1bZ9yX", "name": "OpenAi account 4"}}
     },
     {
-      "parameters": {
-        "sessionKey": "session_id",
-        "sessionIdType": "customKey"
-      },
+      "parameters": {"sessionKey": "session_id", "sessionIdType": "customKey"},
       "id": "memory-1",
       "name": "Memory",
       "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
       "typeVersion": 1.3,
-      "position": [
-        40,
-        200
-      ]
+      "position": [40, 200]
     },
     {
       "parameters": {
@@ -226,22 +124,14 @@
         "sendQuery": true,
         "specifyQuery": "json",
         "options": {},
-        "toolDescription": "List all tickets from HubSpot. Returns paginated results. Use query params: limit (max 100), after (pagination cursor), properties (comma-separated list), associations."
+        "toolDescription": "List all tickets. Query params: limit, after, properties, associations."
       },
-      "id": "tool-list-tickets",
+      "id": "tool-list",
       "name": "List All Tickets",
       "type": "n8n-nodes-base.httpRequestTool",
       "typeVersion": 4.3,
-      "position": [
-        160,
-        200
-      ],
-      "credentials": {
-        "httpHeaderAuth": {
-          "id": "3GlzU3rx0tDPWf6R",
-          "name": "HubSpot Private App - Full Access"
-        }
-      }
+      "position": [160, 200],
+      "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}
     },
     {
       "parameters": {
@@ -251,22 +141,14 @@
         "sendQuery": true,
         "specifyQuery": "json",
         "options": {},
-        "toolDescription": "Get a specific ticket by ID. Include properties param to specify which properties to return. Use propertiesWithHistory for historical values."
+        "toolDescription": "Get ticket by ID. Include properties param for specific fields."
       },
-      "id": "tool-get-ticket",
+      "id": "tool-get",
       "name": "Get Ticket by ID",
       "type": "n8n-nodes-base.httpRequestTool",
       "typeVersion": 4.3,
-      "position": [
-        280,
-        200
-      ],
-      "credentials": {
-        "httpHeaderAuth": {
-          "id": "3GlzU3rx0tDPWf6R",
-          "name": "HubSpot Private App - Full Access"
-        }
-      }
+      "position": [280, 200],
+      "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}
     },
     {
       "parameters": {
@@ -276,24 +158,15 @@
         "genericAuthType": "httpHeaderAuth",
         "sendBody": true,
         "specifyBody": "json",
-        "contentType": "json",
         "options": {},
-        "toolDescription": "Search tickets using filters. Body: {query: 'text search', filterGroups: [{filters: [{propertyName, operator, value}]}], sorts: [{propertyName, direction}], properties: [], limit, after}. Common filters: hs_pipeline_stage, hs_ticket_priority, hubspot_owner_id, subject."
+        "toolDescription": "Search tickets. Body: {filterGroups, sorts, properties, limit, after}."
       },
-      "id": "tool-search-tickets",
+      "id": "tool-search",
       "name": "Search Tickets",
       "type": "n8n-nodes-base.httpRequestTool",
       "typeVersion": 4.3,
-      "position": [
-        400,
-        200
-      ],
-      "credentials": {
-        "httpHeaderAuth": {
-          "id": "3GlzU3rx0tDPWf6R",
-          "name": "HubSpot Private App - Full Access"
-        }
-      }
+      "position": [400, 200],
+      "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}
     },
     {
       "parameters": {
@@ -301,22 +174,47 @@
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "options": {},
-        "toolDescription": "List all ticket property definitions including standard and custom properties. Returns name, label, type, fieldType, groupName, options for enumeration types."
+        "toolDescription": "List all ticket property definitions."
       },
       "id": "tool-list-props",
       "name": "List Ticket Properties",
       "type": "n8n-nodes-base.httpRequestTool",
       "typeVersion": 4.3,
-      "position": [
-        520,
-        200
-      ],
-      "credentials": {
-        "httpHeaderAuth": {
-          "id": "3GlzU3rx0tDPWf6R",
-          "name": "HubSpot Private App - Full Access"
-        }
-      }
+      "position": [520, 200],
+      "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}
+    },
+    {
+      "parameters": {
+        "url": "=https://api.hubapi.com/crm/v3/properties/tickets/{{ $json.propertyName }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {},
+        "toolDescription": "Get single ticket property definition by name."
+      },
+      "id": "tool-get-prop",
+      "name": "Get Ticket Property",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [640, 200],
+      "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}
+    },
+    {
+      "parameters": {
+        "url": "=https://api.hubapi.com/crm/v3/objects/tickets/{{ $json.ticketId }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "specifyQuery": "json",
+        "jsonQuery": "={{ JSON.stringify({ propertiesWithHistory: $json.properties || 'subject,hs_pipeline_stage,hs_ticket_priority,hubspot_owner_id' }) }}",
+        "options": {},
+        "toolDescription": "Get ticket property history showing changes over time."
+      },
+      "id": "tool-prop-history",
+      "name": "Get Ticket Property History",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [760, 200],
+      "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}
     },
     {
       "parameters": {
@@ -324,47 +222,77 @@
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "options": {},
-        "toolDescription": "Get all ticket pipelines and their stages. ESSENTIAL for knowing valid hs_pipeline and hs_pipeline_stage values before creating or updating tickets. Returns pipeline ID, label, stages with stageId and label."
+        "toolDescription": "Get all ticket pipelines and stages. Essential for valid hs_pipeline_stage values."
       },
       "id": "tool-pipelines",
       "name": "Get Ticket Pipelines",
       "type": "n8n-nodes-base.httpRequestTool",
       "typeVersion": 4.3,
-      "position": [
-        640,
-        200
-      ],
-      "credentials": {
-        "httpHeaderAuth": {
-          "id": "3GlzU3rx0tDPWf6R",
-          "name": "HubSpot Private App - Full Access"
-        }
-      }
+      "position": [880, 200],
+      "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}
     },
     {
       "parameters": {
         "url": "=https://api.hubapi.com/crm/v4/objects/tickets/{{ $json.ticketId }}/associations/{{ $json.toObjectType || 'contacts' }}",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
-        "sendQuery": true,
-        "specifyQuery": "json",
         "options": {},
-        "toolDescription": "Get associations for a ticket. Specify ticketId and toObjectType (contacts, companies, deals). Returns associated object IDs and association types."
+        "toolDescription": "Get associations for a ticket to contacts/companies/deals."
       },
       "id": "tool-get-assoc",
       "name": "Get Ticket Associations",
       "type": "n8n-nodes-base.httpRequestTool",
       "typeVersion": 4.3,
-      "position": [
-        760,
-        200
-      ],
-      "credentials": {
-        "httpHeaderAuth": {
-          "id": "3GlzU3rx0tDPWf6R",
-          "name": "HubSpot Private App - Full Access"
-        }
-      }
+      "position": [1000, 200],
+      "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}
+    },
+    {
+      "parameters": {
+        "url": "=https://api.hubapi.com/crm/v4/associations/tickets/{{ $json.toObjectType || 'contacts' }}/labels",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {},
+        "toolDescription": "Get available association types/labels between tickets and other objects."
+      },
+      "id": "tool-assoc-labels",
+      "name": "Get Ticket Association Labels",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [1120, 200],
+      "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}
+    },
+    {
+      "parameters": {
+        "url": "https://api.hubapi.com/crm/v3/owners",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {},
+        "toolDescription": "List all HubSpot owners for ticket assignment."
+      },
+      "id": "tool-owners",
+      "name": "List Owners",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [160, 360],
+      "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.hubapi.com/crm/v3/objects/tickets/batch/read",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "options": {},
+        "toolDescription": "Batch read multiple tickets. Body: {inputs: [{id}], properties: []}. Max 100."
+      },
+      "id": "tool-batch-read",
+      "name": "Batch Read Tickets",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [280, 360],
+      "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}
     },
     {
       "parameters": {
@@ -374,24 +302,15 @@
         "genericAuthType": "httpHeaderAuth",
         "sendBody": true,
         "specifyBody": "json",
-        "contentType": "json",
         "options": {},
-        "toolDescription": "CREATE a new ticket. Body: {properties: {subject, content, hs_pipeline, hs_pipeline_stage, hs_ticket_priority, hubspot_owner_id, ...}, associations: [{to: {id}, types: [{associationCategory, associationTypeId}]}]}. REQUIRED: subject, hs_pipeline, hs_pipeline_stage. WRITE OPERATION - respect dry_run."
+        "toolDescription": "Create ticket. Body: {properties: {subject, hs_pipeline, hs_pipeline_stage, ...}}. WRITE - respect dry_run."
       },
-      "id": "tool-create-ticket",
+      "id": "tool-create",
       "name": "Create Ticket",
       "type": "n8n-nodes-base.httpRequestTool",
       "typeVersion": 4.3,
-      "position": [
-        160,
-        360
-      ],
-      "credentials": {
-        "httpHeaderAuth": {
-          "id": "3GlzU3rx0tDPWf6R",
-          "name": "HubSpot Private App - Full Access"
-        }
-      }
+      "position": [400, 360],
+      "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}
     },
     {
       "parameters": {
@@ -401,24 +320,15 @@
         "genericAuthType": "httpHeaderAuth",
         "sendBody": true,
         "specifyBody": "json",
-        "contentType": "json",
         "options": {},
-        "toolDescription": "UPDATE a ticket by ID. Body: {properties: {key: value, ...}}. Can update subject, content, hs_pipeline_stage, hs_ticket_priority, hubspot_owner_id, hs_resolution, closed_date, etc. WRITE OPERATION - respect dry_run."
+        "toolDescription": "Update ticket. Body: {properties: {...}}. WRITE - respect dry_run."
       },
-      "id": "tool-update-ticket",
+      "id": "tool-update",
       "name": "Update Ticket",
       "type": "n8n-nodes-base.httpRequestTool",
       "typeVersion": 4.3,
-      "position": [
-        280,
-        360
-      ],
-      "credentials": {
-        "httpHeaderAuth": {
-          "id": "3GlzU3rx0tDPWf6R",
-          "name": "HubSpot Private App - Full Access"
-        }
-      }
+      "position": [520, 360],
+      "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}
     },
     {
       "parameters": {
@@ -427,390 +337,314 @@
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "options": {},
-        "toolDescription": "DELETE a ticket by ID. Moves ticket to recycle bin (can be restored within 90 days). DESTRUCTIVE WRITE OPERATION - respect dry_run."
+        "toolDescription": "Delete/archive ticket. DESTRUCTIVE - respect dry_run."
       },
-      "id": "tool-delete-ticket",
+      "id": "tool-delete",
       "name": "Delete Ticket",
       "type": "n8n-nodes-base.httpRequestTool",
       "typeVersion": 4.3,
-      "position": [
-        400,
-        360
-      ],
-      "credentials": {
-        "httpHeaderAuth": {
-          "id": "3GlzU3rx0tDPWf6R",
-          "name": "HubSpot Private App - Full Access"
-        }
-      }
+      "position": [640, 360],
+      "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}
     },
     {
       "parameters": {
-        "jsCode": "const base = $('Assemble Context Pack').first().json;\n\nconst started = Number(base._started_ms || Date.now());\nconst duration_ms = Math.max(0, Date.now() - started);\n\nlet agentRaw = $('AI Agent - Tickets').first().json;\n\nconst coerceJson = (val) => {\n  if (val === null || val === undefined) return null;\n  if (typeof val === 'object') return val;\n  if (typeof val !== 'string') return { value: val };\n  const s = val.trim().replace(/^```json\\s*/i, '').replace(/```$/,'').trim();\n  try { return JSON.parse(s); } catch { return { raw: val }; }\n};\n\nconst agentOut = coerceJson(agentRaw.output ?? agentRaw.text ?? agentRaw);\n\nconst ok = !(agentOut?.errors && agentOut.errors.length);\n\nconst esc = (s) => String(s ?? '').replace(/'/g, \"''\");\n\nconst final = {\n  ok,\n  tool_name: base.tool_name,\n  tool_execution_id: base.tool_execution_id,\n  session_id: base.session_id,\n  conversation_id: base.conversation_id,\n  dry_run: base.dry_run,\n  summary: agentOut?.summary ?? (ok ? 'ok' : 'error'),\n  data: agentOut?.data ?? null,\n  tool_calls: agentOut?.tool_calls ?? [],\n  errors: agentOut?.errors ?? [],\n  notes_to_save: agentOut?.notes_to_save ?? null,\n  context_used: base.context_pack ?? {},\n  duration_ms\n};\n\nconst outJson = esc(JSON.stringify(final));\nconst errText = final.errors?.length ? esc(JSON.stringify(final.errors)) : null;\n\nfinal.log_end_sql = `\nUPDATE tool_execution_log\nSET\n  output_data = '${outJson}'::jsonb,\n  success = ${final.ok ? 'true' : 'false'},\n  error = ${errText ? `'${errText}'` : 'null'},\n  duration_ms = ${Number.isFinite(final.duration_ms) ? final.duration_ms : 'null'}\nWHERE id = '${esc(base.tool_execution_id)}'::uuid;\n`;\n\nconst note_scope = base.note_scope || 'hubspot';\nconst note_key = base.note_key || (base.ticket_id ? `ticket.${base.ticket_id}` : 'ticket.general');\n\nif (final.notes_to_save && typeof final.notes_to_save === 'string' && final.notes_to_save.trim() !== '') {\n  const noteObj = { text: final.notes_to_save.trim() };\n  const noteJson = esc(JSON.stringify(noteObj));\n  final.save_notes_sql = `\nINSERT INTO agent_notes (scope, note_key, note)\nVALUES ('${esc(note_scope)}', '${esc(note_key)}', '${noteJson}'::jsonb);\n`;\n}\n\nreturn [{ json: final }];"
+        "method": "POST",
+        "url": "https://api.hubapi.com/crm/v3/objects/tickets/merge",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "options": {},
+        "toolDescription": "Merge two tickets. Body: {primaryObjectId, objectIdToMerge}. DESTRUCTIVE - respect dry_run."
+      },
+      "id": "tool-merge",
+      "name": "Merge Tickets",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [760, 360],
+      "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "=https://api.hubapi.com/crm/v4/objects/tickets/{{ $json.ticketId }}/associations/{{ $json.toObjectType }}/{{ $json.toObjectId }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "options": {},
+        "toolDescription": "Associate ticket to contact/company/deal. WRITE - respect dry_run."
+      },
+      "id": "tool-assoc",
+      "name": "Associate Ticket",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [880, 360],
+      "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}
+    },
+    {
+      "parameters": {
+        "method": "DELETE",
+        "url": "=https://api.hubapi.com/crm/v4/objects/tickets/{{ $json.ticketId }}/associations/{{ $json.toObjectType }}/{{ $json.toObjectId }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {},
+        "toolDescription": "Remove ticket association. WRITE - respect dry_run."
+      },
+      "id": "tool-remove-assoc",
+      "name": "Remove Ticket Association",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [1000, 360],
+      "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.hubapi.com/crm/v3/objects/tickets/batch/create",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "options": {},
+        "toolDescription": "Batch create tickets. Body: {inputs: [{properties}]}. Max 100. WRITE - respect dry_run."
+      },
+      "id": "tool-batch-create",
+      "name": "Batch Create Tickets",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [1120, 360],
+      "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.hubapi.com/crm/v3/objects/tickets/batch/update",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "options": {},
+        "toolDescription": "Batch update tickets. Body: {inputs: [{id, properties}]}. Max 100. WRITE - respect dry_run."
+      },
+      "id": "tool-batch-update",
+      "name": "Batch Update Tickets",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [160, 520],
+      "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.hubapi.com/crm/v3/objects/tickets/batch/archive",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "options": {},
+        "toolDescription": "Batch delete tickets. Body: {inputs: [{id}]}. Max 100. DESTRUCTIVE - respect dry_run."
+      },
+      "id": "tool-batch-archive",
+      "name": "Batch Archive Tickets",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [280, 520],
+      "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}
+    },
+    {
+      "parameters": {
+        "name": "Call Contacts Agent",
+        "description": "Delegate to Contacts Agent for contact lookups and operations.",
+        "workflowId": {"__rl": true, "mode": "list", "value": "bX-PPv4n2Utwj1Mj7JHYR"},
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "request_id": "={{ $execution.id }}",
+            "session_id": "={{ $json.session_id || '' }}",
+            "user_message": "={{ $fromAI('request', 'What to ask Contacts Agent') }}",
+            "dry_run": "={{ $json.dry_run ?? true }}",
+            "tool_name": "hubspot.contacts"
+          }
+        }
+      },
+      "id": "tool-call-contacts",
+      "name": "Call Contacts Agent",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.1,
+      "position": [400, 520]
+    },
+    {
+      "parameters": {
+        "name": "Call Companies Agent",
+        "description": "Delegate to Companies Agent for company lookups and operations.",
+        "workflowId": {"__rl": true, "mode": "list", "value": "qH4NDSqFePk33A_MlzYcY"},
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "request_id": "={{ $execution.id }}",
+            "session_id": "={{ $json.session_id || '' }}",
+            "user_message": "={{ $fromAI('request', 'What to ask Companies Agent') }}",
+            "dry_run": "={{ $json.dry_run ?? true }}",
+            "tool_name": "hubspot.companies"
+          }
+        }
+      },
+      "id": "tool-call-companies",
+      "name": "Call Companies Agent",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.1,
+      "position": [520, 520]
+    },
+    {
+      "parameters": {
+        "name": "Call Deals Agent",
+        "description": "Delegate to Deals Agent for deal lookups and operations.",
+        "workflowId": {"__rl": true, "mode": "list", "value": "4J19cZdd4aLVDxOZCwmKB"},
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "request_id": "={{ $execution.id }}",
+            "session_id": "={{ $json.session_id || '' }}",
+            "user_message": "={{ $fromAI('request', 'What to ask Deals Agent') }}",
+            "dry_run": "={{ $json.dry_run ?? true }}",
+            "tool_name": "hubspot.deals"
+          }
+        }
+      },
+      "id": "tool-call-deals",
+      "name": "Call Deals Agent",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.1,
+      "position": [640, 520]
+    },
+    {
+      "parameters": {
+        "name": "Call Engagements Agent",
+        "description": "Delegate to Engagements Agent for notes, tasks, activities.",
+        "workflowId": {"__rl": true, "mode": "list", "value": "N10BUVD9S-4ZyIsEtnKfp"},
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "request_id": "={{ $execution.id }}",
+            "session_id": "={{ $json.session_id || '' }}",
+            "user_message": "={{ $fromAI('request', 'What to ask Engagements Agent') }}",
+            "dry_run": "={{ $json.dry_run ?? true }}",
+            "tool_name": "hubspot.engagements"
+          }
+        }
+      },
+      "id": "tool-call-engagements",
+      "name": "Call Engagements Agent",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.1,
+      "position": [760, 520]
+    },
+    {
+      "parameters": {
+        "jsCode": "const base = $('Assemble Context Pack').first().json;\nconst started = Number(base._started_ms || Date.now());\nconst duration_ms = Math.max(0, Date.now() - started);\nlet agentRaw = $('AI Agent - Tickets').first().json;\nconst coerceJson = (val) => {\n  if (val === null || val === undefined) return null;\n  if (typeof val === 'object') return val;\n  if (typeof val !== 'string') return { value: val };\n  const s = val.trim().replace(/^```json\\s*/i, '').replace(/```$/,'').trim();\n  try { return JSON.parse(s); } catch { return { raw: val }; }\n};\nconst agentOut = coerceJson(agentRaw.output ?? agentRaw.text ?? agentRaw);\nconst ok = !(agentOut?.errors && agentOut.errors.length);\nconst esc = (s) => String(s ?? '').replace(/'/g, \"''\");\nconst final = {\n  ok, tool_name: base.tool_name, tool_execution_id: base.tool_execution_id,\n  session_id: base.session_id, conversation_id: base.conversation_id, dry_run: base.dry_run,\n  summary: agentOut?.summary ?? (ok ? 'ok' : 'error'), data: agentOut?.data ?? null,\n  tool_calls: agentOut?.tool_calls ?? [], errors: agentOut?.errors ?? [],\n  notes_to_save: agentOut?.notes_to_save ?? null, duration_ms\n};\nconst outJson = esc(JSON.stringify(final));\nconst errText = final.errors?.length ? esc(JSON.stringify(final.errors)) : null;\nfinal.log_end_sql = `UPDATE tool_execution_log SET output_data = '${outJson}'::jsonb, success = ${final.ok}, error = ${errText ? `'${errText}'` : 'null'}, duration_ms = ${duration_ms} WHERE id = '${esc(base.tool_execution_id)}'::uuid;`;\nif (final.notes_to_save && typeof final.notes_to_save === 'string' && final.notes_to_save.trim()) {\n  const noteJson = esc(JSON.stringify({ text: final.notes_to_save.trim() }));\n  final.save_notes_sql = `INSERT INTO agent_notes (scope, note_key, note) VALUES ('hubspot', '${esc(base.note_key)}', '${noteJson}'::jsonb);`;\n}\nreturn [{ json: final }];"
       },
       "id": "parse-output-1",
       "name": "Parse + Finalize Output",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [
-        400,
-        0
-      ]
+      "position": [400, 0]
     },
     {
       "parameters": {
         "operation": "executeQuery",
         "query": "={{$json.log_end_sql}}",
-        "options": {
-          "queryReplacement": "={{ $json.log_end_params }}"
-        }
+        "options": {}
       },
       "id": "log-end-1",
       "name": "Log End (tool_execution_log)",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
-      "position": [
-        640,
-        0
-      ],
-      "credentials": {
-        "postgres": {
-          "id": "BwXy2JHETe47vH1I",
-          "name": "Postgres account 2"
-        }
-      },
+      "position": [640, 0],
+      "credentials": {"postgres": {"id": "BwXy2JHETe47vH1I", "name": "Postgres account 2"}},
       "onError": "continueRegularOutput"
     },
     {
-      "parameters": {
-        "options": {}
-      },
+      "parameters": {"options": {}},
       "type": "@n8n/n8n-nodes-langchain.chatTrigger",
       "typeVersion": 1.4,
-      "position": [
-        -800,
-        -200
-      ],
+      "position": [-800, -200],
       "id": "chat-trigger-1",
       "name": "When chat message received",
       "webhookId": "tickets-chat-test"
     },
     {
       "parameters": {
-        "jsCode": "const input = $input.first().json;\n\nconst chatText =\n  input.chatInput ||\n  input.message?.text ||\n  input.text ||\n  input.body?.message ||\n  input.body?.text ||\n  '';\n\nreturn [{\n  json: {\n    user_message: String(chatText || ''),\n    dry_run: true,\n    tool_name: 'hubspot.tickets',\n    session_id: input.sessionId || input.session_id || 'chat_test',\n    conversation_id: input.conversationId || input.conversation_id || 'chat_test',\n    chat_id: input.chatId || input.chat_id || null,\n    user_id: input.userId || input.user_id || null,\n    request_id: input.request_id || null,\n    caller_workflow_id: input.caller_workflow_id || null,\n    caller_execution_id: input.caller_execution_id || null,\n    company_id: input.company_id || null,\n    contact_id: input.contact_id || null,\n    deal_id: input.deal_id || null,\n    ticket_id: input.ticket_id || null,\n    hs_portal_id: input.hs_portal_id || null,\n    object_type: 'tickets',\n    object_id: null\n  }\n}];"
+        "jsCode": "const input = $input.first().json;\nconst chatText = input.chatInput || input.message?.text || input.text || '';\nreturn [{json: {user_message: String(chatText), dry_run: true, tool_name: 'hubspot.tickets', session_id: input.sessionId || 'chat_test', conversation_id: input.conversationId || 'chat_test', ticket_id: input.ticket_id || null, object_type: 'tickets'}}];"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [
-        -560,
-        -200
-      ],
+      "position": [-560, -200],
       "id": "chat-normalize-1",
       "name": "Normalize Chat Input"
     },
     {
       "parameters": {
-        "conditions": {
-          "options": {
-            "caseSensitive": true,
-            "leftValue": "",
-            "typeValidation": "strict",
-            "version": 1
-          },
-          "conditions": [
-            {
-              "id": "has_notes",
-              "leftValue": "={{ $json.save_notes_sql }}",
-              "rightValue": "",
-              "operator": {
-                "type": "string",
-                "operation": "notEmpty"
-              }
-            }
-          ],
-          "combinator": "and"
-        },
+        "conditions": {"options": {"caseSensitive": true, "typeValidation": "strict", "version": 1}, "conditions": [{"id": "has_notes", "leftValue": "={{ $json.save_notes_sql }}", "rightValue": "", "operator": {"type": "string", "operation": "notEmpty"}}], "combinator": "and"},
         "options": {}
       },
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
-      "position": [
-        640,
-        -120
-      ],
+      "position": [640, -120],
       "id": "has-notes-1",
       "name": "Has Notes to Save?",
       "onError": "continueRegularOutput"
     },
     {
-      "parameters": {
-        "operation": "executeQuery",
-        "query": "={{$json.save_notes_sql}}",
-        "options": {}
-      },
+      "parameters": {"operation": "executeQuery", "query": "={{$json.save_notes_sql}}", "options": {}},
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
-      "position": [
-        880,
-        -160
-      ],
+      "position": [880, -160],
       "id": "save-notes-1",
       "name": "Save Agent Notes",
-      "credentials": {
-        "postgres": {
-          "id": "BwXy2JHETe47vH1I",
-          "name": "Postgres account 2"
-        }
-      },
+      "credentials": {"postgres": {"id": "BwXy2JHETe47vH1I", "name": "Postgres account 2"}},
       "onError": "continueRegularOutput"
     }
   ],
   "connections": {
-    "When Executed by Another Workflow": {
-      "main": [
-        [
-          {
-            "node": "Normalize + Build SQL",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "When chat message received": {
-      "main": [
-        [
-          {
-            "node": "Normalize Chat Input",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Normalize Chat Input": {
-      "main": [
-        [
-          {
-            "node": "Normalize + Build SQL",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Normalize + Build SQL": {
-      "main": [
-        [
-          {
-            "node": "Log Start (tool_execution_log)",
-            "type": "main",
-            "index": 0
-          },
-          {
-            "node": "Load Context",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Log Start (tool_execution_log)": {
-      "main": [
-        [
-          {
-            "node": "Assemble Context Pack",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Load Context": {
-      "main": [
-        [
-          {
-            "node": "Assemble Context Pack",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Assemble Context Pack": {
-      "main": [
-        [
-          {
-            "node": "AI Agent - Tickets",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "AI Agent - Tickets": {
-      "main": [
-        [
-          {
-            "node": "Parse + Finalize Output",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Parse + Finalize Output": {
-      "main": [
-        [
-          {
-            "node": "Log End (tool_execution_log)",
-            "type": "main",
-            "index": 0
-          },
-          {
-            "node": "Has Notes to Save?",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Has Notes to Save?": {
-      "main": [
-        [
-          {
-            "node": "Save Agent Notes",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "OpenAI Chat Model": {
-      "ai_languageModel": [
-        [
-          {
-            "node": "AI Agent - Tickets",
-            "type": "ai_languageModel",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Memory": {
-      "ai_memory": [
-        [
-          {
-            "node": "AI Agent - Tickets",
-            "type": "ai_memory",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "List All Tickets": {
-      "ai_tool": [
-        [
-          {
-            "node": "AI Agent - Tickets",
-            "type": "ai_tool",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Get Ticket by ID": {
-      "ai_tool": [
-        [
-          {
-            "node": "AI Agent - Tickets",
-            "type": "ai_tool",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Search Tickets": {
-      "ai_tool": [
-        [
-          {
-            "node": "AI Agent - Tickets",
-            "type": "ai_tool",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "List Ticket Properties": {
-      "ai_tool": [
-        [
-          {
-            "node": "AI Agent - Tickets",
-            "type": "ai_tool",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Get Ticket Pipelines": {
-      "ai_tool": [
-        [
-          {
-            "node": "AI Agent - Tickets",
-            "type": "ai_tool",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Get Ticket Associations": {
-      "ai_tool": [
-        [
-          {
-            "node": "AI Agent - Tickets",
-            "type": "ai_tool",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Create Ticket": {
-      "ai_tool": [
-        [
-          {
-            "node": "AI Agent - Tickets",
-            "type": "ai_tool",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Update Ticket": {
-      "ai_tool": [
-        [
-          {
-            "node": "AI Agent - Tickets",
-            "type": "ai_tool",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Delete Ticket": {
-      "ai_tool": [
-        [
-          {
-            "node": "AI Agent - Tickets",
-            "type": "ai_tool",
-            "index": 0
-          }
-        ]
-      ]
-    }
+    "When Executed by Another Workflow": {"main": [[{"node": "Normalize + Build SQL", "type": "main", "index": 0}]]},
+    "When chat message received": {"main": [[{"node": "Normalize Chat Input", "type": "main", "index": 0}]]},
+    "Normalize Chat Input": {"main": [[{"node": "Normalize + Build SQL", "type": "main", "index": 0}]]},
+    "Normalize + Build SQL": {"main": [[{"node": "Log Start (tool_execution_log)", "type": "main", "index": 0}, {"node": "Load Context", "type": "main", "index": 0}]]},
+    "Log Start (tool_execution_log)": {"main": [[{"node": "Assemble Context Pack", "type": "main", "index": 0}]]},
+    "Load Context": {"main": [[{"node": "Assemble Context Pack", "type": "main", "index": 0}]]},
+    "Assemble Context Pack": {"main": [[{"node": "AI Agent - Tickets", "type": "main", "index": 0}]]},
+    "AI Agent - Tickets": {"main": [[{"node": "Parse + Finalize Output", "type": "main", "index": 0}]]},
+    "Parse + Finalize Output": {"main": [[{"node": "Log End (tool_execution_log)", "type": "main", "index": 0}, {"node": "Has Notes to Save?", "type": "main", "index": 0}]]},
+    "Has Notes to Save?": {"main": [[{"node": "Save Agent Notes", "type": "main", "index": 0}]]},
+    "OpenAI Chat Model": {"ai_languageModel": [[{"node": "AI Agent - Tickets", "type": "ai_languageModel", "index": 0}]]},
+    "Memory": {"ai_memory": [[{"node": "AI Agent - Tickets", "type": "ai_memory", "index": 0}]]},
+    "List All Tickets": {"ai_tool": [[{"node": "AI Agent - Tickets", "type": "ai_tool", "index": 0}]]},
+    "Get Ticket by ID": {"ai_tool": [[{"node": "AI Agent - Tickets", "type": "ai_tool", "index": 0}]]},
+    "Search Tickets": {"ai_tool": [[{"node": "AI Agent - Tickets", "type": "ai_tool", "index": 0}]]},
+    "List Ticket Properties": {"ai_tool": [[{"node": "AI Agent - Tickets", "type": "ai_tool", "index": 0}]]},
+    "Get Ticket Property": {"ai_tool": [[{"node": "AI Agent - Tickets", "type": "ai_tool", "index": 0}]]},
+    "Get Ticket Property History": {"ai_tool": [[{"node": "AI Agent - Tickets", "type": "ai_tool", "index": 0}]]},
+    "Get Ticket Pipelines": {"ai_tool": [[{"node": "AI Agent - Tickets", "type": "ai_tool", "index": 0}]]},
+    "Get Ticket Associations": {"ai_tool": [[{"node": "AI Agent - Tickets", "type": "ai_tool", "index": 0}]]},
+    "Get Ticket Association Labels": {"ai_tool": [[{"node": "AI Agent - Tickets", "type": "ai_tool", "index": 0}]]},
+    "List Owners": {"ai_tool": [[{"node": "AI Agent - Tickets", "type": "ai_tool", "index": 0}]]},
+    "Batch Read Tickets": {"ai_tool": [[{"node": "AI Agent - Tickets", "type": "ai_tool", "index": 0}]]},
+    "Create Ticket": {"ai_tool": [[{"node": "AI Agent - Tickets", "type": "ai_tool", "index": 0}]]},
+    "Update Ticket": {"ai_tool": [[{"node": "AI Agent - Tickets", "type": "ai_tool", "index": 0}]]},
+    "Delete Ticket": {"ai_tool": [[{"node": "AI Agent - Tickets", "type": "ai_tool", "index": 0}]]},
+    "Merge Tickets": {"ai_tool": [[{"node": "AI Agent - Tickets", "type": "ai_tool", "index": 0}]]},
+    "Associate Ticket": {"ai_tool": [[{"node": "AI Agent - Tickets", "type": "ai_tool", "index": 0}]]},
+    "Remove Ticket Association": {"ai_tool": [[{"node": "AI Agent - Tickets", "type": "ai_tool", "index": 0}]]},
+    "Batch Create Tickets": {"ai_tool": [[{"node": "AI Agent - Tickets", "type": "ai_tool", "index": 0}]]},
+    "Batch Update Tickets": {"ai_tool": [[{"node": "AI Agent - Tickets", "type": "ai_tool", "index": 0}]]},
+    "Batch Archive Tickets": {"ai_tool": [[{"node": "AI Agent - Tickets", "type": "ai_tool", "index": 0}]]},
+    "Call Contacts Agent": {"ai_tool": [[{"node": "AI Agent - Tickets", "type": "ai_tool", "index": 0}]]},
+    "Call Companies Agent": {"ai_tool": [[{"node": "AI Agent - Tickets", "type": "ai_tool", "index": 0}]]},
+    "Call Deals Agent": {"ai_tool": [[{"node": "AI Agent - Tickets", "type": "ai_tool", "index": 0}]]},
+    "Call Engagements Agent": {"ai_tool": [[{"node": "AI Agent - Tickets", "type": "ai_tool", "index": 0}]]}
   },
-  "settings": {
-    "executionOrder": "v1"
-  },
+  "settings": {"executionOrder": "v1"},
   "tags": [],
   "pinData": {}
 }

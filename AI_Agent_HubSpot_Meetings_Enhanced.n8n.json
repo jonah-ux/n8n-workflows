@@ -1,0 +1,88 @@
+{
+  "name": "AI Agent - HubSpot Meetings (Enhanced)",
+  "nodes": [
+    {
+      "parameters": {"workflowInputs": {"values": [{"name": "request_id", "type": "string"}, {"name": "session_id", "type": "string"}, {"name": "user_id", "type": "string"}, {"name": "user_message", "type": "string"}, {"name": "meeting_id", "type": "string"}, {"name": "tool_name", "type": "string"}, {"name": "dry_run", "type": "boolean"}, {"name": "conversation_id", "type": "string"}]}},
+      "id": "trigger-1",
+      "name": "When Executed by Another Workflow",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [-800, 0]
+    },
+    {
+      "parameters": {"jsCode": "const input = $input.first().json;\nconst tool_name = input.tool_name || 'hubspot.meetings';\nconst dry_run = input.dry_run ?? true;\nconst q = v => v == null || v === '' ? null : String(v);\nconst payload = {...input, tool_name, dry_run, _started_ms: Date.now()};\nconst log_sql = `INSERT INTO tool_execution_log (tool_name, input_data, success, conversation_id, user_id, required_approval) VALUES ($1, $2::jsonb, false, $3, $4, $5) RETURNING id;`;\nreturn [{json: {...payload, log_start_sql: log_sql, log_start_params: [tool_name, JSON.stringify(payload), q(input.conversation_id), q(input.user_id), !dry_run]}}];"},
+      "id": "normalize-1",
+      "name": "Normalize",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-560, 0]
+    },
+    {"parameters": {"operation": "executeQuery", "query": "={{$json.log_start_sql}}", "options": {"queryReplacement": "={{ $json.log_start_params }}"}}, "id": "log-start-1", "name": "Log Start", "type": "n8n-nodes-base.postgres", "typeVersion": 2.5, "position": [-320, 0], "credentials": {"postgres": {"id": "BwXy2JHETe47vH1I", "name": "Postgres account 2"}}},
+    {"parameters": {"jsCode": "const base = $('Normalize').first().json;\nconst logStart = $('Log Start').first().json;\nreturn [{json: {...base, tool_execution_id: logStart?.id || null}}];"}, "id": "assemble-1", "name": "Assemble", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [-80, 0]},
+    {
+      "parameters": {
+        "text": "={{ ['USER_REQUEST:', $json.user_message, 'RUNTIME:', JSON.stringify({tool_name: $json.tool_name, dry_run: $json.dry_run, meeting_id: $json.meeting_id})].join('\\n') }}",
+        "options": {
+          "maxIterations": 15,
+          "systemMessage": "You are the HubSpot MEETINGS Agent.\n\nYour job:\n- Manage meeting scheduling links and pages\n- Work with meeting types and availability\n- Handle meeting outcomes and recordings\n\nAVAILABLE TOOLS:\n\nSCHEDULING PAGES:\n- List Scheduling Pages - Get all scheduling pages/links\n- Get Scheduling Page by ID - Single page details\n- Create Scheduling Page - Create new scheduling link\n- Update Scheduling Page - Modify scheduling page\n- Delete Scheduling Page - Remove scheduling page\n\nMEETING LINKS:\n- Get User Meeting Links - Get meeting links for a user\n- Create Meeting Link - Create personalized meeting link\n\nMEETINGS (CRM):\n- List Meetings - Get meeting records\n- Get Meeting by ID - Single meeting details\n- Create Meeting - Log a meeting\n- Update Meeting - Modify meeting record\n- Delete Meeting - Remove meeting record\n- Search Meetings - Search meeting records\n\nAVAILABILITY:\n- Get Availability - Check user's availability\n\nOUTPUT FORMAT:\n{\"summary\": \"...\", \"data\": {}, \"errors\": []}"
+        },
+        "promptType": "define"
+      },
+      "id": "agent-1",
+      "name": "AI Agent - Meetings",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [160, 0],
+      "alwaysOutputData": true,
+      "retryOnFail": true,
+      "onError": "continueRegularOutput"
+    },
+    {"parameters": {"model": {"__rl": true, "mode": "list", "value": "gpt-4o"}, "options": {}}, "id": "llm-1", "name": "OpenAI Chat Model", "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi", "typeVersion": 1.3, "position": [-80, 200], "credentials": {"openAiApi": {"id": "Lb7LQd5GQa1bZ9yX", "name": "OpenAi account 4"}}},
+    {"parameters": {"sessionKey": "session_id", "sessionIdType": "customKey"}, "id": "memory-1", "name": "Memory", "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow", "typeVersion": 1.3, "position": [40, 200]},
+    {"parameters": {"url": "https://api.hubapi.com/scheduler/v3/meetings/meeting-links", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "options": {}, "toolDescription": "List all scheduling pages/meeting links."}, "id": "tool-list-pages", "name": "List Scheduling Pages", "type": "n8n-nodes-base.httpRequestTool", "typeVersion": 4.3, "position": [160, 200], "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}},
+    {"parameters": {"url": "=https://api.hubapi.com/scheduler/v3/meetings/meeting-links/{{ $json.linkId }}", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "options": {}, "toolDescription": "Get scheduling page by ID."}, "id": "tool-get-page", "name": "Get Scheduling Page by ID", "type": "n8n-nodes-base.httpRequestTool", "typeVersion": 4.3, "position": [280, 200], "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}},
+    {"parameters": {"method": "POST", "url": "https://api.hubapi.com/scheduler/v3/meetings/meeting-links", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "sendBody": true, "specifyBody": "json", "options": {}, "toolDescription": "Create scheduling page. Body: {name, type, organizerUserId, ...}. WRITE."}, "id": "tool-create-page", "name": "Create Scheduling Page", "type": "n8n-nodes-base.httpRequestTool", "typeVersion": 4.3, "position": [400, 200], "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}},
+    {"parameters": {"method": "PATCH", "url": "=https://api.hubapi.com/scheduler/v3/meetings/meeting-links/{{ $json.linkId }}", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "sendBody": true, "specifyBody": "json", "options": {}, "toolDescription": "Update scheduling page. WRITE."}, "id": "tool-update-page", "name": "Update Scheduling Page", "type": "n8n-nodes-base.httpRequestTool", "typeVersion": 4.3, "position": [520, 200], "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}},
+    {"parameters": {"method": "DELETE", "url": "=https://api.hubapi.com/scheduler/v3/meetings/meeting-links/{{ $json.linkId }}", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "options": {}, "toolDescription": "Delete scheduling page. WRITE."}, "id": "tool-delete-page", "name": "Delete Scheduling Page", "type": "n8n-nodes-base.httpRequestTool", "typeVersion": 4.3, "position": [640, 200], "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}},
+    {"parameters": {"url": "=https://api.hubapi.com/scheduler/v3/meetings/meeting-links/user/{{ $json.userId }}", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "options": {}, "toolDescription": "Get meeting links for a specific user."}, "id": "tool-user-links", "name": "Get User Meeting Links", "type": "n8n-nodes-base.httpRequestTool", "typeVersion": 4.3, "position": [760, 200], "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}},
+    {"parameters": {"url": "https://api.hubapi.com/crm/v3/objects/meetings", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "sendQuery": true, "specifyQuery": "json", "options": {}, "toolDescription": "List meeting records from CRM."}, "id": "tool-list-meetings", "name": "List Meetings", "type": "n8n-nodes-base.httpRequestTool", "typeVersion": 4.3, "position": [880, 200], "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}},
+    {"parameters": {"url": "=https://api.hubapi.com/crm/v3/objects/meetings/{{ $json.meetingId }}", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "options": {}, "toolDescription": "Get meeting by ID."}, "id": "tool-get-meeting", "name": "Get Meeting by ID", "type": "n8n-nodes-base.httpRequestTool", "typeVersion": 4.3, "position": [1000, 200], "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}},
+    {"parameters": {"method": "POST", "url": "https://api.hubapi.com/crm/v3/objects/meetings", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "sendBody": true, "specifyBody": "json", "options": {}, "toolDescription": "Create meeting record. Body: {properties: {hs_meeting_title, hs_meeting_start_time, hs_meeting_end_time, ...}}. WRITE."}, "id": "tool-create-meeting", "name": "Create Meeting", "type": "n8n-nodes-base.httpRequestTool", "typeVersion": 4.3, "position": [1120, 200], "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}},
+    {"parameters": {"method": "PATCH", "url": "=https://api.hubapi.com/crm/v3/objects/meetings/{{ $json.meetingId }}", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "sendBody": true, "specifyBody": "json", "options": {}, "toolDescription": "Update meeting. WRITE."}, "id": "tool-update-meeting", "name": "Update Meeting", "type": "n8n-nodes-base.httpRequestTool", "typeVersion": 4.3, "position": [160, 360], "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}},
+    {"parameters": {"method": "DELETE", "url": "=https://api.hubapi.com/crm/v3/objects/meetings/{{ $json.meetingId }}", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "options": {}, "toolDescription": "Delete meeting. WRITE."}, "id": "tool-delete-meeting", "name": "Delete Meeting", "type": "n8n-nodes-base.httpRequestTool", "typeVersion": 4.3, "position": [280, 360], "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}},
+    {"parameters": {"method": "POST", "url": "https://api.hubapi.com/crm/v3/objects/meetings/search", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "sendBody": true, "specifyBody": "json", "options": {}, "toolDescription": "Search meetings. Body: {filterGroups, sorts, properties, limit}."}, "id": "tool-search-meetings", "name": "Search Meetings", "type": "n8n-nodes-base.httpRequestTool", "typeVersion": 4.3, "position": [400, 360], "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}},
+    {"parameters": {"url": "https://api.hubapi.com/crm/v3/properties/meetings", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "options": {}, "toolDescription": "List meeting properties."}, "id": "tool-meeting-props", "name": "List Meeting Properties", "type": "n8n-nodes-base.httpRequestTool", "typeVersion": 4.3, "position": [520, 360], "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}},
+    {"parameters": {"jsCode": "const base = $('Assemble').first().json;\nconst agentRaw = $('AI Agent - Meetings').first().json;\nlet agentOut = {};\ntry { agentOut = typeof agentRaw.output === 'object' ? agentRaw.output : JSON.parse((agentRaw.output||'{}').replace(/^```json|```$/g,'')); } catch {}\nconst ok = !agentOut?.errors?.length;\nconst esc = s => String(s??'').replace(/'/g,\"''\");\nconst final = {ok, summary: agentOut?.summary || 'done', data: agentOut?.data, errors: agentOut?.errors || []};\nfinal.log_end_sql = `UPDATE tool_execution_log SET output_data = '${esc(JSON.stringify(final))}'::jsonb, success = ${ok} WHERE id = '${esc(base.tool_execution_id)}'::uuid;`;\nreturn [{json: final}];"}, "id": "parse-1", "name": "Parse Output", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [400, 0]},
+    {"parameters": {"operation": "executeQuery", "query": "={{$json.log_end_sql}}", "options": {}}, "id": "log-end-1", "name": "Log End", "type": "n8n-nodes-base.postgres", "typeVersion": 2.5, "position": [640, 0], "credentials": {"postgres": {"id": "BwXy2JHETe47vH1I", "name": "Postgres account 2"}}, "onError": "continueRegularOutput"},
+    {"parameters": {"options": {}}, "type": "@n8n/n8n-nodes-langchain.chatTrigger", "typeVersion": 1.4, "position": [-800, -200], "id": "chat-trigger-1", "name": "Chat Trigger", "webhookId": "meetings-test"},
+    {"parameters": {"jsCode": "return [{json: {user_message: $input.first().json.chatInput || '', dry_run: true, tool_name: 'hubspot.meetings', session_id: 'test'}}];"}, "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [-560, -200], "id": "chat-norm", "name": "Normalize Chat"}
+  ],
+  "connections": {
+    "When Executed by Another Workflow": {"main": [[{"node": "Normalize", "type": "main", "index": 0}]]},
+    "Chat Trigger": {"main": [[{"node": "Normalize Chat", "type": "main", "index": 0}]]},
+    "Normalize Chat": {"main": [[{"node": "Normalize", "type": "main", "index": 0}]]},
+    "Normalize": {"main": [[{"node": "Log Start", "type": "main", "index": 0}]]},
+    "Log Start": {"main": [[{"node": "Assemble", "type": "main", "index": 0}]]},
+    "Assemble": {"main": [[{"node": "AI Agent - Meetings", "type": "main", "index": 0}]]},
+    "AI Agent - Meetings": {"main": [[{"node": "Parse Output", "type": "main", "index": 0}]]},
+    "Parse Output": {"main": [[{"node": "Log End", "type": "main", "index": 0}]]},
+    "OpenAI Chat Model": {"ai_languageModel": [[{"node": "AI Agent - Meetings", "type": "ai_languageModel", "index": 0}]]},
+    "Memory": {"ai_memory": [[{"node": "AI Agent - Meetings", "type": "ai_memory", "index": 0}]]},
+    "List Scheduling Pages": {"ai_tool": [[{"node": "AI Agent - Meetings", "type": "ai_tool", "index": 0}]]},
+    "Get Scheduling Page by ID": {"ai_tool": [[{"node": "AI Agent - Meetings", "type": "ai_tool", "index": 0}]]},
+    "Create Scheduling Page": {"ai_tool": [[{"node": "AI Agent - Meetings", "type": "ai_tool", "index": 0}]]},
+    "Update Scheduling Page": {"ai_tool": [[{"node": "AI Agent - Meetings", "type": "ai_tool", "index": 0}]]},
+    "Delete Scheduling Page": {"ai_tool": [[{"node": "AI Agent - Meetings", "type": "ai_tool", "index": 0}]]},
+    "Get User Meeting Links": {"ai_tool": [[{"node": "AI Agent - Meetings", "type": "ai_tool", "index": 0}]]},
+    "List Meetings": {"ai_tool": [[{"node": "AI Agent - Meetings", "type": "ai_tool", "index": 0}]]},
+    "Get Meeting by ID": {"ai_tool": [[{"node": "AI Agent - Meetings", "type": "ai_tool", "index": 0}]]},
+    "Create Meeting": {"ai_tool": [[{"node": "AI Agent - Meetings", "type": "ai_tool", "index": 0}]]},
+    "Update Meeting": {"ai_tool": [[{"node": "AI Agent - Meetings", "type": "ai_tool", "index": 0}]]},
+    "Delete Meeting": {"ai_tool": [[{"node": "AI Agent - Meetings", "type": "ai_tool", "index": 0}]]},
+    "Search Meetings": {"ai_tool": [[{"node": "AI Agent - Meetings", "type": "ai_tool", "index": 0}]]},
+    "List Meeting Properties": {"ai_tool": [[{"node": "AI Agent - Meetings", "type": "ai_tool", "index": 0}]]}
+  },
+  "settings": {"executionOrder": "v1"},
+  "tags": [],
+  "pinData": {}
+}

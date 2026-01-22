@@ -1,0 +1,466 @@
+{
+  "name": "AI Agent - HubSpot Email (Enhanced)",
+  "nodes": [
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {"name": "request_id", "type": "string"},
+            {"name": "session_id", "type": "string"},
+            {"name": "user_id", "type": "string"},
+            {"name": "user_message", "type": "string"},
+            {"name": "contact_id", "type": "string"},
+            {"name": "email_id", "type": "string"},
+            {"name": "tool_name", "type": "string"},
+            {"name": "dry_run", "type": "boolean"},
+            {"name": "conversation_id", "type": "string"}
+          ]
+        }
+      },
+      "id": "trigger-1",
+      "name": "When Executed by Another Workflow",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [-800, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst nowIso = new Date().toISOString();\nconst startedMs = Date.now();\nconst tool_name = input.tool_name || 'hubspot.email';\nconst dry_run = (input.dry_run === undefined || input.dry_run === null) ? true : !!input.dry_run;\nconst q = (v) => (v === undefined || v === null || v === '') ? null : String(v);\nconst note_scope = 'hubspot';\nconst note_key = input.email_id ? `email.${input.email_id}` : 'email.general';\nconst payload_for_log = {...input, tool_name, dry_run, note_scope, note_key, started_at: nowIso, _started_ms: startedMs};\nconst log_start_sql = `INSERT INTO tool_execution_log (tool_name, input_data, success, conversation_id, user_id, required_approval) VALUES ($1, $2::jsonb, false, $3, $4, $5) RETURNING id;`;\nconst log_start_params = [tool_name, JSON.stringify(payload_for_log), q(input.conversation_id), q(input.user_id), !dry_run];\nreturn [{json: {...payload_for_log, log_start_sql, log_start_params}}];"
+      },
+      "id": "normalize-1",
+      "name": "Normalize + Build SQL",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-560, 0]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{$json.log_start_sql}}",
+        "options": {"queryReplacement": "={{ $json.log_start_params }}"}
+      },
+      "id": "log-start-1",
+      "name": "Log Start",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [-320, 0],
+      "credentials": {"postgres": {"id": "BwXy2JHETe47vH1I", "name": "Postgres account 2"}}
+    },
+    {
+      "parameters": {
+        "jsCode": "const base = $('Normalize + Build SQL').first().json;\nconst logStart = $('Log Start').first().json;\nconst tool_execution_id = (logStart && logStart.id) ? logStart.id : null;\nreturn [{json: {...base, tool_execution_id, context_pack: {}}}];"
+      },
+      "id": "assemble-1",
+      "name": "Assemble Context Pack",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-80, 0]
+    },
+    {
+      "parameters": {
+        "text": "={{ [\n  \"USER_REQUEST:\", $json.user_message || \"\",\n  \"RUNTIME:\", JSON.stringify({tool_name: $json.tool_name, dry_run: $json.dry_run, contact_id: $json.contact_id, email_id: $json.email_id}, null, 2)\n].join(\"\\n\") }}",
+        "options": {
+          "maxIterations": 15,
+          "systemMessage": "You are the HubSpot EMAIL Agent.\n\nYour job:\n- Send transactional emails via Single Send API\n- Manage marketing emails and campaigns\n- Work with email templates\n- Check email subscriptions and preferences\n- View email events and analytics\n\nAVAILABLE TOOLS:\n\nTRANSACTIONAL EMAIL:\n- Send Transactional Email - Send single email via Single Send API\n- Get Single Send Definitions - List transactional email definitions\n- Create Single Send Definition - Create new transactional email template\n\nMARKETING EMAIL:\n- List Marketing Emails - Get all marketing emails\n- Get Marketing Email by ID - Single marketing email details\n- Create Marketing Email - Create new marketing email\n- Update Marketing Email - Modify marketing email\n- Delete Marketing Email - Remove marketing email\n- Clone Marketing Email - Duplicate an email\n- Get Marketing Email Statistics - Performance metrics\n\nEMAIL TEMPLATES:\n- List Email Templates - Get all templates\n- Get Email Template by ID - Single template\n- Create Email Template - New template\n- Update Email Template - Modify template\n- Delete Email Template - Remove template\n\nSUBSCRIPTIONS:\n- Get Email Subscriptions - Contact's subscription status\n- Get Subscription Types - Available subscription types\n- Update Email Subscriptions - Update contact preferences\n\nEMAIL EVENTS:\n- Get Email Events - Delivery, open, click events\n- Get Email Campaign Events - Campaign-specific events\n\nOUTPUT FORMAT:\n{\"summary\": \"...\", \"data\": {}, \"tool_calls\": [], \"errors\": [], \"notes_to_save\": null}"
+        },
+        "promptType": "define"
+      },
+      "id": "agent-1",
+      "name": "AI Agent - Email",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [160, 0],
+      "alwaysOutputData": true,
+      "retryOnFail": true,
+      "waitBetweenTries": 3000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {"model": {"__rl": true, "mode": "list", "value": "gpt-4o"}, "options": {}},
+      "id": "llm-1",
+      "name": "OpenAI Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [-80, 200],
+      "credentials": {"openAiApi": {"id": "Lb7LQd5GQa1bZ9yX", "name": "OpenAi account 4"}}
+    },
+    {
+      "parameters": {"sessionKey": "session_id", "sessionIdType": "customKey"},
+      "id": "memory-1",
+      "name": "Memory",
+      "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
+      "typeVersion": 1.3,
+      "position": [40, 200]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.hubapi.com/marketing/v3/transactional/single-email/send",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "options": {},
+        "toolDescription": "Send transactional email. Body: {emailId, message: {to, from, sendId}, contactProperties, customProperties}. WRITE - respect dry_run."
+      },
+      "id": "tool-send-transactional",
+      "name": "Send Transactional Email",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [160, 200],
+      "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}
+    },
+    {
+      "parameters": {
+        "url": "https://api.hubapi.com/marketing/v3/transactional/single-email/definitions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {},
+        "toolDescription": "List all transactional email definitions (Single Send templates)."
+      },
+      "id": "tool-list-single-send",
+      "name": "Get Single Send Definitions",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [280, 200],
+      "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.hubapi.com/marketing/v3/transactional/single-email/definitions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "options": {},
+        "toolDescription": "Create transactional email definition. Body: {name, subject, body, fromEmail, fromName}. WRITE - respect dry_run."
+      },
+      "id": "tool-create-single-send",
+      "name": "Create Single Send Definition",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [400, 200],
+      "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}
+    },
+    {
+      "parameters": {
+        "url": "https://api.hubapi.com/marketing/v3/emails",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "specifyQuery": "json",
+        "options": {},
+        "toolDescription": "List all marketing emails. Query: limit, after, archived, type."
+      },
+      "id": "tool-list-marketing",
+      "name": "List Marketing Emails",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [520, 200],
+      "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}
+    },
+    {
+      "parameters": {
+        "url": "=https://api.hubapi.com/marketing/v3/emails/{{ $json.emailId }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {},
+        "toolDescription": "Get single marketing email by ID."
+      },
+      "id": "tool-get-marketing",
+      "name": "Get Marketing Email by ID",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [640, 200],
+      "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.hubapi.com/marketing/v3/emails",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "options": {},
+        "toolDescription": "Create marketing email. Body: {name, subject, type, content, ...}. WRITE - respect dry_run."
+      },
+      "id": "tool-create-marketing",
+      "name": "Create Marketing Email",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [760, 200],
+      "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://api.hubapi.com/marketing/v3/emails/{{ $json.emailId }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "options": {},
+        "toolDescription": "Update marketing email. WRITE - respect dry_run."
+      },
+      "id": "tool-update-marketing",
+      "name": "Update Marketing Email",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [880, 200],
+      "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}
+    },
+    {
+      "parameters": {
+        "method": "DELETE",
+        "url": "=https://api.hubapi.com/marketing/v3/emails/{{ $json.emailId }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {},
+        "toolDescription": "Delete marketing email. DESTRUCTIVE - respect dry_run."
+      },
+      "id": "tool-delete-marketing",
+      "name": "Delete Marketing Email",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [1000, 200],
+      "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.hubapi.com/marketing/v3/emails/{{ $json.emailId }}/clone",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "options": {},
+        "toolDescription": "Clone/duplicate a marketing email. WRITE - respect dry_run."
+      },
+      "id": "tool-clone-marketing",
+      "name": "Clone Marketing Email",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [1120, 200],
+      "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}
+    },
+    {
+      "parameters": {
+        "url": "=https://api.hubapi.com/marketing/v3/emails/{{ $json.emailId }}/statistics",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {},
+        "toolDescription": "Get marketing email statistics - opens, clicks, bounces, etc."
+      },
+      "id": "tool-email-stats",
+      "name": "Get Marketing Email Statistics",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [160, 360],
+      "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}
+    },
+    {
+      "parameters": {
+        "url": "https://api.hubapi.com/marketing-emails/v1/emails/templates",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {},
+        "toolDescription": "List all email templates."
+      },
+      "id": "tool-list-templates",
+      "name": "List Email Templates",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [280, 360],
+      "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}
+    },
+    {
+      "parameters": {
+        "url": "=https://api.hubapi.com/marketing-emails/v1/emails/templates/{{ $json.templateId }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {},
+        "toolDescription": "Get single email template by ID."
+      },
+      "id": "tool-get-template",
+      "name": "Get Email Template by ID",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [400, 360],
+      "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}
+    },
+    {
+      "parameters": {
+        "url": "=https://api.hubapi.com/communication-preferences/v3/status/email/{{ $json.email }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {},
+        "toolDescription": "Get email subscription status for a contact by email address."
+      },
+      "id": "tool-get-subscriptions",
+      "name": "Get Email Subscriptions",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [520, 360],
+      "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}
+    },
+    {
+      "parameters": {
+        "url": "https://api.hubapi.com/communication-preferences/v3/definitions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {},
+        "toolDescription": "Get all subscription types/definitions available in the portal."
+      },
+      "id": "tool-subscription-types",
+      "name": "Get Subscription Types",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [640, 360],
+      "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.hubapi.com/communication-preferences/v3/subscribe",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "options": {},
+        "toolDescription": "Subscribe contact to subscription type. Body: {emailAddress, subscriptionId, legalBasis, legalBasisExplanation}. WRITE - respect dry_run."
+      },
+      "id": "tool-subscribe",
+      "name": "Subscribe Contact",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [760, 360],
+      "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.hubapi.com/communication-preferences/v3/unsubscribe",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "options": {},
+        "toolDescription": "Unsubscribe contact from subscription type. Body: {emailAddress, subscriptionId}. WRITE - respect dry_run."
+      },
+      "id": "tool-unsubscribe",
+      "name": "Unsubscribe Contact",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [880, 360],
+      "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}
+    },
+    {
+      "parameters": {
+        "url": "https://api.hubapi.com/email/public/v1/events",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "specifyQuery": "json",
+        "options": {},
+        "toolDescription": "Get email events (delivery, open, click, bounce, etc). Query: startTimestamp, endTimestamp, eventType, recipient, limit."
+      },
+      "id": "tool-email-events",
+      "name": "Get Email Events",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [1000, 360],
+      "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}
+    },
+    {
+      "parameters": {
+        "url": "=https://api.hubapi.com/email/public/v1/campaigns/{{ $json.campaignId }}/events",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "specifyQuery": "json",
+        "options": {},
+        "toolDescription": "Get events for a specific email campaign."
+      },
+      "id": "tool-campaign-events",
+      "name": "Get Email Campaign Events",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [1120, 360],
+      "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}
+    },
+    {
+      "parameters": {
+        "jsCode": "const base = $('Assemble Context Pack').first().json;\nconst started = Number(base._started_ms || Date.now());\nconst duration_ms = Math.max(0, Date.now() - started);\nlet agentRaw = $('AI Agent - Email').first().json;\nconst coerceJson = (val) => {\n  if (val === null || val === undefined) return null;\n  if (typeof val === 'object') return val;\n  if (typeof val !== 'string') return { value: val };\n  const s = val.trim().replace(/^```json\\s*/i, '').replace(/```$/,'').trim();\n  try { return JSON.parse(s); } catch { return { raw: val }; }\n};\nconst agentOut = coerceJson(agentRaw.output ?? agentRaw.text ?? agentRaw);\nconst ok = !(agentOut?.errors && agentOut.errors.length);\nconst esc = (s) => String(s ?? '').replace(/'/g, \"''\");\nconst final = {ok, tool_name: base.tool_name, tool_execution_id: base.tool_execution_id, summary: agentOut?.summary ?? (ok ? 'ok' : 'error'), data: agentOut?.data ?? null, errors: agentOut?.errors ?? [], duration_ms};\nconst outJson = esc(JSON.stringify(final));\nfinal.log_end_sql = `UPDATE tool_execution_log SET output_data = '${outJson}'::jsonb, success = ${final.ok}, duration_ms = ${duration_ms} WHERE id = '${esc(base.tool_execution_id)}'::uuid;`;\nreturn [{ json: final }];"
+      },
+      "id": "parse-output-1",
+      "name": "Parse + Finalize Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [400, 0]
+    },
+    {
+      "parameters": {"operation": "executeQuery", "query": "={{$json.log_end_sql}}", "options": {}},
+      "id": "log-end-1",
+      "name": "Log End",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [640, 0],
+      "credentials": {"postgres": {"id": "BwXy2JHETe47vH1I", "name": "Postgres account 2"}},
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {"options": {}},
+      "type": "@n8n/n8n-nodes-langchain.chatTrigger",
+      "typeVersion": 1.4,
+      "position": [-800, -200],
+      "id": "chat-trigger-1",
+      "name": "When chat message received",
+      "webhookId": "email-chat-test"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nreturn [{json: {user_message: input.chatInput || '', dry_run: true, tool_name: 'hubspot.email', session_id: input.sessionId || 'chat_test'}}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-560, -200],
+      "id": "chat-normalize-1",
+      "name": "Normalize Chat Input"
+    }
+  ],
+  "connections": {
+    "When Executed by Another Workflow": {"main": [[{"node": "Normalize + Build SQL", "type": "main", "index": 0}]]},
+    "When chat message received": {"main": [[{"node": "Normalize Chat Input", "type": "main", "index": 0}]]},
+    "Normalize Chat Input": {"main": [[{"node": "Normalize + Build SQL", "type": "main", "index": 0}]]},
+    "Normalize + Build SQL": {"main": [[{"node": "Log Start", "type": "main", "index": 0}]]},
+    "Log Start": {"main": [[{"node": "Assemble Context Pack", "type": "main", "index": 0}]]},
+    "Assemble Context Pack": {"main": [[{"node": "AI Agent - Email", "type": "main", "index": 0}]]},
+    "AI Agent - Email": {"main": [[{"node": "Parse + Finalize Output", "type": "main", "index": 0}]]},
+    "Parse + Finalize Output": {"main": [[{"node": "Log End", "type": "main", "index": 0}]]},
+    "OpenAI Chat Model": {"ai_languageModel": [[{"node": "AI Agent - Email", "type": "ai_languageModel", "index": 0}]]},
+    "Memory": {"ai_memory": [[{"node": "AI Agent - Email", "type": "ai_memory", "index": 0}]]},
+    "Send Transactional Email": {"ai_tool": [[{"node": "AI Agent - Email", "type": "ai_tool", "index": 0}]]},
+    "Get Single Send Definitions": {"ai_tool": [[{"node": "AI Agent - Email", "type": "ai_tool", "index": 0}]]},
+    "Create Single Send Definition": {"ai_tool": [[{"node": "AI Agent - Email", "type": "ai_tool", "index": 0}]]},
+    "List Marketing Emails": {"ai_tool": [[{"node": "AI Agent - Email", "type": "ai_tool", "index": 0}]]},
+    "Get Marketing Email by ID": {"ai_tool": [[{"node": "AI Agent - Email", "type": "ai_tool", "index": 0}]]},
+    "Create Marketing Email": {"ai_tool": [[{"node": "AI Agent - Email", "type": "ai_tool", "index": 0}]]},
+    "Update Marketing Email": {"ai_tool": [[{"node": "AI Agent - Email", "type": "ai_tool", "index": 0}]]},
+    "Delete Marketing Email": {"ai_tool": [[{"node": "AI Agent - Email", "type": "ai_tool", "index": 0}]]},
+    "Clone Marketing Email": {"ai_tool": [[{"node": "AI Agent - Email", "type": "ai_tool", "index": 0}]]},
+    "Get Marketing Email Statistics": {"ai_tool": [[{"node": "AI Agent - Email", "type": "ai_tool", "index": 0}]]},
+    "List Email Templates": {"ai_tool": [[{"node": "AI Agent - Email", "type": "ai_tool", "index": 0}]]},
+    "Get Email Template by ID": {"ai_tool": [[{"node": "AI Agent - Email", "type": "ai_tool", "index": 0}]]},
+    "Get Email Subscriptions": {"ai_tool": [[{"node": "AI Agent - Email", "type": "ai_tool", "index": 0}]]},
+    "Get Subscription Types": {"ai_tool": [[{"node": "AI Agent - Email", "type": "ai_tool", "index": 0}]]},
+    "Subscribe Contact": {"ai_tool": [[{"node": "AI Agent - Email", "type": "ai_tool", "index": 0}]]},
+    "Unsubscribe Contact": {"ai_tool": [[{"node": "AI Agent - Email", "type": "ai_tool", "index": 0}]]},
+    "Get Email Events": {"ai_tool": [[{"node": "AI Agent - Email", "type": "ai_tool", "index": 0}]]},
+    "Get Email Campaign Events": {"ai_tool": [[{"node": "AI Agent - Email", "type": "ai_tool", "index": 0}]]}
+  },
+  "settings": {"executionOrder": "v1"},
+  "tags": [],
+  "pinData": {}
+}

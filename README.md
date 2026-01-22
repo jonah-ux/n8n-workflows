@@ -1,36 +1,30 @@
-# 08_Knowledge - Knowledge Base & RAG System
+# 05 - Lead Generation
 
-Knowledge harvesting, document indexing, and retrieval-augmented generation (RAG) system management.
+**Autonomous lead discovery and enrichment**
 
-## Workflows
+Google Maps → Enrichment → HubSpot pipeline.
 
-| Workflow | Purpose | Trigger |
-|----------|---------|---------|
-| Knowledge_Harvester_Background | Harvest and index knowledge from various sources | schedule (daily) |
-| Workflow_Context_Generator | Generate context documentation for workflows | sub-workflow |
+---
 
-## Database Tables
+## Workflows (4 total)
 
-| Table | Purpose |
-|-------|---------|
-| `knowledge_domains` | RAG topic categories |
-| `knowledge_documents` | Source documents with content |
-| `knowledge_chunks` | Embedded document chunks for vector search |
-| `n8n_vectors` | n8n workflow embeddings |
+1. **Lead_Generation_Pipeline.n8n.json** - Main pipeline orchestrator
+2. **Auto_Enrichment_Processor.n8n.json** - Hunter.io + Firecrawl enrichment
+3. **Company_Intelligence_Aggregator.n8n.json** - Aggregate + DCS scoring
+4. **Competitor_Intelligence_Scraper.n8n.json** - Monitor competitors
 
-## Key Concepts
+---
 
-### Knowledge Harvesting
-The harvester workflow runs daily to:
-- Crawl configured knowledge sources
-- Extract and clean content
-- Generate embeddings via OpenAI
-- Store in Supabase vector store
+## Credentials
 
-### Workflow Context Generation
-Sub-workflow that generates documentation context for workflows, used by documentation and learning systems.
+- SerpAPI (Google Maps search)
+- Hunter.io API
+- Firecrawl API
+- Supabase Postgres
 
-## Related Folders
+---
 
-- [10_Memory_Learning](../10_Memory_Learning/) - Uses knowledge base for memory consolidation
-- [09_Agent_Framework](../09_Agent_Framework/) - RAG Gap Completion Agent fills knowledge gaps
+## Pipeline Flow
+
+Google Maps → Lead_Generation_Pipeline → Auto_Enrichment_Processor
+  → Company_Intelligence_Aggregator → HubSpot

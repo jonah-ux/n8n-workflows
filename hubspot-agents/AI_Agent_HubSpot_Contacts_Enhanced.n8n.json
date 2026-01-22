@@ -1,0 +1,1316 @@
+{
+  "name": "AI Agent - HubSpot Contacts (Enhanced)",
+  "nodes": [
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "request_id",
+              "type": "string"
+            },
+            {
+              "name": "session_id",
+              "type": "string"
+            },
+            {
+              "name": "chat_id",
+              "type": "string"
+            },
+            {
+              "name": "user_id",
+              "type": "string"
+            },
+            {
+              "name": "user_message",
+              "type": "string"
+            },
+            {
+              "name": "object_type",
+              "type": "string"
+            },
+            {
+              "name": "object_id",
+              "type": "string"
+            },
+            {
+              "name": "company_id",
+              "type": "string"
+            },
+            {
+              "name": "contact_id",
+              "type": "string"
+            },
+            {
+              "name": "deal_id",
+              "type": "string"
+            },
+            {
+              "name": "caller_workflow_id",
+              "type": "string"
+            },
+            {
+              "name": "caller_execution_id",
+              "type": "string"
+            },
+            {
+              "name": "tool_name",
+              "type": "string"
+            },
+            {
+              "name": "dry_run",
+              "type": "boolean"
+            },
+            {
+              "name": "conversation_id",
+              "type": "string"
+            },
+            {
+              "name": "hs_portal_id",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "id": "trigger-1",
+      "name": "When Executed by Another Workflow",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        -800,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\n\nconst nowIso = new Date().toISOString();\nconst startedMs = Date.now();\n\nconst tool_name = input.tool_name || 'hubspot.contacts';\nconst dry_run = (input.dry_run === undefined || input.dry_run === null) ? true : !!input.dry_run;\n\nconst q = (v) => (v === undefined || v === null || v === '') ? null : String(v);\n\nconst note_scope = 'hubspot';\nconst note_key = input.contact_id \n  ? `contact.${input.contact_id}` \n  : (input.object_type && input.object_id ? `${input.object_type}.${input.object_id}` : 'contacts.unknown');\n\nconst payload_for_log = {\n  ...input,\n  tool_name,\n  dry_run,\n  note_scope,\n  note_key,\n  started_at: nowIso,\n  _started_ms: startedMs\n};\n\n// Parameterized SQL for log_start\nconst log_start_sql = `\nINSERT INTO tool_execution_log (\n  tool_name,\n  input_data,\n  success,\n  conversation_id,\n  user_id,\n  required_approval\n)\nVALUES ($1, $2::jsonb, false, $3, $4, $5)\nRETURNING id;\n`;\n\n// Parameters for log_start: tool_name, input_data, conversation_id, user_id, required_approval\nconst log_start_params = [\n  tool_name,\n  JSON.stringify(payload_for_log),\n  q(input.conversation_id),\n  q(input.user_id),\n  !dry_run\n];\n\n// Parameterized SQL for context loading\nconst ctx_sql = `\nSELECT jsonb_build_object(\n  'hubspot_contact', (\n    SELECT to_jsonb(ct)\n    FROM hubspot_contacts ct\n    WHERE ct.id = $1\n    LIMIT 1\n  ),\n  'associated_company', (\n    SELECT to_jsonb(c)\n    FROM hubspot_companies c\n    WHERE c.id = $2\n    LIMIT 1\n  ),\n  'agent_notes', (\n    SELECT COALESCE(jsonb_agg(n ORDER BY n.updated_at DESC), '[]'::jsonb)\n    FROM agent_notes n\n    WHERE n.scope = $3\n      AND n.note_key = $4\n    LIMIT 10\n  ),\n  'contact_properties_sample', (\n    SELECT jsonb_agg(p.attrs->'properties')\n    FROM hubspot_contacts p\n    LIMIT 3\n  )\n) AS context;\n`;\n\n// Parameters for ctx: contact_id, company_id, note_scope, note_key\nconst ctx_params = [\n  q(input.contact_id),\n  q(input.company_id),\n  note_scope,\n  note_key\n];\n\nreturn [{\n  json: {\n    ...payload_for_log,\n    log_start_sql,\n    log_start_params,\n    ctx_sql,\n    ctx_params\n  }\n}];"
+      },
+      "id": "normalize-1",
+      "name": "Normalize + Build SQL",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -560,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{$json.log_start_sql}}",
+        "options": {
+          "queryReplacement": "={{ $json.log_start_params }}"
+        }
+      },
+      "id": "log-start-1",
+      "name": "Log Start (tool_execution_log)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        -320,
+        -80
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CRED_ID",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{$json.ctx_sql}}",
+        "options": {
+          "queryReplacement": "={{ $json.ctx_params }}"
+        }
+      },
+      "id": "load-context-1",
+      "name": "Load Context",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        -320,
+        80
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CRED_ID",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const base = $('Normalize + Build SQL').first().json;\n\nconst logStart = $('Log Start (tool_execution_log)').first().json;\nconst tool_execution_id = (logStart && logStart.id) ? logStart.id : null;\n\nconst ctxRows = $('Load Context').first().json;\nconst context_pack = (ctxRows && ctxRows.context) ? ctxRows.context : {};\n\nreturn [{\n  json: {\n    ...base,\n    tool_execution_id,\n    context_pack\n  }\n}];"
+      },
+      "id": "assemble-1",
+      "name": "Assemble Context Pack",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -80,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "text": "={{ \n[\n  \"USER_REQUEST:\",\n  ($json.user_message || \"\").toString(),\n  \"\",\n  \"RUNTIME:\",\n  JSON.stringify({\n    tool_name: $json.tool_name || \"hubspot.contacts\",\n    dry_run: $json.dry_run ?? true,\n    session_id: $json.session_id,\n    request_id: $json.request_id,\n    conversation_id: $json.conversation_id,\n    contact_id: $json.contact_id,\n    company_id: $json.company_id,\n    deal_id: $json.deal_id,\n    user_id: $json.user_id,\n    caller_workflow_id: $json.caller_workflow_id,\n    caller_execution_id: $json.caller_execution_id\n  }, null, 2),\n  \"\",\n  \"CONTEXT_PACK (DB):\",\n  JSON.stringify($json.context_pack ?? {}, null, 2)\n].join(\"\\n\")\n}}\n",
+        "options": {
+          "maxIterations": 15,
+          "systemMessage": "You are the HubSpot CONTACTS Agent.\n\nYour job:\n- Manage HubSpot contacts: list, search, create, update, delete, merge, associate, import.\n- Return ONLY valid JSON in the specified output schema.\n\nINPUTS YOU RECEIVE:\n- USER_REQUEST (plain text)\n- RUNTIME (json): includes tool_name, dry_run, ids\n- CONTEXT_PACK (json): database context if available\n\nHARD RULES:\n1) Always use tools for factual data. Do NOT guess.\n2) DRY RUN ENFORCEMENT:\n   - If runtime.dry_run is true: DO NOT call ANY write tools (Create, Update, Delete, Merge, Associate).\n   - If the user requests a write and dry_run=true: return a proposed plan + exact tool + payload, but do not execute.\n3) If a required argument is missing (ex: contactId, email, firstname), ask for it in errors[] and do not call the tool.\n\nAVAILABLE TOOLS (USE THESE NAMES EXACTLY):\nREAD OPERATIONS:\n- List All Contacts - Get paginated list of all contacts\n- Get Contact by ID - Get a specific contact by record ID\n- Get Contact by Email - Get a contact using email as identifier\n- Search Contacts - Search contacts with filters and full-text query\n- List Contact Properties - Get all contact property definitions\n- Get Contact Associations - Get deals/companies/tickets associated with a contact\n- Get Contact Timeline - Get activity timeline for a contact\n- Get Contact Property History - Get historical values of properties over time (uses HubSpot's native propertiesWithHistory)\n\nBATCH READ OPERATIONS:\n- Batch Read Contacts - Read multiple contacts by ID or email in one call\n\nWRITE OPERATIONS (ONLY IF dry_run=false AND user explicitly requested):\n- Create Contact - Create a new contact (email recommended as unique identifier)\n- Update Contact - Update contact properties by ID or email\n- Delete Contact - Delete a contact (moves to recycle bin)\n- Merge Contacts - Merge two contacts into one (keeps primary, archives secondary)\n- Associate Contact - Link contact to company/deal/ticket\n- Remove Contact Association - Unlink contact from another object\n\nBATCH WRITE OPERATIONS:\n- Batch Create Contacts - Create multiple contacts at once\n- Batch Update Contacts - Update multiple contacts at once\n- Batch Upsert Contacts - Create or update contacts based on email/custom ID\n\nINTER-AGENT TOOLS (Delegate to specialized agents):\n- Call Companies Agent - Look up company details to associate with contact\n- Call Deals Agent - Look up deals associated with contact\n- Call Engagements Agent - Log notes, create tasks, view activity history on contacts\n\nCOMMON CONTACT PROPERTIES:\n- email (primary unique identifier)\n- firstname, lastname\n- phone, mobilephone\n- company, jobtitle\n- hubspot_owner_id (assigned rep)\n- lifecyclestage (subscriber, lead, marketingqualifiedlead, salesqualifiedlead, opportunity, customer, evangelist, other)\n- hs_lead_status\n- createdate, lastmodifieddate\n- associatedcompanyid\n\nSEARCH OPERATORS:\n- EQ, NEQ, LT, LTE, GT, GTE\n- CONTAINS_TOKEN, NOT_CONTAINS_TOKEN\n- HAS_PROPERTY, NOT_HAS_PROPERTY\n- BETWEEN, IN, NOT_IN\n\nOUTPUT FORMAT (RETURN JSON ONLY):\n{\n  \"summary\": \"short human summary\",\n  \"data\": { \"any\": \"tool results or extracted fields\" },\n  \"tool_calls\": [\n    { \"tool\": \"Tool Name\", \"arguments\": { } }\n  ],\n  \"errors\": [\n    { \"code\": \"MISSING_ARG|DRY_RUN_BLOCK|TOOL_ERROR\", \"message\": \"...\" }\n  ],\n  \"notes_to_save\": null\n}"
+        },
+        "promptType": "define"
+      },
+      "id": "agent-1",
+      "name": "AI Agent - Contacts",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        160,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "list",
+          "value": "gpt-4o",
+          "cachedResultName": "gpt-4o"
+        },
+        "options": {}
+      },
+      "id": "llm-1",
+      "name": "OpenAI Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [
+        -80,
+        200
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "OPENAI_CRED_ID",
+          "name": "OpenAI API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sessionKey": "session_id",
+        "sessionIdType": "customKey"
+      },
+      "id": "memory-1",
+      "name": "Memory",
+      "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
+      "typeVersion": 1.3,
+      "position": [
+        40,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://api.hubapi.com/crm/v3/objects/contacts",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "specifyQuery": "json",
+        "options": {},
+        "toolDescription": "List all contacts from HubSpot. Returns paginated results. Use query params: limit (max 100), after (pagination cursor), properties (comma-separated list), associations (object types to include)."
+      },
+      "id": "tool-list-contacts",
+      "name": "List All Contacts",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        160,
+        200
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "=https://api.hubapi.com/crm/v3/objects/contacts/{{ $json.contactId || $json.id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "specifyQuery": "json",
+        "options": {},
+        "toolDescription": "Get a specific contact by record ID. Use query params: properties (comma-separated), propertiesWithHistory, associations."
+      },
+      "id": "tool-get-contact",
+      "name": "Get Contact by ID",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        280,
+        200
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "=https://api.hubapi.com/crm/v3/objects/contacts/{{ $json.email }}?idProperty=email",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "specifyQuery": "json",
+        "options": {},
+        "toolDescription": "Get a contact by email address. The email is used as the unique identifier. Include properties param to specify which properties to return."
+      },
+      "id": "tool-get-by-email",
+      "name": "Get Contact by Email",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        400,
+        200
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.hubapi.com/crm/v3/objects/contacts/search",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "contentType": "json",
+        "options": {},
+        "toolDescription": "Search contacts using filters. Body: {query: 'text search', filterGroups: [{filters: [{propertyName, operator, value}]}], sorts: [{propertyName, direction}], properties: [], limit, after}. Supports EQ, NEQ, LT, LTE, GT, GTE, CONTAINS_TOKEN, HAS_PROPERTY, IN, BETWEEN operators."
+      },
+      "id": "tool-search-contacts",
+      "name": "Search Contacts",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        520,
+        200
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "https://api.hubapi.com/crm/v3/properties/contacts",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {},
+        "toolDescription": "List all contact property definitions including standard and custom properties. Returns name, label, type, fieldType, groupName, options for enumeration types."
+      },
+      "id": "tool-list-props",
+      "name": "List Contact Properties",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        640,
+        200
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "=https://api.hubapi.com/crm/v4/objects/contacts/{{ $json.contactId }}/associations/{{ $json.toObjectType || 'companies' }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "specifyQuery": "json",
+        "options": {},
+        "toolDescription": "Get associations for a contact. Specify contactId and toObjectType (companies, deals, tickets, etc). Returns associated object IDs and association types."
+      },
+      "id": "tool-get-assoc",
+      "name": "Get Contact Associations",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        760,
+        200
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "=https://api.hubapi.com/crm/v3/objects/contacts/{{ $json.contactId }}/timeline",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "specifyQuery": "json",
+        "options": {},
+        "toolDescription": "Get timeline/activity history for a contact. Shows engagement events, property changes, form submissions, page views, email interactions."
+      },
+      "id": "tool-contact-timeline",
+      "name": "Get Contact Timeline",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        880,
+        200
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.hubapi.com/crm/v3/objects/contacts/batch/read",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "contentType": "json",
+        "options": {},
+        "toolDescription": "Batch read multiple contacts. Body: {inputs: [{id: 'contactId'}], properties: ['prop1', 'prop2'], idProperty: 'email' (optional)}. Can read by ID or email. More efficient than multiple single reads."
+      },
+      "id": "tool-batch-read",
+      "name": "Batch Read Contacts",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        160,
+        360
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.hubapi.com/crm/v3/objects/contacts",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "contentType": "json",
+        "options": {},
+        "toolDescription": "CREATE a new contact. Body: {properties: {email, firstname, lastname, phone, company, ...}, associations: [{to: {id}, types: [{associationCategory, associationTypeId}]}]}. Email is recommended as unique identifier. WRITE OPERATION - respect dry_run."
+      },
+      "id": "tool-create-contact",
+      "name": "Create Contact",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        280,
+        360
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://api.hubapi.com/crm/v3/objects/contacts/{{ $json.contactId || $json.id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "contentType": "json",
+        "options": {},
+        "toolDescription": "UPDATE a contact by ID. Body: {properties: {key: value, ...}}. Can update any writable property. WRITE OPERATION - respect dry_run."
+      },
+      "id": "tool-update-contact",
+      "name": "Update Contact",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        400,
+        360
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://api.hubapi.com/crm/v3/objects/contacts/{{ $json.email }}?idProperty=email",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "contentType": "json",
+        "options": {},
+        "toolDescription": "UPDATE a contact by email address. Body: {properties: {key: value, ...}}. Uses email as the identifier. WRITE OPERATION - respect dry_run."
+      },
+      "id": "tool-update-by-email",
+      "name": "Update Contact by Email",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        520,
+        360
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "DELETE",
+        "url": "=https://api.hubapi.com/crm/v3/objects/contacts/{{ $json.contactId || $json.id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {},
+        "toolDescription": "DELETE a contact by ID. Moves contact to recycle bin (can be restored within 90 days). DESTRUCTIVE WRITE OPERATION - respect dry_run."
+      },
+      "id": "tool-delete-contact",
+      "name": "Delete Contact",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        640,
+        360
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.hubapi.com/crm/v3/objects/contacts/merge",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "contentType": "json",
+        "options": {},
+        "toolDescription": "MERGE two contacts. Body: {primaryObjectId: 'contactIdToKeep', objectIdToMerge: 'contactIdToArchive'}. Primary contact is kept, secondary is merged into it and archived. DESTRUCTIVE WRITE OPERATION - respect dry_run."
+      },
+      "id": "tool-merge-contacts",
+      "name": "Merge Contacts",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        760,
+        360
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "=https://api.hubapi.com/crm/v4/objects/contacts/{{ $json.contactId }}/associations/{{ $json.toObjectType }}/{{ $json.toObjectId }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "contentType": "json",
+        "options": {},
+        "toolDescription": "Associate a contact with another object. Body: [{associationCategory: 'HUBSPOT_DEFINED', associationTypeId: number}]. Common types: contact_to_company (1), contact_to_deal (3), contact_to_ticket (15). WRITE OPERATION - respect dry_run."
+      },
+      "id": "tool-assoc-contact",
+      "name": "Associate Contact",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        880,
+        360
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "DELETE",
+        "url": "=https://api.hubapi.com/crm/v4/objects/contacts/{{ $json.contactId }}/associations/{{ $json.toObjectType }}/{{ $json.toObjectId }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {},
+        "toolDescription": "Remove association between a contact and another object. WRITE OPERATION - respect dry_run."
+      },
+      "id": "tool-remove-assoc",
+      "name": "Remove Contact Association",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        160,
+        520
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.hubapi.com/crm/v3/objects/contacts/batch/create",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "contentType": "json",
+        "options": {},
+        "toolDescription": "Batch create multiple contacts. Body: {inputs: [{properties: {...}, associations: [...]}]}. Max 100 per batch. WRITE OPERATION - respect dry_run."
+      },
+      "id": "tool-batch-create",
+      "name": "Batch Create Contacts",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        280,
+        520
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.hubapi.com/crm/v3/objects/contacts/batch/update",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "contentType": "json",
+        "options": {},
+        "toolDescription": "Batch update multiple contacts. Body: {inputs: [{id: 'contactId', properties: {...}}]}. Max 100 per batch. WRITE OPERATION - respect dry_run."
+      },
+      "id": "tool-batch-update",
+      "name": "Batch Update Contacts",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        400,
+        520
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.hubapi.com/crm/v3/objects/contacts/batch/upsert",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "contentType": "json",
+        "options": {},
+        "toolDescription": "Batch upsert contacts - create if not exists, update if exists. Body: {inputs: [{idProperty: 'email', id: 'email@example.com', properties: {...}}]}. Uses email or custom property as match key. WRITE OPERATION - respect dry_run."
+      },
+      "id": "tool-batch-upsert",
+      "name": "Batch Upsert Contacts",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        520,
+        520
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "https://api.hubapi.com/crm/v3/owners",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "specifyQuery": "json",
+        "options": {},
+        "toolDescription": "List all HubSpot owners (users) that can be assigned to contacts. Returns id, email, firstName, lastName. Use for hubspot_owner_id assignments."
+      },
+      "id": "tool-list-owners",
+      "name": "List Owners",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        640,
+        520
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "https://api.hubapi.com/crm/v4/associations/contacts/companies/labels",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {},
+        "toolDescription": "Get available association types/labels between contacts and companies. Returns associationTypeId values needed for creating associations."
+      },
+      "id": "tool-assoc-labels",
+      "name": "Get Contact-Company Association Types",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        760,
+        520
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "=https://api.hubapi.com/crm/v3/properties/contacts/{{ $json.propertyName }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {},
+        "toolDescription": "Get details about a specific contact property including options for enumeration properties (like lifecyclestage, hs_lead_status)."
+      },
+      "id": "tool-get-property",
+      "name": "Get Contact Property",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        880,
+        520
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "=https://api.hubapi.com/crm/v3/objects/contacts/{{ $json.contactId || $json.id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "specifyQuery": "json",
+        "jsonQuery": "={{ JSON.stringify({ propertiesWithHistory: $json.properties || 'email,firstname,lastname,lifecyclestage,hs_lead_status,hubspot_owner_id' }) }}",
+        "options": {},
+        "toolDescription": "Get PROPERTY HISTORY for a contact. Returns the historical values of specified properties showing how they changed over time. Specify contactId and properties (comma-separated list of property names to get history for). Common properties to track: email, firstname, lastname, lifecyclestage, hs_lead_status, hubspot_owner_id. Returns each property's history with timestamp, value, sourceType, sourceId."
+      },
+      "id": "tool-get-property-history",
+      "name": "Get Contact Property History",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        160,
+        840
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "name": "Call Companies Agent",
+        "description": "Call the HubSpot Companies Agent to look up company details or search companies. Use when you need company information to associate with a contact.",
+        "workflowId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "qH4NDSqFePk33A_MlzYcY",
+          "cachedResultName": "AI Agent - HubSpot Companies"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "request_id": "={{ $execution.id }}",
+            "session_id": "={{ $json.session_id || '' }}",
+            "chat_id": "={{ $json.chat_id || '' }}",
+            "user_id": "={{ $json.user_id || '' }}",
+            "user_message": "={{ $fromAI('request', 'What to ask the Companies Agent') }}",
+            "object_type": "companies",
+            "contact_id": "={{ $json.contact_id || '' }}",
+            "company_id": "={{ $json.company_id || '' }}",
+            "deal_id": "={{ $json.deal_id || '' }}",
+            "conversation_id": "={{ $json.conversation_id || $execution.id }}",
+            "dry_run": "={{ $json.dry_run ?? true }}",
+            "caller_workflow_id": "={{ $workflow.id }}",
+            "caller_execution_id": "={{ $execution.id }}",
+            "tool_name": "hubspot.companies"
+          }
+        }
+      },
+      "id": "tool-call-companies",
+      "name": "Call Companies Agent",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.1,
+      "position": [
+        160,
+        680
+      ]
+    },
+    {
+      "parameters": {
+        "name": "Call Deals Agent",
+        "description": "Call the HubSpot Deals Agent to look up deal details or search deals associated with a contact.",
+        "workflowId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "4J19cZdd4aLVDxOZCwmKB",
+          "cachedResultName": "AI Agent - HubSpot Deals"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "request_id": "={{ $execution.id }}",
+            "session_id": "={{ $json.session_id || '' }}",
+            "chat_id": "={{ $json.chat_id || '' }}",
+            "user_id": "={{ $json.user_id || '' }}",
+            "user_message": "={{ $fromAI('request', 'What to ask the Deals Agent') }}",
+            "object_type": "deals",
+            "contact_id": "={{ $json.contact_id || '' }}",
+            "company_id": "={{ $json.company_id || '' }}",
+            "deal_id": "={{ $json.deal_id || '' }}",
+            "conversation_id": "={{ $json.conversation_id || $execution.id }}",
+            "dry_run": "={{ $json.dry_run ?? true }}",
+            "caller_workflow_id": "={{ $workflow.id }}",
+            "caller_execution_id": "={{ $execution.id }}",
+            "tool_name": "hubspot.deals"
+          }
+        }
+      },
+      "id": "tool-call-deals",
+      "name": "Call Deals Agent",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.1,
+      "position": [
+        280,
+        680
+      ]
+    },
+    {
+      "parameters": {
+        "name": "Call Engagements Agent",
+        "description": "Call the HubSpot Engagements Agent to log notes, create tasks, view activity history, or manage communications on a contact.",
+        "workflowId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "N10BUVD9S-4ZyIsEtnKfp",
+          "cachedResultName": "AI Agent - HubSpot Engagements"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "request_id": "={{ $execution.id }}",
+            "session_id": "={{ $json.session_id || '' }}",
+            "chat_id": "={{ $json.chat_id || '' }}",
+            "user_id": "={{ $json.user_id || '' }}",
+            "user_message": "={{ $fromAI('request', 'What to ask the Engagements Agent') }}",
+            "object_type": "engagements",
+            "contact_id": "={{ $json.contact_id || '' }}",
+            "company_id": "={{ $json.company_id || '' }}",
+            "deal_id": "={{ $json.deal_id || '' }}",
+            "conversation_id": "={{ $json.conversation_id || $execution.id }}",
+            "dry_run": "={{ $json.dry_run ?? true }}",
+            "caller_workflow_id": "={{ $workflow.id }}",
+            "caller_execution_id": "={{ $execution.id }}",
+            "tool_name": "hubspot.engagements"
+          }
+        }
+      },
+      "id": "tool-call-engagements",
+      "name": "Call Engagements Agent",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.1,
+      "position": [
+        400,
+        680
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const base = $('Assemble Context Pack').first().json;\n\nconst started = Number(base._started_ms || Date.now());\nconst duration_ms = Math.max(0, Date.now() - started);\n\nlet agentRaw = $('AI Agent - Contacts').first().json;\n\nconst coerceJson = (val) => {\n  if (val === null || val === undefined) return null;\n  if (typeof val === 'object') return val;\n  if (typeof val !== 'string') return { value: val };\n  const s = val.trim().replace(/^```json\\s*/i, '').replace(/```$/,'').trim();\n  try { return JSON.parse(s); } catch { return { raw: val }; }\n};\n\nconst agentOut = coerceJson(agentRaw.output ?? agentRaw.text ?? agentRaw);\n\nconst ok = !(agentOut?.errors && agentOut.errors.length);\n\nconst final = {\n  ok,\n  tool_name: base.tool_name,\n  tool_execution_id: base.tool_execution_id,\n  session_id: base.session_id,\n  conversation_id: base.conversation_id,\n  dry_run: base.dry_run,\n  summary: agentOut?.summary ?? (ok ? 'ok' : 'error'),\n  data: agentOut?.data ?? null,\n  tool_calls: agentOut?.tool_calls ?? [],\n  errors: agentOut?.errors ?? [],\n  notes_to_save: agentOut?.notes_to_save ?? null,\n  context_used: base.context_pack ?? {},\n  duration_ms\n};\n\n// Parameterized SQL for log_end\nfinal.log_end_sql = `\nUPDATE tool_execution_log\nSET\n  output_data = $1::jsonb,\n  success = $2,\n  error = $3,\n  duration_ms = $4\nWHERE id = $5::uuid\nRETURNING *;\n`;\n\n// Parameters for log_end: output_data, success, error, duration_ms, id\nfinal.log_end_params = [\n  JSON.stringify(final),\n  final.ok,\n  (final.errors && final.errors.length) ? JSON.stringify(final.errors) : null,\n  Number.isFinite(final.duration_ms) ? final.duration_ms : null,\n  base.tool_execution_id\n];\n\nreturn [{ json: final }];"
+      },
+      "id": "parse-output-1",
+      "name": "Parse + Finalize Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        400,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{$json.log_end_sql}}",
+        "options": {
+          "queryReplacement": "={{ $json.log_end_params }}"
+        }
+      },
+      "id": "log-end-1",
+      "name": "Log End (tool_execution_log)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        640,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CRED_ID",
+          "name": "Postgres account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "When Executed by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "Normalize + Build SQL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize + Build SQL": {
+      "main": [
+        [
+          {
+            "node": "Log Start (tool_execution_log)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Load Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Start (tool_execution_log)": {
+      "main": [
+        [
+          {
+            "node": "Assemble Context Pack",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Context": {
+      "main": [
+        [
+          {
+            "node": "Assemble Context Pack",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Assemble Context Pack": {
+      "main": [
+        [
+          {
+            "node": "AI Agent - Contacts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent - Contacts": {
+      "main": [
+        [
+          {
+            "node": "Parse + Finalize Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse + Finalize Output": {
+      "main": [
+        [
+          {
+            "node": "Log End (tool_execution_log)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent - Contacts",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Memory": {
+      "ai_memory": [
+        [
+          {
+            "node": "AI Agent - Contacts",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "List All Contacts": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Contacts",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Contact by ID": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Contacts",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Contact by Email": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Contacts",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Search Contacts": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Contacts",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "List Contact Properties": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Contacts",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Contact Associations": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Contacts",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Contact Timeline": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Contacts",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Batch Read Contacts": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Contacts",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Contact": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Contacts",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Contact": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Contacts",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Contact by Email": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Contacts",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Delete Contact": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Contacts",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Contacts": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Contacts",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Associate Contact": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Contacts",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Remove Contact Association": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Contacts",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Batch Create Contacts": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Contacts",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Batch Update Contacts": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Contacts",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Batch Upsert Contacts": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Contacts",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "List Owners": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Contacts",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Contact-Company Association Types": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Contacts",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Contact Property": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Contacts",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Contact Property History": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Contacts",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Companies Agent": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Contacts",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Deals Agent": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Contacts",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Engagements Agent": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Contacts",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": [],
+  "pinData": {}
+}

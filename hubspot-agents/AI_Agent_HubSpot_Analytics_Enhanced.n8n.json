@@ -1,0 +1,108 @@
+{
+  "name": "AI Agent - HubSpot Analytics (Enhanced)",
+  "nodes": [
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {"name": "request_id", "type": "string"},
+            {"name": "session_id", "type": "string"},
+            {"name": "user_id", "type": "string"},
+            {"name": "user_message", "type": "string"},
+            {"name": "report_id", "type": "string"},
+            {"name": "tool_name", "type": "string"},
+            {"name": "dry_run", "type": "boolean"},
+            {"name": "conversation_id", "type": "string"}
+          ]
+        }
+      },
+      "id": "trigger-1",
+      "name": "When Executed by Another Workflow",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [-800, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst tool_name = input.tool_name || 'hubspot.analytics';\nconst dry_run = input.dry_run ?? true;\nconst q = v => v == null || v === '' ? null : String(v);\nconst payload = {...input, tool_name, dry_run, _started_ms: Date.now()};\nconst log_sql = `INSERT INTO tool_execution_log (tool_name, input_data, success, conversation_id, user_id, required_approval) VALUES ($1, $2::jsonb, false, $3, $4, $5) RETURNING id;`;\nreturn [{json: {...payload, log_start_sql: log_sql, log_start_params: [tool_name, JSON.stringify(payload), q(input.conversation_id), q(input.user_id), !dry_run]}}];"
+      },
+      "id": "normalize-1",
+      "name": "Normalize + Build SQL",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-560, 0]
+    },
+    {"parameters": {"operation": "executeQuery", "query": "={{$json.log_start_sql}}", "options": {"queryReplacement": "={{ $json.log_start_params }}"}}, "id": "log-start-1", "name": "Log Start", "type": "n8n-nodes-base.postgres", "typeVersion": 2.5, "position": [-320, 0], "credentials": {"postgres": {"id": "BwXy2JHETe47vH1I", "name": "Postgres account 2"}}},
+    {"parameters": {"jsCode": "const base = $('Normalize + Build SQL').first().json;\nconst logStart = $('Log Start').first().json;\nreturn [{json: {...base, tool_execution_id: logStart?.id || null}}];"}, "id": "assemble-1", "name": "Assemble", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [-80, 0]},
+    {
+      "parameters": {
+        "text": "={{ ['USER_REQUEST:', $json.user_message, 'RUNTIME:', JSON.stringify({tool_name: $json.tool_name, dry_run: $json.dry_run, report_id: $json.report_id})].join('\\n') }}",
+        "options": {
+          "maxIterations": 15,
+          "systemMessage": "You are the HubSpot ANALYTICS Agent.\n\nYour job:\n- Access HubSpot analytics and reporting\n- Generate custom reports\n- Get attribution data\n- Monitor performance metrics\n\nAVAILABLE TOOLS:\n\nREPORTS:\n- List Reports - Get all saved reports\n- Get Report by ID - Get report details\n- Run Report - Execute and get data\n- Create Report - Create custom report (WRITE)\n- Update Report - Modify report (WRITE)\n- Delete Report - Remove report (WRITE)\n\nWEB ANALYTICS:\n- Get Page Views - Website page analytics\n- Get Traffic Sources - Traffic breakdown\n- Get Sessions - Session analytics\n- Get Visitors - Visitor data\n\nATTRIBUTION:\n- Get Attribution Report - Revenue attribution\n- Get Deal Attribution - Deal source tracking\n- Get Contact Attribution - First/last touch\n\nEMAIL ANALYTICS:\n- Get Email Analytics - Email campaign stats\n- Get Form Analytics - Form submission stats\n\nOUTPUT FORMAT:\n{\"summary\": \"...\", \"data\": {}, \"errors\": []}"
+        },
+        "promptType": "define"
+      },
+      "id": "agent-1",
+      "name": "AI Agent - Analytics",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [160, 0],
+      "alwaysOutputData": true,
+      "retryOnFail": true,
+      "waitBetweenTries": 3000,
+      "onError": "continueRegularOutput"
+    },
+    {"parameters": {"model": {"__rl": true, "mode": "list", "value": "gpt-4o"}, "options": {}}, "id": "llm-1", "name": "OpenAI Chat Model", "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi", "typeVersion": 1.3, "position": [-80, 200], "credentials": {"openAiApi": {"id": "Lb7LQd5GQa1bZ9yX", "name": "OpenAi account 4"}}},
+    {"parameters": {"sessionKey": "session_id", "sessionIdType": "customKey"}, "id": "memory-1", "name": "Memory", "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow", "typeVersion": 1.3, "position": [40, 200]},
+    {"parameters": {"url": "https://api.hubapi.com/analytics/v2/reports", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "sendQuery": true, "specifyQuery": "json", "options": {}, "toolDescription": "List all saved reports."}, "id": "tool-list-reports", "name": "List Reports", "type": "n8n-nodes-base.httpRequestTool", "typeVersion": 4.3, "position": [160, 200], "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}},
+    {"parameters": {"url": "=https://api.hubapi.com/analytics/v2/reports/{{ $json.reportId }}", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "options": {}, "toolDescription": "Get report by ID."}, "id": "tool-get-report", "name": "Get Report by ID", "type": "n8n-nodes-base.httpRequestTool", "typeVersion": 4.3, "position": [280, 200], "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}},
+    {"parameters": {"method": "POST", "url": "=https://api.hubapi.com/analytics/v2/reports/{{ $json.reportId }}/run", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "sendBody": true, "specifyBody": "json", "options": {}, "toolDescription": "Execute report and get data. Body: {startDate, endDate, filters}."}, "id": "tool-run-report", "name": "Run Report", "type": "n8n-nodes-base.httpRequestTool", "typeVersion": 4.3, "position": [400, 200], "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}},
+    {"parameters": {"method": "POST", "url": "https://api.hubapi.com/analytics/v2/reports", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "sendBody": true, "specifyBody": "json", "options": {}, "toolDescription": "Create custom report. Body: {name, type, configuration}. WRITE."}, "id": "tool-create-report", "name": "Create Report", "type": "n8n-nodes-base.httpRequestTool", "typeVersion": 4.3, "position": [520, 200], "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}},
+    {"parameters": {"method": "PATCH", "url": "=https://api.hubapi.com/analytics/v2/reports/{{ $json.reportId }}", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "sendBody": true, "specifyBody": "json", "options": {}, "toolDescription": "Update report. WRITE."}, "id": "tool-update-report", "name": "Update Report", "type": "n8n-nodes-base.httpRequestTool", "typeVersion": 4.3, "position": [640, 200], "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}},
+    {"parameters": {"method": "DELETE", "url": "=https://api.hubapi.com/analytics/v2/reports/{{ $json.reportId }}", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "options": {}, "toolDescription": "Delete report. WRITE."}, "id": "tool-delete-report", "name": "Delete Report", "type": "n8n-nodes-base.httpRequestTool", "typeVersion": 4.3, "position": [760, 200], "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}},
+    {"parameters": {"url": "https://api.hubapi.com/analytics/v2/views", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "sendQuery": true, "specifyQuery": "json", "options": {}, "toolDescription": "Get page view analytics. Query: start, end, breakdown."}, "id": "tool-page-views", "name": "Get Page Views", "type": "n8n-nodes-base.httpRequestTool", "typeVersion": 4.3, "position": [880, 200], "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}},
+    {"parameters": {"url": "https://api.hubapi.com/analytics/v2/sources/summary/daily", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "sendQuery": true, "specifyQuery": "json", "options": {}, "toolDescription": "Get traffic sources breakdown. Query: start, end."}, "id": "tool-traffic", "name": "Get Traffic Sources", "type": "n8n-nodes-base.httpRequestTool", "typeVersion": 4.3, "position": [1000, 200], "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}},
+    {"parameters": {"url": "https://api.hubapi.com/analytics/v2/events/sessions", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "sendQuery": true, "specifyQuery": "json", "options": {}, "toolDescription": "Get session analytics. Query: start, end."}, "id": "tool-sessions", "name": "Get Sessions", "type": "n8n-nodes-base.httpRequestTool", "typeVersion": 4.3, "position": [160, 360], "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}},
+    {"parameters": {"url": "https://api.hubapi.com/analytics/v2/events/visitors", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "sendQuery": true, "specifyQuery": "json", "options": {}, "toolDescription": "Get visitor analytics."}, "id": "tool-visitors", "name": "Get Visitors", "type": "n8n-nodes-base.httpRequestTool", "typeVersion": 4.3, "position": [280, 360], "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}},
+    {"parameters": {"method": "POST", "url": "https://api.hubapi.com/attribution/v2/reports", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "sendBody": true, "specifyBody": "json", "options": {}, "toolDescription": "Get revenue attribution report. Body: {startDate, endDate, model}."}, "id": "tool-attribution", "name": "Get Attribution Report", "type": "n8n-nodes-base.httpRequestTool", "typeVersion": 4.3, "position": [400, 360], "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}},
+    {"parameters": {"url": "=https://api.hubapi.com/crm/v3/objects/deals/{{ $json.dealId }}/associations/attribution", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "options": {}, "toolDescription": "Get attribution for a specific deal."}, "id": "tool-deal-attribution", "name": "Get Deal Attribution", "type": "n8n-nodes-base.httpRequestTool", "typeVersion": 4.3, "position": [520, 360], "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}},
+    {"parameters": {"url": "=https://api.hubapi.com/crm/v3/objects/contacts/{{ $json.contactId }}/associations/attribution", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "options": {}, "toolDescription": "Get attribution (first/last touch) for a contact."}, "id": "tool-contact-attribution", "name": "Get Contact Attribution", "type": "n8n-nodes-base.httpRequestTool", "typeVersion": 4.3, "position": [640, 360], "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}},
+    {"parameters": {"url": "https://api.hubapi.com/marketing/v3/emails/statistics", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "sendQuery": true, "specifyQuery": "json", "options": {}, "toolDescription": "Get email campaign statistics."}, "id": "tool-email-stats", "name": "Get Email Analytics", "type": "n8n-nodes-base.httpRequestTool", "typeVersion": 4.3, "position": [760, 360], "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}},
+    {"parameters": {"url": "https://api.hubapi.com/marketing/v3/forms/statistics", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "sendQuery": true, "specifyQuery": "json", "options": {}, "toolDescription": "Get form submission statistics."}, "id": "tool-form-stats", "name": "Get Form Analytics", "type": "n8n-nodes-base.httpRequestTool", "typeVersion": 4.3, "position": [880, 360], "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}},
+    {"parameters": {"jsCode": "const base = $('Assemble').first().json;\nconst agentRaw = $('AI Agent - Analytics').first().json;\nlet agentOut = {};\ntry { agentOut = typeof agentRaw.output === 'object' ? agentRaw.output : JSON.parse((agentRaw.output||'{}').replace(/^```json|```$/g,'')); } catch {}\nconst ok = !agentOut?.errors?.length;\nconst esc = s => String(s??'').replace(/'/g,\"''\");\nconst final = {ok, summary: agentOut?.summary || 'done', data: agentOut?.data, errors: agentOut?.errors || []};\nfinal.log_end_sql = `UPDATE tool_execution_log SET output_data = '${esc(JSON.stringify(final))}'::jsonb, success = ${ok} WHERE id = '${esc(base.tool_execution_id)}'::uuid;`;\nreturn [{json: final}];"}, "id": "parse-1", "name": "Parse Output", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [400, 0]},
+    {"parameters": {"operation": "executeQuery", "query": "={{$json.log_end_sql}}", "options": {}}, "id": "log-end-1", "name": "Log End", "type": "n8n-nodes-base.postgres", "typeVersion": 2.5, "position": [640, 0], "credentials": {"postgres": {"id": "BwXy2JHETe47vH1I", "name": "Postgres account 2"}}, "onError": "continueRegularOutput"},
+    {"parameters": {"options": {}}, "type": "@n8n/n8n-nodes-langchain.chatTrigger", "typeVersion": 1.4, "position": [-800, -200], "id": "chat-trigger-1", "name": "Chat Trigger", "webhookId": "analytics-test"},
+    {"parameters": {"jsCode": "return [{json: {user_message: $input.first().json.chatInput || '', dry_run: true, tool_name: 'hubspot.analytics', session_id: 'test'}}];"}, "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [-560, -200], "id": "chat-norm", "name": "Normalize Chat"}
+  ],
+  "connections": {
+    "When Executed by Another Workflow": {"main": [[{"node": "Normalize + Build SQL", "type": "main", "index": 0}]]},
+    "Chat Trigger": {"main": [[{"node": "Normalize Chat", "type": "main", "index": 0}]]},
+    "Normalize Chat": {"main": [[{"node": "Normalize + Build SQL", "type": "main", "index": 0}]]},
+    "Normalize + Build SQL": {"main": [[{"node": "Log Start", "type": "main", "index": 0}]]},
+    "Log Start": {"main": [[{"node": "Assemble", "type": "main", "index": 0}]]},
+    "Assemble": {"main": [[{"node": "AI Agent - Analytics", "type": "main", "index": 0}]]},
+    "AI Agent - Analytics": {"main": [[{"node": "Parse Output", "type": "main", "index": 0}]]},
+    "Parse Output": {"main": [[{"node": "Log End", "type": "main", "index": 0}]]},
+    "OpenAI Chat Model": {"ai_languageModel": [[{"node": "AI Agent - Analytics", "type": "ai_languageModel", "index": 0}]]},
+    "Memory": {"ai_memory": [[{"node": "AI Agent - Analytics", "type": "ai_memory", "index": 0}]]},
+    "List Reports": {"ai_tool": [[{"node": "AI Agent - Analytics", "type": "ai_tool", "index": 0}]]},
+    "Get Report by ID": {"ai_tool": [[{"node": "AI Agent - Analytics", "type": "ai_tool", "index": 0}]]},
+    "Run Report": {"ai_tool": [[{"node": "AI Agent - Analytics", "type": "ai_tool", "index": 0}]]},
+    "Create Report": {"ai_tool": [[{"node": "AI Agent - Analytics", "type": "ai_tool", "index": 0}]]},
+    "Update Report": {"ai_tool": [[{"node": "AI Agent - Analytics", "type": "ai_tool", "index": 0}]]},
+    "Delete Report": {"ai_tool": [[{"node": "AI Agent - Analytics", "type": "ai_tool", "index": 0}]]},
+    "Get Page Views": {"ai_tool": [[{"node": "AI Agent - Analytics", "type": "ai_tool", "index": 0}]]},
+    "Get Traffic Sources": {"ai_tool": [[{"node": "AI Agent - Analytics", "type": "ai_tool", "index": 0}]]},
+    "Get Sessions": {"ai_tool": [[{"node": "AI Agent - Analytics", "type": "ai_tool", "index": 0}]]},
+    "Get Visitors": {"ai_tool": [[{"node": "AI Agent - Analytics", "type": "ai_tool", "index": 0}]]},
+    "Get Attribution Report": {"ai_tool": [[{"node": "AI Agent - Analytics", "type": "ai_tool", "index": 0}]]},
+    "Get Deal Attribution": {"ai_tool": [[{"node": "AI Agent - Analytics", "type": "ai_tool", "index": 0}]]},
+    "Get Contact Attribution": {"ai_tool": [[{"node": "AI Agent - Analytics", "type": "ai_tool", "index": 0}]]},
+    "Get Email Analytics": {"ai_tool": [[{"node": "AI Agent - Analytics", "type": "ai_tool", "index": 0}]]},
+    "Get Form Analytics": {"ai_tool": [[{"node": "AI Agent - Analytics", "type": "ai_tool", "index": 0}]]}
+  },
+  "settings": {"executionOrder": "v1"},
+  "tags": [],
+  "pinData": {}
+}

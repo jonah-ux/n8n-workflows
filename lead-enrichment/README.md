@@ -6,7 +6,7 @@ A comprehensive **multi-tier lead enrichment system** for n8n that transforms ba
 
 This collection provides a complete lead enrichment pipeline with:
 - **9 orchestrator versions** (v2-v8 + adaptive + auto processor)
-- **10 specialized sub-workflows** for different data sources (including the critical Context Updater and Outreach Compiler)
+- **11 specialized sub-workflows** for different data sources (including the critical Context Updater and Outreach Compiler v1/v2)
 - **4 supporting workflows** for intelligence gathering and CRM sync
 
 ## Architecture
@@ -74,6 +74,7 @@ lead-enrichment/
 ├── sub-workflows/           # Individual enrichment steps
 │   ├── Context_Updater_Company_Dossier.n8n.json  ⭐ CRITICAL - AI Context Merger
 │   ├── Lead_Outreach_Compiler.n8n.json           ⭐ CRITICAL - Final Outreach Prep
+│   ├── Lead_Outreach_Compiler_v2_3Route.n8n.json ⭐ ENHANCED - 3 Parallel AI Routes
 │   ├── Firecrawl_Website_Enrichment_WORKING.n8n.json
 │   ├── Firecrawl_Website_Enrichment_FIXED.n8n.json
 │   ├── Firecrawl_Contact_Hunt_Sub-Workflow.n8n.json
@@ -330,6 +331,91 @@ Update enriched_leads table
 ```
 
 **Why this matters:** This is where all the enrichment data becomes actionable. It scores, ranks, and packages leads for your sales team with ready-to-use outreach snippets and HubSpot-ready payloads.
+
+---
+
+### ⭐ Lead Outreach Compiler v2 — 3 Parallel Routes (ENHANCED)
+**File:** `sub-workflows/Lead_Outreach_Compiler_v2_3Route.n8n.json`
+
+**Enhanced version with specialized AI routes.** Splits extraction into 3 parallel paths, each handled by a focused GPT-4o-mini agent. This reduces AI overload and improves extraction accuracy.
+
+```
+Trigger (company_id, research_run_id)
+        ↓
+┌───────┴───────┬───────────────┐
+│               │               │
+▼               ▼               ▼
+Airtable    company_contexts  workflow_step_logs
+(Original)    (Enriched)      (All Logs)
+│               │               │
+└───────┬───────┴───────────────┘
+        ▼
+Assemble Unified Payload
+        ▼
+Fan Out to 3 Routes
+        ▼
+┌───────────────┬───────────────┬───────────────┐
+│    ROUTE 1    │    ROUTE 2    │    ROUTE 3    │
+│ Owner/Contact │ Company/Biz   │ Sales Intel   │
+│ (GPT-4o-mini) │ (GPT-4o-mini) │ (GPT-4o-mini) │
+└───────┬───────┴───────┬───────┴───────┬───────┘
+        └───────────────┼───────────────┘
+                        ▼
+                Merge AI Results
+                        ▼
+              Build Final Enriched Row
+                        ▼
+              Upsert enriched_leads
+```
+
+**The 3 Specialized Routes:**
+
+| Route | Focus | Extracted Fields |
+|-------|-------|------------------|
+| **Route 1: Owner & Contact** | Person identification | `owner_name`, `owner_firstname`, `owner_lastname`, `owner_title`, `owner_email`, `owner_phone`, `owner_linkedin` |
+| **Route 2: Company & Business** | Entity details | `company_name`, `company_legal_name`, `company_address` (from original Airtable), `company_phone`, `company_domain`, `industry`, `employee_count`, `year_founded` |
+| **Route 3: Sales Intelligence** | Outreach readiness | `business_hours`, `website_status`, `google_rating`, `review_count`, `social_profiles`, `tech_stack`, `dcs_score`, `dcs_tier` |
+
+**Key Improvement — Original Location Enforcement:**
+
+The v2 workflow includes an **Airtable node** that fetches the original scraped location data. This ensures:
+- The original address from map scraping is used as source of truth
+- Enriched addresses (which may be alternate locations) don't override the original
+- Route 2 is explicitly instructed: *"Use ONLY the original_* fields from Airtable for address"*
+
+**Why 3 Routes?**
+
+| Problem (v1) | Solution (v2) |
+|--------------|---------------|
+| Single LLM handles 30+ field extraction | Each LLM extracts 7-10 focused fields |
+| Context overload causes errors | Smaller context = better accuracy |
+| Location confusion from multiple sources | Original Airtable location is preserved |
+| Hard to debug extraction issues | Each route can be tested independently |
+
+**DCS Score Calculation (Route 3):**
+
+| Field | Weight |
+|-------|--------|
+| owner_email | 20% |
+| owner_name | 15% |
+| company_phone | 12% |
+| employee_count | 10% |
+| company_domain | 8% |
+| google_rating | 8% |
+| owner_linkedin | 7% |
+| company_address | 6% |
+| business_hours | 5% |
+| industry | 5% |
+| tech_stack | 4% |
+
+**When to Use v2 vs v1:**
+
+| Scenario | Recommended Version |
+|----------|---------------------|
+| High-volume processing, need reliability | v2 (3-Route) |
+| Simpler setup, fewer API calls | v1 (Single Route) |
+| Location accuracy is critical | v2 (3-Route) |
+| Debugging extraction issues | v2 (3-Route) |
 
 ---
 
@@ -715,9 +801,9 @@ The pipeline calculates a weighted completeness score:
 | Category | Files | Total Size |
 |----------|-------|-----------|
 | Orchestrators | 9 | ~306 KB |
-| Sub-workflows | 10 | ~230 KB |
+| Sub-workflows | 11 | ~260 KB |
 | Supporting | 4 | ~98 KB |
-| **Total** | **23 workflows** | **~634 KB** |
+| **Total** | **24 workflows** | **~664 KB** |
 
 ---
 

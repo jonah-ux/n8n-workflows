@@ -112,8 +112,8 @@
       ],
       "credentials": {
         "postgres": {
-          "id": "POSTGRES_CRED_ID",
-          "name": "Postgres account"
+          "id": "BwXy2JHETe47vH1I",
+          "name": "Postgres account 2"
         }
       }
     },
@@ -135,8 +135,8 @@
       ],
       "credentials": {
         "postgres": {
-          "id": "POSTGRES_CRED_ID",
-          "name": "Postgres account"
+          "id": "BwXy2JHETe47vH1I",
+          "name": "Postgres account 2"
         }
       }
     },
@@ -169,7 +169,11 @@
       "position": [
         160,
         0
-      ]
+      ],
+      "alwaysOutputData": true,
+      "retryOnFail": true,
+      "waitBetweenTries": 3000,
+      "onError": "continueRegularOutput"
     },
     {
       "parameters": {
@@ -191,8 +195,8 @@
       ],
       "credentials": {
         "openAiApi": {
-          "id": "OPENAI_CRED_ID",
-          "name": "OpenAI API"
+          "id": "Lb7LQd5GQa1bZ9yX",
+          "name": "OpenAi account 4"
         }
       }
     },
@@ -840,7 +844,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const base = $('Assemble Context Pack').first().json;\n\nconst started = Number(base._started_ms || Date.now());\nconst duration_ms = Math.max(0, Date.now() - started);\n\nlet agentRaw = $('AI Agent - Companies').first().json;\n\nconst coerceJson = (val) => {\n  if (val === null || val === undefined) return null;\n  if (typeof val === 'object') return val;\n  if (typeof val !== 'string') return { value: val };\n  const s = val.trim().replace(/^```json\\s*/i, '').replace(/```$/,'').trim();\n  try { return JSON.parse(s); } catch { return { raw: val }; }\n};\n\nconst agentOut = coerceJson(agentRaw.output ?? agentRaw.text ?? agentRaw);\n\nconst ok = !(agentOut?.errors && agentOut.errors.length);\n\nconst final = {\n  ok,\n  tool_name: base.tool_name,\n  tool_execution_id: base.tool_execution_id,\n  session_id: base.session_id,\n  conversation_id: base.conversation_id,\n  dry_run: base.dry_run,\n  summary: agentOut?.summary ?? (ok ? 'ok' : 'error'),\n  data: agentOut?.data ?? null,\n  tool_calls: agentOut?.tool_calls ?? [],\n  errors: agentOut?.errors ?? [],\n  notes_to_save: agentOut?.notes_to_save ?? null,\n  context_used: base.context_pack ?? {},\n  duration_ms\n};\n\n// Parameterized SQL for log_end\nfinal.log_end_sql = `\nUPDATE tool_execution_log\nSET\n  output_data = $1::jsonb,\n  success = $2,\n  error = $3,\n  duration_ms = $4\nWHERE id = $5::uuid\nRETURNING *;\n`;\n\nfinal.log_end_params = [\n  JSON.stringify(final),\n  final.ok,\n  (final.errors && final.errors.length) ? JSON.stringify(final.errors) : null,\n  Number.isFinite(final.duration_ms) ? final.duration_ms : null,\n  base.tool_execution_id\n];\n\nreturn [{ json: final }];"
+        "jsCode": "const base = $('Assemble Context Pack').first().json;\n\nconst started = Number(base._started_ms || Date.now());\nconst duration_ms = Math.max(0, Date.now() - started);\n\nlet agentRaw = $('AI Agent - Companies').first().json;\n\nconst coerceJson = (val) => {\n  if (val === null || val === undefined) return null;\n  if (typeof val === 'object') return val;\n  if (typeof val !== 'string') return { value: val };\n  const s = val.trim().replace(/^```json\\s*/i, '').replace(/```$/,'').trim();\n  try { return JSON.parse(s); } catch { return { raw: val }; }\n};\n\nconst agentOut = coerceJson(agentRaw.output ?? agentRaw.text ?? agentRaw);\n\nconst ok = !(agentOut?.errors && agentOut.errors.length);\n\nconst esc = (s) => String(s ?? '').replace(/'/g, \"''\");\n\nconst final = {\n  ok,\n  tool_name: base.tool_name,\n  tool_execution_id: base.tool_execution_id,\n  session_id: base.session_id,\n  conversation_id: base.conversation_id,\n  dry_run: base.dry_run,\n  summary: agentOut?.summary ?? (ok ? 'ok' : 'error'),\n  data: agentOut?.data ?? null,\n  tool_calls: agentOut?.tool_calls ?? [],\n  errors: agentOut?.errors ?? [],\n  notes_to_save: agentOut?.notes_to_save ?? null,\n  context_used: base.context_pack ?? {},\n  duration_ms\n};\n\nconst outJson = esc(JSON.stringify(final));\nconst errText = final.errors?.length ? esc(JSON.stringify(final.errors)) : null;\n\nfinal.log_end_sql = `\nUPDATE tool_execution_log\nSET\n  output_data = '${outJson}'::jsonb,\n  success = ${final.ok ? 'true' : 'false'},\n  error = ${errText ? `'${errText}'` : 'null'},\n  duration_ms = ${Number.isFinite(final.duration_ms) ? final.duration_ms : 'null'}\nWHERE id = '${esc(base.tool_execution_id)}'::uuid;\n`;\n\nconst note_scope = base.note_scope || 'hubspot';\nconst note_key = base.note_key || (base.company_id ? `company.${base.company_id}` : 'company.general');\n\nif (final.notes_to_save && typeof final.notes_to_save === 'string' && final.notes_to_save.trim() !== '') {\n  const noteObj = { text: final.notes_to_save.trim() };\n  const noteJson = esc(JSON.stringify(noteObj));\n  final.save_notes_sql = `\nINSERT INTO agent_notes (scope, note_key, note)\nVALUES ('${esc(note_scope)}', '${esc(note_key)}', '${noteJson}'::jsonb);\n`;\n}\n\nreturn [{ json: final }];"
       },
       "id": "parse-output-1",
       "name": "Parse + Finalize Output",
@@ -869,14 +873,120 @@
       ],
       "credentials": {
         "postgres": {
-          "id": "POSTGRES_CRED_ID",
-          "name": "Postgres account"
+          "id": "BwXy2JHETe47vH1I",
+          "name": "Postgres account 2"
         }
-      }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.chatTrigger",
+      "typeVersion": 1.4,
+      "position": [
+        -800,
+        -200
+      ],
+      "id": "chat-trigger-1",
+      "name": "When chat message received",
+      "webhookId": "companies-chat-test"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\n\nconst chatText =\n  input.chatInput ||\n  input.message?.text ||\n  input.text ||\n  input.body?.message ||\n  input.body?.text ||\n  '';\n\nreturn [{\n  json: {\n    user_message: String(chatText || ''),\n    dry_run: true,\n    tool_name: 'hubspot.companies',\n    session_id: input.sessionId || input.session_id || 'chat_test',\n    conversation_id: input.conversationId || input.conversation_id || 'chat_test',\n    chat_id: input.chatId || input.chat_id || null,\n    user_id: input.userId || input.user_id || null,\n    request_id: input.request_id || null,\n    caller_workflow_id: input.caller_workflow_id || null,\n    caller_execution_id: input.caller_execution_id || null,\n    company_id: input.company_id || null,\n    contact_id: input.contact_id || null,\n    deal_id: input.deal_id || null,\n    hs_portal_id: input.hs_portal_id || null,\n    object_type: 'companies',\n    object_id: null\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -560,
+        -200
+      ],
+      "id": "chat-normalize-1",
+      "name": "Normalize Chat Input"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "has_notes",
+              "leftValue": "={{ $json.save_notes_sql }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        640,
+        -120
+      ],
+      "id": "has-notes-1",
+      "name": "Has Notes to Save?",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{$json.save_notes_sql}}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        880,
+        -160
+      ],
+      "id": "save-notes-1",
+      "name": "Save Agent Notes",
+      "credentials": {
+        "postgres": {
+          "id": "BwXy2JHETe47vH1I",
+          "name": "Postgres account 2"
+        }
+      },
+      "onError": "continueRegularOutput"
     }
   ],
   "connections": {
     "When Executed by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "Normalize + Build SQL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "When chat message received": {
+      "main": [
+        [
+          {
+            "node": "Normalize Chat Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Chat Input": {
       "main": [
         [
           {
@@ -952,6 +1062,22 @@
         [
           {
             "node": "Log End (tool_execution_log)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Has Notes to Save?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Notes to Save?": {
+      "main": [
+        [
+          {
+            "node": "Save Agent Notes",
             "type": "main",
             "index": 0
           }

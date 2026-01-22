@@ -1,0 +1,731 @@
+{
+  "name": "Lead Enrichment Orchestrator v8 (Parallel Fixed)",
+  "nodes": [
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [432, 928],
+      "id": "73a1d09e-28a2-4ae2-ac41-05b1547da050",
+      "name": "When Executed by Another Workflow"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [432, 1104],
+      "id": "46591f13-7d1e-446f-b8d1-68e35e8a7b58",
+      "name": "When clicking 'Execute workflow'"
+    },
+    {
+      "parameters": {
+        "jsCode": "const inputData = $input.first().json;\nreturn [{\n  json: {\n    ...inputData,\n    research_run_id: $execution.id.toString(),\n    company_id: inputData.airtable_id || 'unknown_id',\n    workflow_version: 'lead_enrichment_orchestrator_v8_parallel_full'\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1088, 992],
+      "id": "86c1ea2b-6c01-4a6d-a533-a3d204b3ebd7",
+      "name": "🧾 Init Run Context"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "DVDTaG8QlJkivPVgFDx8Z",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "airtable_id": "={{ $json.airtable_id }}",
+            "company_id": "={{ $json.company_id }}",
+            "company_name": "={{ $json.company_name }}",
+            "location": "={{ $json.location }}",
+            "city": "={{ $json.city }}",
+            "state": "={{ $json.state }}",
+            "domain": "={{ $json.search_domain }}",
+            "search_domain": "={{ $json.search_domain }}",
+            "phone": "={{ $json.phone }}",
+            "timestamp": "={{ $json.timestamp }}",
+            "enrichment_id": "={{ $json.enrichment_id }}",
+            "research_run_id": "={{ $json.research_run_id }}"
+          },
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [1792, 1552],
+      "id": "aa81e52f-d19e-439f-94e9-dc930e317e0d",
+      "name": "🔥 T1: Firecrawl Website",
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "Hl9aGZsO2GRt4eWGIkvxs",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "airtable_id": "={{ $json.airtable_id }}",
+            "company_id": "={{ $json.company_id }}",
+            "company_name": "={{ $json.company_name }}",
+            "location": "={{ $json.location }}",
+            "city": "={{ $json.city }}",
+            "state": "={{ $json.state }}",
+            "domain": "={{ $json.search_domain }}",
+            "search_domain": "={{ $json.search_domain }}",
+            "phone": "={{ $json.phone }}",
+            "timestamp": "={{ $json.timestamp }}",
+            "enrichment_id": "={{ $json.enrichment_id }}",
+            "research_run_id": "={{ $json.research_run_id }}"
+          },
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [1792, 752],
+      "id": "a6d2257e-3a7b-451b-b7ff-7820f1d9b652",
+      "name": "📊 T1: Apollo Firmographics",
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "cBgvPOUFnifjaXHPyLPrS",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "airtable_id": "={{ $json.airtable_id }}",
+            "company_id": "={{ $json.company_id }}",
+            "company_name": "={{ $json.company_name }}",
+            "location": "={{ $json.location }}",
+            "city": "={{ $json.city }}",
+            "state": "={{ $json.state }}",
+            "domain": "={{ $json.search_domain }}",
+            "search_domain": "={{ $json.search_domain }}",
+            "phone": "={{ $json.phone }}",
+            "timestamp": "={{ $json.timestamp }}",
+            "enrichment_id": "={{ $json.enrichment_id }}",
+            "research_run_id": "={{ $json.research_run_id }}"
+          },
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [1792, 944],
+      "id": "135d444e-16da-4e03-9963-e608bf103530",
+      "name": "🔍 T1: SerpAPI Enrichment",
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "I039785tdTuohF_CqRlIB",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "company_id": "={{ $json.company_id }}",
+            "company_name": "={{ $json.company_name }}",
+            "enrichment_id": "={{ $json.enrichment_id }}",
+            "research_run_id": "={{ $json.research_run_id }}"
+          },
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [1792, 1152],
+      "id": "ab95b331-840a-43d4-acca-c0779d424ad1",
+      "name": "⭐ T1: Apify Reviews",
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "vBfJOQ4l3zcPnw97SJU1G",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "company_id": "={{ $json.company_id }}",
+            "company_name": "={{ $json.company_name }}",
+            "location": "={{ $json.location }}",
+            "enrichment_id": "={{ $json.enrichment_id }}",
+            "research_run_id": "={{ $json.research_run_id }}"
+          },
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [1792, 1344],
+      "id": "2ac77668-bf42-489c-b4f8-250cb47edf2e",
+      "name": "👤 T1: LinkedIn Owner Discovery",
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "8KCihPqoU_xH5QkiP8UAr",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "company_id": "={{ $json.company_id }}",
+            "company_name": "={{ $json.company_name }}",
+            "location": "={{ $json.location }}",
+            "city": "={{ $json.city }}",
+            "state": "={{ $json.state }}",
+            "enrichment_id": "={{ $json.enrichment_id }}",
+            "research_run_id": "={{ $json.research_run_id }}"
+          },
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [1792, 592],
+      "id": "7e195388-2089-462f-8950-11b0b94e1487",
+      "name": "💼 T1: Job Board Hunter",
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "numberInputs": 6,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [2080, 960],
+      "id": "03c78bf0-481e-46d8-ae52-54ab8e9a16a2",
+      "name": "🤝 Merge Tier 1 (6 tools)"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ⚙️ Prep Tier 2 Context\n// Aggregates all Tier 1 results for dependent stages\n\nconst items = $input.all();\nconst init = $('🧾 Init Run Context').first().json;\n\nlet tier1 = {\n  firecrawl: null,\n  apollo: null,\n  serpapi: null,\n  reviews: null,\n  linkedin: null,\n  jobboard: null\n};\n\nfor (const item of items) {\n  const j = item.json;\n  // Identify by stage field or unique data\n  if (j.stage === 'firecrawl' || j.website_summary || j.form_url) tier1.firecrawl = j;\n  else if (j.stage === 'apollo' || j.firmographics || j.employee_count) tier1.apollo = j;\n  else if (j.stage === 'serpapi' || j.serp_results) tier1.serpapi = j;\n  else if (j.stage === 'reviews' || j.review_summary || j.avg_rating) tier1.reviews = j;\n  else if (j.stage === 'linkedin' || j.linkedin_profile || j.owner_linkedin) tier1.linkedin = j;\n  else if (j.stage === 'jobboard' || j.hiring_intent || j.job_postings) tier1.jobboard = j;\n}\n\n// Extract best owner name from multiple sources\nconst owner_name = \n  tier1.firecrawl?.identity?.owner_name ||\n  tier1.linkedin?.owner_name ||\n  tier1.reviews?.owner_name ||\n  tier1.apollo?.ceo_name ||\n  null;\n\nconst form_url = tier1.firecrawl?.form_url || null;\nconst emails_found = tier1.firecrawl?.emails || [];\nconst employee_count = tier1.apollo?.employee_count || null;\nconst avg_rating = tier1.reviews?.avg_rating || null;\nconst is_hiring = tier1.jobboard?.is_hiring || false;\n\nreturn [{\n  json: {\n    ...init,\n    tier1_completed: true,\n    tier1_count: Object.values(tier1).filter(Boolean).length,\n    owner_name,\n    form_url,\n    emails_found,\n    employee_count,\n    avg_rating,\n    is_hiring,\n    tier1_results: tier1\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2304, 1024],
+      "id": "9c1f0a3c-2a65-4e06-9b75-66fa232ebbdd",
+      "name": "⚙️ Prep Tier 2 Context"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "HfMeQf6oCHhL9Q0p2H9ye",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "company_id": "={{ $json.company_id }}",
+            "company_name": "={{ $json.company_name }}",
+            "domain": "={{ $json.search_domain }}",
+            "search_domain": "={{ $json.search_domain }}",
+            "research_run_id": "={{ $json.research_run_id }}",
+            "enrichment_id": "={{ $json.enrichment_id }}",
+            "location": "={{ $json.location }}"
+          },
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [2560, 768],
+      "id": "26f1bdd8-a3f5-4e58-8f81-d0ee1e7599a0",
+      "name": "📧 T2: Firecrawl Contact Hunt",
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "tXwn7885AIqxLaccUdvu6",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "airtable_id": "={{ $json.airtable_id }}",
+            "company_id": "={{ $json.company_id }}",
+            "company_name": "={{ $json.company_name }}",
+            "location": "={{ $json.location }}",
+            "city": "={{ $json.city }}",
+            "state": "={{ $json.state }}",
+            "domain": "={{ $json.search_domain }}",
+            "search_domain": "={{ $json.search_domain }}",
+            "phone": "={{ $json.phone }}",
+            "timestamp": "={{ $json.timestamp }}",
+            "enrichment_id": "={{ $json.enrichment_id }}",
+            "research_run_id": "={{ $json.research_run_id }}",
+            "meta": "={{ JSON.stringify({ owner_name: $json.owner_name }) }}"
+          },
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [2560, 944],
+      "id": "36d5bbf9-836b-4ba2-bad3-eaebd4dfe004",
+      "name": "📧 T2: Hunter.io Agent",
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "IBw7IpH80m0TMa45KCJF5",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "airtable_id": "={{ $json.airtable_id }}",
+            "company_id": "={{ $json.company_id }}",
+            "company_name": "={{ $json.company_name }}",
+            "location": "={{ $json.location }}",
+            "city": "={{ $json.city }}",
+            "state": "={{ $json.state }}",
+            "domain": "={{ $json.search_domain }}",
+            "search_domain": "={{ $json.search_domain }}",
+            "phone": "={{ $json.phone }}",
+            "timestamp": "={{ $json.timestamp }}",
+            "enrichment_id": "={{ $json.enrichment_id }}",
+            "research_run_id": "={{ $json.research_run_id }}",
+            "meta": "={{ JSON.stringify({ owner_name: $json.owner_name, employee_count: $json.employee_count }) }}"
+          },
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [2560, 1120],
+      "id": "f3a4d07d-b6e7-4cdc-b2f1-55100421fdad",
+      "name": "🎯 T2: Headhunter Agent",
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "Ww4urX7vW-Vah_mU6bKLb",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "airtable_id": "={{ $json.airtable_id }}",
+            "company_id": "={{ $json.company_id }}",
+            "company_name": "={{ $json.company_name }}",
+            "location": "={{ $json.location }}",
+            "city": "={{ $json.city }}",
+            "state": "={{ $json.state }}",
+            "domain": "={{ $json.search_domain }}",
+            "search_domain": "={{ $json.search_domain }}",
+            "phone": "={{ $json.phone }}",
+            "timestamp": "={{ $json.timestamp }}",
+            "enrichment_id": "={{ $json.enrichment_id }}",
+            "research_run_id": "={{ $json.research_run_id }}",
+            "meta": "={{ JSON.stringify({ avg_rating: $json.avg_rating, tier1_count: $json.tier1_count }) }}"
+          },
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [2560, 1328],
+      "id": "1ddbe097-a9af-4d0e-b0fb-7f069dff3ccf",
+      "name": "⚠️ T2: Risk Officer Agent",
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "numberInputs": 4,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [2816, 992],
+      "id": "3cde21ea-0025-41ba-9e29-31566c268302",
+      "name": "🤝 Merge Tier 2 (4 tools)",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// ⚙️ Prep Tier 3 Context\nconst items = $input.all();\nconst tier2Prep = $('⚙️ Prep Tier 2 Context').first().json;\n\nlet tier2 = {\n  contact_hunt: null,\n  hunter: null,\n  headhunter: null,\n  risk: null\n};\n\nfor (const item of items) {\n  const j = item.json;\n  if (j.stage === 'contact_hunt' || j.contacts) tier2.contact_hunt = j;\n  else if (j.stage === 'hunter_io' || j.email) tier2.hunter = j;\n  else if (j.stage === 'headhunter' || j.decision_makers) tier2.headhunter = j;\n  else if (j.stage === 'risk' || j.risk_score) tier2.risk = j;\n}\n\n// Best email from multiple sources\nconst best_email = \n  tier2.hunter?.email ||\n  tier2.contact_hunt?.emails?.[0] ||\n  tier2Prep.emails_found?.[0] ||\n  null;\n\nreturn [{\n  json: {\n    ...tier2Prep,\n    tier2_completed: true,\n    tier2_count: Object.values(tier2).filter(Boolean).length,\n    best_email,\n    email_confidence: tier2.hunter?.score || 0,\n    decision_makers: tier2.headhunter?.decision_makers || [],\n    risk_score: tier2.risk?.risk_score || null,\n    tier2_results: tier2\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3024, 1024],
+      "id": "802a05e9-17c1-4ed2-b4fa-05f1f3a47eeb",
+      "name": "⚙️ Prep Tier 3 Context"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "LIhNhNsPemc-merLoqThs",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "airtable_id": "={{ $json.airtable_id }}",
+            "company_id": "={{ $json.company_id }}",
+            "company_name": "={{ $json.company_name }}",
+            "location": "={{ $json.location }}",
+            "city": "={{ $json.city }}",
+            "state": "={{ $json.state }}",
+            "domain": "={{ $json.search_domain }}",
+            "search_domain": "={{ $json.search_domain }}",
+            "phone": "={{ $json.phone }}",
+            "timestamp": "={{ $json.timestamp }}",
+            "research_run_id": "={{ $json.research_run_id }}",
+            "meta": "={{ JSON.stringify({ tier1_count: $json.tier1_count, tier2_count: $json.tier2_count, best_email: $json.best_email, owner_name: $json.owner_name }) }}"
+          },
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [3280, 1024],
+      "id": "f1c3d8e5-9a27-4b6c-8d0e-12a4b5c6d7e8",
+      "name": "🧠 T3: Intel Analyst Agent",
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ⚙️ Build Enriched Lead Record\n// Creates the initial enriched_leads row BEFORE calling Outreach Compiler\n\nconst tier3 = $json;\nconst init = $('🧾 Init Run Context').first().json;\nconst tier2Prep = $('⚙️ Prep Tier 2 Context').first().json;\n\n// Extract contact info from various sources\nconst ownerName = tier2Prep.owner_name || '';\nconst nameParts = ownerName.split(' ');\nconst firstName = nameParts[0] || '';\nconst lastName = nameParts.slice(1).join(' ') || '';\n\n// Build the enriched lead object\nreturn [{\n  json: {\n    // IDs\n    research_run_id: init.research_run_id,\n    company_id: init.company_id,\n    airtable_id: init.airtable_id,\n    \n    // Contact\n    contact_firstname: firstName,\n    contact_lastname: lastName,\n    contact_title: tier2Prep.tier1_results?.linkedin?.title || 'Owner',\n    contact_email: tier2Prep.best_email || null,\n    contact_phone: init.phone || null,\n    contact_linkedin: tier2Prep.tier1_results?.linkedin?.linkedin_url || null,\n    contact_source: tier2Prep.best_email ? 'hunter' : (tier2Prep.tier1_results?.linkedin ? 'linkedin' : 'unknown'),\n    contact_confidence: tier2Prep.email_confidence || 0,\n    \n    // Company\n    company_name: init.company_name,\n    company_domain: init.search_domain,\n    company_phone: init.phone,\n    company_address: init.location,\n    company_city: init.city,\n    company_state: init.state,\n    company_rating: tier2Prep.avg_rating,\n    company_review_count: tier2Prep.tier1_results?.reviews?.total_reviews || null,\n    company_employee_count: tier2Prep.employee_count,\n    \n    // Social\n    google_place_id: tier2Prep.tier1_results?.reviews?.place_id || null,\n    google_rating: tier2Prep.avg_rating,\n    google_review_count: tier2Prep.tier1_results?.reviews?.total_reviews || null,\n    \n    // Intel\n    intel_summary: tier3.intel_summary || tier3.summary || null,\n    \n    // Status\n    outreach_ready: false,\n    outreach_status: 'pending'\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3504, 1024],
+      "id": "build-enriched-lead",
+      "name": "⚙️ Build Enriched Lead"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO public.enriched_leads (\n  research_run_id, company_id, airtable_id,\n  contact_firstname, contact_lastname, contact_title, contact_email, contact_phone, contact_linkedin, contact_source, contact_confidence,\n  company_name, company_domain, company_phone, company_address, company_city, company_state, company_rating, company_review_count, company_employee_count,\n  google_place_id, google_rating, google_review_count,\n  intel_summary, outreach_ready, outreach_status\n) VALUES (\n  $1, $2, $3,\n  $4, $5, $6, $7, $8, $9, $10, $11,\n  $12, $13, $14, $15, $16, $17, $18, $19, $20,\n  $21, $22, $23,\n  $24, $25, $26\n) ON CONFLICT (research_run_id) DO UPDATE SET\n  contact_firstname = EXCLUDED.contact_firstname,\n  contact_lastname = EXCLUDED.contact_lastname,\n  contact_email = EXCLUDED.contact_email,\n  intel_summary = EXCLUDED.intel_summary,\n  updated_at = NOW()\nRETURNING *;",
+        "options": {
+          "queryReplacement": "={{ [$json.research_run_id, $json.company_id, $json.airtable_id, $json.contact_firstname, $json.contact_lastname, $json.contact_title, $json.contact_email, $json.contact_phone, $json.contact_linkedin, $json.contact_source, $json.contact_confidence, $json.company_name, $json.company_domain, $json.company_phone, $json.company_address, $json.company_city, $json.company_state, $json.company_rating, $json.company_review_count, $json.company_employee_count, $json.google_place_id, $json.google_rating, $json.google_review_count, $json.intel_summary, $json.outreach_ready, $json.outreach_status] }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [3728, 1024],
+      "id": "db-insert-enriched",
+      "name": "🗄️ Insert enriched_leads",
+      "credentials": {
+        "postgres": {
+          "id": "xogKD739Qe4gqWBU",
+          "name": "Postgres account"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "OUTREACH_COMPILER_ID_HERE",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "research_run_id": "={{ $('🧾 Init Run Context').first().json.research_run_id }}",
+            "company_id": "={{ $('🧾 Init Run Context').first().json.company_id }}",
+            "airtable_id": "={{ $('🧾 Init Run Context').first().json.airtable_id }}"
+          },
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [3952, 1024],
+      "id": "call-outreach-compiler",
+      "name": "🎯 Outreach Compiler",
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE public.research_runs SET status = 'completed', context_updated_at = NOW() WHERE id = $1;",
+        "options": {
+          "queryReplacement": "={{ [$('🧾 Init Run Context').first().json.research_run_id] }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [4176, 1024],
+      "id": "db-complete-run",
+      "name": "🗄️ Mark Run Complete",
+      "credentials": {
+        "postgres": {
+          "id": "xogKD739Qe4gqWBU",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "search",
+        "base": {
+          "__rl": true,
+          "value": "appUmr7c5VACTjiJj",
+          "mode": "list",
+          "cachedResultName": "ASM Lead Intelligence Hub (Copy)"
+        },
+        "table": {
+          "__rl": true,
+          "value": "tblLxOBg1zHfLYyUJ",
+          "mode": "list",
+          "cachedResultName": "Companies (Canonical)"
+        },
+        "filterByFormula": "AND({research_status}=BLANK())",
+        "returnAll": false,
+        "limit": 1,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2.1,
+      "position": [688, 992],
+      "id": "709b5969-2457-4c6a-b27d-e42209525aef",
+      "name": "🔍 Search Airtable",
+      "credentials": {
+        "airtableTokenApi": {
+          "id": "mP0iHEaWU9UB0y9B",
+          "name": "Jonah's n8n Personal Access Token Confirmed"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first();\nconst j = item.json;\nconst f = (j.fields && typeof j.fields === 'object') ? j.fields : j;\n\nconst safe = (v) => (v === null || v === undefined) ? '' : String(v);\nconst normalizeDomain = (urlOrDomain) => safe(urlOrDomain).replace(/^https?:\\/\\//i, '').replace(/^www\\./i, '').split('/')[0].trim();\n\nconst hq = safe(f['HQ Address'] || f['Address'] || f['Location'] || '');\nconst parts = hq.split(',').map(s => s.trim());\nconst city = parts[1] || '';\nconst state = (parts[2] || '').split(' ')[0] || '';\n\nconst companyName = safe(f['Company Name'] || f['company_name'] || f['name'] || '');\nconst website = safe(f['Website'] || f['website'] || f['domain'] || '');\nconst phone = safe(f['Phone'] || f['phone'] || '');\n\nreturn [{\n  json: {\n    airtable_id: safe(j.id || f.id || ''),\n    company_name: companyName,\n    location: hq,\n    city,\n    state,\n    domain: website,\n    search_domain: normalizeDomain(website),\n    phone,\n    timestamp: new Date().toISOString(),\n    enrichment_id: `${new Date().toISOString().replace(/[:.]/g,'')}-${companyName.replace(/[^a-zA-Z0-9]/g,'') || 'unknown'}`\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [880, 992],
+      "id": "9413d091-3a71-41d7-90be-9016b6c7cb0b",
+      "name": "🧱 Normalize Input"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO public.research_runs (id, company_id, status) VALUES ($1, $2, 'processing') ON CONFLICT (id) DO NOTHING;",
+        "options": {
+          "queryReplacement": "={{ [$json.research_run_id, $json.company_id] }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [1264, 1136],
+      "id": "98e55281-2498-44ec-a404-43e13f75d767",
+      "name": "🗄️ DB — Register Run",
+      "credentials": {
+        "postgres": {
+          "id": "xogKD739Qe4gqWBU",
+          "name": "Postgres account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "mode": "chooseBranch"
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [1488, 1008],
+      "id": "4eb5e498-59a3-4c8b-9f82-751c1b8842b5",
+      "name": "🤝 Merge — Run Registered"
+    }
+  ],
+  "connections": {
+    "When Executed by Another Workflow": {
+      "main": [[{ "node": "🔍 Search Airtable", "type": "main", "index": 0 }]]
+    },
+    "When clicking 'Execute workflow'": {
+      "main": [[{ "node": "🔍 Search Airtable", "type": "main", "index": 0 }]]
+    },
+    "🔍 Search Airtable": {
+      "main": [[{ "node": "🧱 Normalize Input", "type": "main", "index": 0 }]]
+    },
+    "🧱 Normalize Input": {
+      "main": [[{ "node": "🧾 Init Run Context", "type": "main", "index": 0 }]]
+    },
+    "🧾 Init Run Context": {
+      "main": [
+        [
+          { "node": "🗄️ DB — Register Run", "type": "main", "index": 0 },
+          { "node": "🤝 Merge — Run Registered", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "🗄️ DB — Register Run": {
+      "main": [[{ "node": "🤝 Merge — Run Registered", "type": "main", "index": 1 }]]
+    },
+    "🤝 Merge — Run Registered": {
+      "main": [
+        [
+          { "node": "💼 T1: Job Board Hunter", "type": "main", "index": 0 },
+          { "node": "📊 T1: Apollo Firmographics", "type": "main", "index": 0 },
+          { "node": "🔍 T1: SerpAPI Enrichment", "type": "main", "index": 0 },
+          { "node": "⭐ T1: Apify Reviews", "type": "main", "index": 0 },
+          { "node": "👤 T1: LinkedIn Owner Discovery", "type": "main", "index": 0 },
+          { "node": "🔥 T1: Firecrawl Website", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "💼 T1: Job Board Hunter": {
+      "main": [[{ "node": "🤝 Merge Tier 1 (6 tools)", "type": "main", "index": 0 }]]
+    },
+    "📊 T1: Apollo Firmographics": {
+      "main": [[{ "node": "🤝 Merge Tier 1 (6 tools)", "type": "main", "index": 1 }]]
+    },
+    "🔍 T1: SerpAPI Enrichment": {
+      "main": [[{ "node": "🤝 Merge Tier 1 (6 tools)", "type": "main", "index": 2 }]]
+    },
+    "⭐ T1: Apify Reviews": {
+      "main": [[{ "node": "🤝 Merge Tier 1 (6 tools)", "type": "main", "index": 3 }]]
+    },
+    "👤 T1: LinkedIn Owner Discovery": {
+      "main": [[{ "node": "🤝 Merge Tier 1 (6 tools)", "type": "main", "index": 4 }]]
+    },
+    "🔥 T1: Firecrawl Website": {
+      "main": [[{ "node": "🤝 Merge Tier 1 (6 tools)", "type": "main", "index": 5 }]]
+    },
+    "🤝 Merge Tier 1 (6 tools)": {
+      "main": [[{ "node": "⚙️ Prep Tier 2 Context", "type": "main", "index": 0 }]]
+    },
+    "⚙️ Prep Tier 2 Context": {
+      "main": [
+        [
+          { "node": "📧 T2: Firecrawl Contact Hunt", "type": "main", "index": 0 },
+          { "node": "📧 T2: Hunter.io Agent", "type": "main", "index": 0 },
+          { "node": "🎯 T2: Headhunter Agent", "type": "main", "index": 0 },
+          { "node": "⚠️ T2: Risk Officer Agent", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "📧 T2: Firecrawl Contact Hunt": {
+      "main": [[{ "node": "🤝 Merge Tier 2 (4 tools)", "type": "main", "index": 0 }]]
+    },
+    "📧 T2: Hunter.io Agent": {
+      "main": [[{ "node": "🤝 Merge Tier 2 (4 tools)", "type": "main", "index": 1 }]]
+    },
+    "🎯 T2: Headhunter Agent": {
+      "main": [[{ "node": "🤝 Merge Tier 2 (4 tools)", "type": "main", "index": 2 }]]
+    },
+    "⚠️ T2: Risk Officer Agent": {
+      "main": [[{ "node": "🤝 Merge Tier 2 (4 tools)", "type": "main", "index": 3 }]]
+    },
+    "🤝 Merge Tier 2 (4 tools)": {
+      "main": [[{ "node": "⚙️ Prep Tier 3 Context", "type": "main", "index": 0 }]]
+    },
+    "⚙️ Prep Tier 3 Context": {
+      "main": [[{ "node": "🧠 T3: Intel Analyst Agent", "type": "main", "index": 0 }]]
+    },
+    "🧠 T3: Intel Analyst Agent": {
+      "main": [[{ "node": "⚙️ Build Enriched Lead", "type": "main", "index": 0 }]]
+    },
+    "⚙️ Build Enriched Lead": {
+      "main": [[{ "node": "🗄️ Insert enriched_leads", "type": "main", "index": 0 }]]
+    },
+    "🗄️ Insert enriched_leads": {
+      "main": [[{ "node": "🎯 Outreach Compiler", "type": "main", "index": 0 }]]
+    },
+    "🎯 Outreach Compiler": {
+      "main": [[{ "node": "🗄️ Mark Run Complete", "type": "main", "index": 0 }]]
+    }
+  },
+  "pinData": {},
+  "meta": {
+    "instanceId": "2d82e0d27c2a88970c7ba9693b6bad225f1d31f9cf0d392d33dd9cabf99f185f"
+  }
+}

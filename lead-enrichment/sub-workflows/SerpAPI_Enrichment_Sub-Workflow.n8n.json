@@ -1,0 +1,497 @@
+{
+  "name": "SerpAPI Enrichment Sub-Workflow",
+  "nodes": [
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            { "name": "airtable_id" },
+            { "name": "company_id" },
+            { "name": "company_name" },
+            { "name": "location" },
+            { "name": "city" },
+            { "name": "state" },
+            { "name": "domain" },
+            { "name": "search_domain" },
+            { "name": "phone" },
+            { "name": "timestamp" },
+            { "name": "enrichment_id" },
+            { "name": "research_run_id" },
+            { "name": "meta" }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [-736, 16],
+      "id": "941aec47-b866-4cb2-a3dc-9188ba7e240c",
+      "name": "When Executed by Another Workflow"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT COALESCE(context_jsonb, '{}'::jsonb) AS context_jsonb\nFROM company_contexts\nWHERE company_id = $1",
+        "options": {
+          "queryReplacement": "={{ [$json.company_id] }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [-560, 128],
+      "id": "168fb0f0-34ac-44dc-97d4-6edfff01c400",
+      "name": "📥 DB — Read Context (Master)",
+      "credentials": {
+        "postgres": {
+          "id": "xogKD739Qe4gqWBU",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [-368, 32],
+      "id": "068bd53d-aaa9-46ff-a775-c5d860c93d41",
+      "name": "Merge2"
+    },
+    {
+      "parameters": {
+        "jsCode": "const merged = $json;\nlet ctx = merged.context_jsonb ?? {};\nif (typeof ctx === 'string') { try { ctx = JSON.parse(ctx); } catch (e) { ctx = {}; } }\n\nconst serp = ctx?.serpapi ?? {};\nconst derived = ctx?.derived ?? {};\nconst has = (v) => { if (v == null) return false; if (Array.isArray(v)) return v.length > 0; if (typeof v === 'object') return Object.keys(v).length > 0; if (typeof v === 'string') return v.trim().length > 0; return true; };\n\nreturn [{\n  json: {\n    ...merged,\n    context_jsonb: ctx,\n    flags: {\n      has_reviews: has(serp.maps_reviews) || has(ctx.reviews),\n      has_news: has(serp.news) || has(ctx.news),\n      has_jobs: has(serp.jobs) || has(ctx.jobs),\n      has_website: has(derived.website) || has(ctx.website) || has(merged.domain),\n      has_maps_business: has(serp.maps_business) || has(ctx.place_id)\n    }\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-176, 32],
+      "id": "c1b1b104-19b4-40b1-b7dc-71f3ba9b0599",
+      "name": "Context Relevance Gate"
+    },
+    {
+      "parameters": {
+        "jsCode": "const base = $json;\nconst actions = [];\n\n// Fan-out Logic\nactions.push('maps_business'); // Always run identity check\nif (!base.flags?.has_website) actions.push('search_website');\nif (!base.flags?.has_reviews) actions.push('maps_reviews');\nif (!base.flags?.has_news) actions.push('news');\nif (!base.flags?.has_jobs) actions.push('jobs');\n\nreturn actions.map(action => ({ json: { ...base, action } }));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [48, 32],
+      "id": "f069facd-ae75-4cc5-b6fd-06648b4aa120",
+      "name": "Action Planner (Code)"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 3 },
+                "conditions": [{ "leftValue": "={{ $json.action }}", "rightValue": "maps_business", "operator": { "type": "string", "operation": "equals" } }],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Maps Business"
+            },
+            {
+              "conditions": {
+                "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 3 },
+                "conditions": [{ "leftValue": "={{ $json.action }}", "rightValue": "maps_reviews", "operator": { "type": "string", "operation": "equals" } }],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Maps Reviews"
+            },
+            {
+              "conditions": {
+                "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 3 },
+                "conditions": [{ "leftValue": "={{ $json.action }}", "rightValue": "search_website", "operator": { "type": "string", "operation": "equals" } }],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Search Website"
+            },
+            {
+              "conditions": {
+                "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 3 },
+                "conditions": [{ "leftValue": "={{ $json.action }}", "rightValue": "news", "operator": { "type": "string", "operation": "equals" } }],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Google News"
+            },
+            {
+              "conditions": {
+                "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 3 },
+                "conditions": [{ "leftValue": "={{ $json.action }}", "rightValue": "jobs", "operator": { "type": "string", "operation": "equals" } }],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Google Jobs"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [288, -16],
+      "id": "13b1f1f2-5a57-4dd5-966a-42a1a9f8d2d1",
+      "name": "Route SerpAPI Action"
+    },
+    {
+      "parameters": {
+        "url": "https://serpapi.com/search",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpQueryAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            { "name": "engine", "value": "google_maps" },
+            { "name": "q", "value": "={{ $json.company_name }}" },
+            { "name": "num", "value": "1" },
+            { "name": "type", "value": "search" }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [656, -288],
+      "id": "bd208c4d-4746-48be-b7ab-a1f576c630bb",
+      "name": "SerpAPI - Maps Business",
+      "credentials": {
+        "httpQueryAuth": {
+          "id": "etz3Bz1U05JSXpRB",
+          "name": "Query Auth SerpAPI API Key"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "https://serpapi.com/search.json",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpQueryAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            { "name": "engine", "value": "google_maps" },
+            { "name": "type", "value": "search" },
+            { "name": "q", "value": "={{ $json.company_name }} {{ $json.location }}" },
+            { "name": "num", "value": "1" }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [576, -112],
+      "id": "05030989-5176-45b1-b794-3f55864146c7",
+      "name": "HTTP Request",
+      "credentials": {
+        "httpQueryAuth": {
+          "id": "etz3Bz1U05JSXpRB",
+          "name": "Query Auth SerpAPI API Key"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "https://serpapi.com/search.json",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpQueryAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            { "name": "engine", "value": "google_maps_reviews" },
+            { "name": "q", "value": "={{ $('Route SerpAPI Action').item.json.company_name }}" },
+            { "name": "sort_by", "value": "newest" },
+            { "name": "place_id", "value": "={{ $json.place_results.place_id }}" }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [752, -112],
+      "id": "0e1342c3-e647-4880-9214-08e96fdadf70",
+      "name": "SerpAPI - Maps Reviews",
+      "credentials": {
+        "httpQueryAuth": {
+          "id": "etz3Bz1U05JSXpRB",
+          "name": "Query Auth SerpAPI API Key"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "https://serpapi.com/search.json",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpQueryAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            { "name": "engine", "value": "google" },
+            { "name": "q", "value": "={{ $json.company_name + ' ' + $json.location }}" },
+            { "name": "num", "value": "5" }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [656, 32],
+      "id": "1d0f87fc-41df-48c0-b052-62299a2c92cd",
+      "name": "SerpAPI - Website Search",
+      "credentials": {
+        "httpQueryAuth": {
+          "id": "etz3Bz1U05JSXpRB",
+          "name": "Query Auth SerpAPI API Key"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "https://serpapi.com/search.json",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpQueryAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            { "name": "engine", "value": "google" },
+            { "name": "tbm", "value": "nws" },
+            { "name": "q", "value": "={{ $json.company_name + ' lawsuit OR fraud OR bankruptcy' }}" },
+            { "name": "num", "value": "5" }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [656, 208],
+      "id": "ea0b821f-d5ad-47b7-8bed-319bb42e7dcf",
+      "name": "SerpAPI - News",
+      "credentials": {
+        "httpQueryAuth": {
+          "id": "etz3Bz1U05JSXpRB",
+          "name": "Query Auth SerpAPI API Key"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "https://serpapi.com/search.json",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpQueryAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            { "name": "engine", "value": "google_jobs" },
+            { "name": "q", "value": "={{ $json.company_name + ' automotive technician mechanic' }}" },
+            { "name": "num", "value": "10" },
+            { "name": "uule", "value": "={{ $json.location }}" }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [656, 368],
+      "id": "08aa9f6d-687a-4889-958a-e30af0942f23",
+      "name": "SerpAPI - Jobs",
+      "credentials": {
+        "httpQueryAuth": {
+          "id": "etz3Bz1U05JSXpRB",
+          "name": "Query Auth SerpAPI API Key"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "numberInputs": 5,
+        "options": { "includeUnpaired": true }
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [1040, -16],
+      "id": "522a87c6-806d-444d-8509-bbdbb2e69409",
+      "name": "Merge"
+    },
+    {
+      "parameters": {
+        "jsCode": "// 1. ☢️ THE NUCLEAR OPTION: Get Global Context\n// Pull IDs from the start to ensure they survive the fan-out\nconst global = $('When Executed by Another Workflow').first().json;\n\n// 2. Get current data\nconst raw = $json;\n\n// 3. Infer Action\nlet action = null;\ntry {\n  action = $item(0).pairedItem?.item?.json?.action;\n  if (!action && $item(0).pairedItem?.item?.pairedItem) {\n    action = $item(0).pairedItem.item.pairedItem.item.json.action;\n  }\n} catch (e) {}\n\nif (!action) {\n  if (raw.news_results) action = 'news';\n  else if (raw.jobs_results) action = 'jobs';\n  else if (raw.reviews || raw.place_results?.reviews) action = 'maps_reviews';\n  else if (raw.place_id || raw.address) action = 'maps_business';\n  else if (raw.organic_results) action = 'search_website';\n  else action = 'unknown';\n}\n\nreturn [{\n  json: {\n    success: true,\n    action: action,\n    base: global, // IDs are here\n    raw: raw\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1264, 32],
+      "id": "fa06dc74-ae01-426c-b990-fe7d0811d944",
+      "name": "Normalize SerpAPI Result"
+    },
+    {
+      "parameters": {
+        "jsCode": "// 🏁 Prep Log: SerpAPI Enrichment\nconst item = $input.item.json;\nconst base = item.base || {};\nconst raw = item.raw || {};\nconst action = item.action || 'unknown';\n\nconst success = !!(raw.organic_results || raw.place_id || raw.news_results || raw.jobs_results || raw.reviews);\n\nreturn [{\n  json: {\n    research_run_id: base.research_run_id,\n    company_id: base.company_id,\n    enrichment_id: base.enrichment_id,\n    node_name: `SerpAPI - ${action}`,\n    node_id: `serpapi_${action}`,\n    node_type: 'tool_log',\n    stage: 'Stage 4b',\n    status: success ? 'completed' : 'failed',\n    output_data: raw,\n    metadata: { action, api_calls: 1, estimated_cost_usd: 0.01 }\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1456, 32],
+      "id": "93074faf-f8b5-495a-9347-4f7965f8af7d",
+      "name": "Build Log - SerpAPI Enrichment"
+    },
+    {
+      "parameters": {
+        "schema": { "__rl": true, "mode": "list", "value": "public" },
+        "table": { "__rl": true, "value": "workflow_step_logs", "mode": "list", "cachedResultName": "workflow_step_logs" },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "research_run_id": "={{ $json.research_run_id }}",
+            "company_id": "={{ $json.company_id }}",
+            "node_name": "={{ $json.node_name }}",
+            "node_id": "={{ $json.node_id }}",
+            "status": "={{ $json.status }}",
+            "stage": "={{ $json.stage }}",
+            "output_data": "={{ $json.output_data }}",
+            "metadata": "={{ $json.metadata }}",
+            "node_type": "tool_log",
+            "duration_ms": 0,
+            "api_call_count": "={{ $json.metadata.api_calls }}",
+            "estimated_cost_usd": "={{ $json.metadata.estimated_cost_usd }}",
+            "data_quality_score": 0,
+            "extracted_fields_count": 0
+          },
+          "matchingColumns": [],
+          "schema": [
+            { "id": "log_id", "displayName": "log_id", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true, "removed": false },
+            { "id": "research_run_id", "displayName": "research_run_id", "required": true, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true },
+            { "id": "company_id", "displayName": "company_id", "required": true, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true },
+            { "id": "node_name", "displayName": "node_name", "required": true, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true },
+            { "id": "node_id", "displayName": "node_id", "required": true, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true },
+            { "id": "node_type", "displayName": "node_type", "required": true, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true },
+            { "id": "stage", "displayName": "stage", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true },
+            { "id": "status", "displayName": "status", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true },
+            { "id": "output_data", "displayName": "output_data", "required": false, "defaultMatch": false, "display": true, "type": "object", "canBeUsedToMatch": true },
+            { "id": "metadata", "displayName": "metadata", "required": false, "defaultMatch": false, "display": true, "type": "object", "canBeUsedToMatch": true }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [1664, 32],
+      "id": "c1cd2e93-f2ac-42c4-8497-a88d30a27ee6",
+      "name": "Log - SerpAPI Results",
+      "credentials": {
+        "postgres": {
+          "id": "xogKD739Qe4gqWBU",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "workflowId": { "__rl": true, "value": "A4-U5nCoP9WMSikDE3qdi", "mode": "id" },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "company_id": "={{ $json.company_id }}",
+            "log_id": "={{ $json.log_id }}",
+            "research_run_id": "={{ $json.research_run_id }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            { "id": "company_id", "displayName": "company_id", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "log_id", "displayName": "log_id", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "research_run_id", "displayName": "research_run_id", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": { "waitForSubWorkflow": false }
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [1856, 32],
+      "id": "15028504-4ba6-4725-affe-727dcf0ef7d7",
+      "name": "📤 Call AI Context Updater"
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\nconst actions = items.map(i => i.json.metadata?.action).filter(Boolean);\n\nreturn [{\n  json: {\n    success: true,\n    stage: \"serpapi_fanout\",\n    actions_completed: actions,\n    run_summary: `Checked ${actions.length} sources: ${actions.join(', ')}`,\n    company_id: items[0]?.json.company_id,\n    research_run_id: items[0]?.json.research_run_id\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2064, 32],
+      "id": "5553536e-7c8c-48b0-bc93-2b9f2250bc0b",
+      "name": "📤 Return Result"
+    }
+  ],
+  "connections": {
+    "When Executed by Another Workflow": {
+      "main": [[
+        { "node": "Merge2", "type": "main", "index": 0 },
+        { "node": "📥 DB — Read Context (Master)", "type": "main", "index": 0 }
+      ]]
+    },
+    "📥 DB — Read Context (Master)": {
+      "main": [[{ "node": "Merge2", "type": "main", "index": 1 }]]
+    },
+    "Merge2": {
+      "main": [[{ "node": "Context Relevance Gate", "type": "main", "index": 0 }]]
+    },
+    "Context Relevance Gate": {
+      "main": [[{ "node": "Action Planner (Code)", "type": "main", "index": 0 }]]
+    },
+    "Action Planner (Code)": {
+      "main": [[{ "node": "Route SerpAPI Action", "type": "main", "index": 0 }]]
+    },
+    "Route SerpAPI Action": {
+      "main": [
+        [{ "node": "SerpAPI - Maps Business", "type": "main", "index": 0 }],
+        [{ "node": "HTTP Request", "type": "main", "index": 0 }],
+        [{ "node": "SerpAPI - Website Search", "type": "main", "index": 0 }],
+        [{ "node": "SerpAPI - News", "type": "main", "index": 0 }],
+        [{ "node": "SerpAPI - Jobs", "type": "main", "index": 0 }]
+      ]
+    },
+    "SerpAPI - Maps Business": {
+      "main": [[{ "node": "Merge", "type": "main", "index": 0 }]]
+    },
+    "HTTP Request": {
+      "main": [[{ "node": "SerpAPI - Maps Reviews", "type": "main", "index": 0 }]]
+    },
+    "SerpAPI - Maps Reviews": {
+      "main": [[{ "node": "Merge", "type": "main", "index": 1 }]]
+    },
+    "SerpAPI - Website Search": {
+      "main": [[{ "node": "Merge", "type": "main", "index": 2 }]]
+    },
+    "SerpAPI - News": {
+      "main": [[{ "node": "Merge", "type": "main", "index": 3 }]]
+    },
+    "SerpAPI - Jobs": {
+      "main": [[{ "node": "Merge", "type": "main", "index": 4 }]]
+    },
+    "Merge": {
+      "main": [[{ "node": "Normalize SerpAPI Result", "type": "main", "index": 0 }]]
+    },
+    "Normalize SerpAPI Result": {
+      "main": [[{ "node": "Build Log - SerpAPI Enrichment", "type": "main", "index": 0 }]]
+    },
+    "Build Log - SerpAPI Enrichment": {
+      "main": [[{ "node": "Log - SerpAPI Results", "type": "main", "index": 0 }]]
+    },
+    "Log - SerpAPI Results": {
+      "main": [[{ "node": "📤 Call AI Context Updater", "type": "main", "index": 0 }]]
+    },
+    "📤 Call AI Context Updater": {
+      "main": [[{ "node": "📤 Return Result", "type": "main", "index": 0 }]]
+    }
+  },
+  "pinData": {},
+  "meta": {
+    "instanceId": "2d82e0d27c2a88970c7ba9693b6bad225f1d31f9cf0d392d33dd9cabf99f185f"
+  }
+}

@@ -1,0 +1,598 @@
+{
+  "name": "⚙️ Auto-Enrichment Background Processor",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 2
+            }
+          ]
+        }
+      },
+      "id": "schedule-trigger",
+      "name": "⏰ Every 2 Hours",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -800,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Get pending research runs for processing\nSELECT \n  r.id as run_id,\n  r.company_id,\n  r.status,\n  r.context_jsonb,\n  c.business_name,\n  c.domain,\n  c.website_url,\n  c.phone,\n  c.address,\n  c.dcs_tier,\n  c.dcs_score\nFROM research_runs r\nJOIN companies c ON r.company_id = c.place_id\nWHERE r.status = 'pending'\nORDER BY \n  CASE c.dcs_tier WHEN 'platinum' THEN 1 WHEN 'gold' THEN 2 ELSE 3 END,\n  r.created_at ASC\nLIMIT 5;",
+        "options": {}
+      },
+      "id": "get-pending-runs",
+      "name": "🔍 Get Pending Runs",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        -560,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CRED_ID",
+          "name": "Postgres account"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "has-runs",
+              "leftValue": "={{ $json.run_id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "exists",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-runs",
+      "name": "🔀 Has Runs?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.1,
+      "position": [
+        -320,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Mark run as processing\nUPDATE research_runs SET status = 'processing' WHERE id = $1 RETURNING *;",
+        "options": {
+          "queryReplacement": "={{ [$json.run_id] }}"
+        }
+      },
+      "id": "mark-processing",
+      "name": "🗄️ Mark Processing",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        -80,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CRED_ID",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "has-domain",
+              "leftValue": "={{ $('🔍 Get Pending Runs').item.json.domain }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "isNotEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-has-domain",
+      "name": "🔀 Has Domain?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.1,
+      "position": [
+        160,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.hunter.io/v2/domain-search",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpQueryAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "domain",
+              "value": "={{ $('🔍 Get Pending Runs').item.json.domain }}"
+            },
+            {
+              "name": "limit",
+              "value": "5"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "hunter-search",
+      "name": "🔍 Hunter.io Search",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        400,
+        200
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "HTTP_AUTH_CRED_ID",
+          "name": "HubSpot Private App - Full Access"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://serpapi.com/search.json",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpQueryAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "engine",
+              "value": "google"
+            },
+            {
+              "name": "q",
+              "value": "={{ $('🔍 Get Pending Runs').item.json.business_name + ' ' + ($('🔍 Get Pending Runs').item.json.address || '').split(',')[1] + ' owner contact' }}"
+            },
+            {
+              "name": "num",
+              "value": "5"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "serpapi-search",
+      "name": "🔍 SerpAPI Research",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        400,
+        400
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "HTTP_AUTH_CRED_ID",
+          "name": "HubSpot Private App - Full Access"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ═══════════════════════════════════════════════════════════════════\n// ⚙️ Process Enrichment Results\n// ═══════════════════════════════════════════════════════════════════\n\nconst runData = $('🔍 Get Pending Runs').item.json;\nconst hunterResult = $('🔍 Hunter.io Search').first()?.json || {};\nconst serpResult = $('🔍 SerpAPI Research').first()?.json || {};\n\n// Extract Hunter data\nconst hunterData = hunterResult.data || {};\nconst emails = hunterData.emails || [];\nconst pattern = hunterData.pattern || null;\n\n// Find best email (owner/founder/manager)\nconst ownerKeywords = ['owner', 'founder', 'president', 'ceo', 'manager', 'director'];\nlet bestEmail = emails.find(e => {\n  const position = (e.position || '').toLowerCase();\n  return ownerKeywords.some(k => position.includes(k));\n}) || emails[0];\n\n// Extract SerpAPI data\nconst organicResults = serpResult.organic_results || [];\nconst knowledgeGraph = serpResult.knowledge_graph || {};\n\n// Compile enrichment data\nconst enrichmentData = {\n  hunter: {\n    domain: hunterData.domain,\n    organization: hunterData.organization,\n    emails_found: emails.length,\n    pattern: pattern,\n    best_contact: bestEmail ? {\n      email: bestEmail.value,\n      first_name: bestEmail.first_name,\n      last_name: bestEmail.last_name,\n      position: bestEmail.position,\n      confidence: bestEmail.confidence\n    } : null\n  },\n  serp: {\n    results_found: organicResults.length,\n    knowledge_graph: knowledgeGraph.title ? {\n      title: knowledgeGraph.title,\n      description: knowledgeGraph.description,\n      type: knowledgeGraph.type\n    } : null,\n    top_results: organicResults.slice(0, 3).map(r => ({\n      title: r.title,\n      link: r.link,\n      snippet: r.snippet\n    }))\n  }\n};\n\n// Calculate data quality score\nlet qualityScore = 0;\nlet dataPointsCollected = 0;\n\nif (bestEmail) {\n  qualityScore += 30;\n  dataPointsCollected += 4; // email, name, position, confidence\n}\nif (hunterData.organization) {\n  qualityScore += 10;\n  dataPointsCollected += 1;\n}\nif (knowledgeGraph.title) {\n  qualityScore += 15;\n  dataPointsCollected += 2;\n}\nif (organicResults.length > 0) {\n  qualityScore += 10;\n  dataPointsCollected += organicResults.length;\n}\n\nconst result = {\n  run_id: runData.run_id,\n  company_id: runData.company_id,\n  workflow_name: 'Auto_Enrichment_Processor',\n  data: enrichmentData,\n  data_quality_score: qualityScore / 100,\n  data_points_collected: dataPointsCollected,\n  has_errors: false,\n  completed_at: new Date().toISOString()\n};\n\nreturn [{ json: result }];"
+      },
+      "id": "process-results",
+      "name": "⚙️ Process Results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        640,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Save enrichment results\nINSERT INTO enrichment_results (\n  research_run_id, company_id, workflow_name,\n  status, data, data_points_collected, has_errors, completed_at\n) VALUES (\n  $1, $2, $3,\n  'completed', $4::jsonb, $5, $6, $7\n)\nRETURNING *;",
+        "options": {
+          "queryReplacement": "={{ [$json.run_id, $json.company_id, $json.workflow_name, JSON.stringify($json.data), $json.data_points_collected, $json.has_errors, $json.completed_at] }}"
+        }
+      },
+      "id": "save-results",
+      "name": "🗄️ Save Enrichment",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        880,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CRED_ID",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Update company with enriched data\nUPDATE companies SET\n  dcs_score = GREATEST(dcs_score, $1 * 100),\n  dcs_tier = CASE \n    WHEN GREATEST(dcs_score, $1 * 100) >= 80 THEN 'platinum'\n    WHEN GREATEST(dcs_score, $1 * 100) >= 60 THEN 'gold'\n    ELSE 'bronze'\n  END,\n  updated_at = NOW()\nWHERE place_id = $2\nRETURNING *;",
+        "options": {
+          "queryReplacement": "={{ [$('⚙️ Process Results').item.json.data_quality_score, $('⚙️ Process Results').item.json.company_id] }}"
+        }
+      },
+      "id": "update-company",
+      "name": "🗄️ Update Company DCS",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1120,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CRED_ID",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Mark research run as completed\nUPDATE research_runs SET\n  status = 'completed',\n  context_jsonb = context_jsonb || $1::jsonb,\n  context_summary = 'Enrichment completed with ' || $2 || ' data points'\nWHERE id = $3\nRETURNING *;",
+        "options": {
+          "queryReplacement": "={{ [JSON.stringify({enrichment_completed: new Date().toISOString(), data_quality_score: $('⚙️ Process Results').item.json.data_quality_score}), $('⚙️ Process Results').item.json.data_points_collected, $('⚙️ Process Results').item.json.run_id] }}"
+        }
+      },
+      "id": "mark-completed",
+      "name": "🗄️ Mark Completed",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1360,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CRED_ID",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// ═══════════════════════════════════════════════════════════════════\n// 📊 Compile Enrichment Summary\n// ═══════════════════════════════════════════════════════════════════\n\nconst completed = $('🗄️ Mark Completed').all();\n\nconst summary = {\n  timestamp: new Date().toISOString(),\n  total_processed: completed.length,\n  companies: completed.map(c => ({\n    run_id: c.json.id,\n    company_id: c.json.company_id,\n    status: c.json.status\n  }))\n};\n\nreturn [{ json: summary }];"
+      },
+      "id": "compile-summary",
+      "name": "📊 Compile Summary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1600,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Log enrichment run\nINSERT INTO agent_audit_log (\n  action, action_type, success, duration_ms, output_data\n) VALUES (\n  'auto_enrichment_processor',\n  'background_agent',\n  true,\n  0,\n  $1::jsonb\n);",
+        "options": {
+          "queryReplacement": "={{ [JSON.stringify($json)] }}"
+        }
+      },
+      "id": "log-run",
+      "name": "🗄️ Log to Audit",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1840,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CRED_ID",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "processed-many",
+              "leftValue": "={{ $json.total_processed }}",
+              "rightValue": 3,
+              "operator": {
+                "type": "number",
+                "operation": "gte"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-notify",
+      "name": "🔀 Notify if 3+?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.1,
+      "position": [
+        2080,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.salesmessage.com/pub/v2.2/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"to\": \"+13204064600\",\n  \"message\": \"⚙️ Auto-Enrichment Complete!\\n\\nProcessed: {{ $json.total_processed }} companies\\n\\nHunter.io + SerpAPI enrichment applied.\\nDCS scores updated.\"\n}",
+        "options": {}
+      },
+      "id": "notify",
+      "name": "📱 Notify",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2320,
+        200
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "HTTP_AUTH_CRED_ID",
+          "name": "HubSpot Private App - Full Access"
+        }
+      },
+      "continueOnFail": true
+    }
+  ],
+  "connections": {
+    "⏰ Every 2 Hours": {
+      "main": [
+        [
+          {
+            "node": "🔍 Get Pending Runs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔍 Get Pending Runs": {
+      "main": [
+        [
+          {
+            "node": "🔀 Has Runs?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔀 Has Runs?": {
+      "main": [
+        [
+          {
+            "node": "🗄️ Mark Processing",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "🗄️ Mark Processing": {
+      "main": [
+        [
+          {
+            "node": "🔀 Has Domain?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔀 Has Domain?": {
+      "main": [
+        [
+          {
+            "node": "🔍 Hunter.io Search",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "🔍 SerpAPI Research",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔍 Hunter.io Search": {
+      "main": [
+        [
+          {
+            "node": "🔍 SerpAPI Research",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔍 SerpAPI Research": {
+      "main": [
+        [
+          {
+            "node": "⚙️ Process Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "⚙️ Process Results": {
+      "main": [
+        [
+          {
+            "node": "🗄️ Save Enrichment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🗄️ Save Enrichment": {
+      "main": [
+        [
+          {
+            "node": "🗄️ Update Company DCS",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🗄️ Update Company DCS": {
+      "main": [
+        [
+          {
+            "node": "🗄️ Mark Completed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🗄️ Mark Completed": {
+      "main": [
+        [
+          {
+            "node": "📊 Compile Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📊 Compile Summary": {
+      "main": [
+        [
+          {
+            "node": "🗄️ Log to Audit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🗄️ Log to Audit": {
+      "main": [
+        [
+          {
+            "node": "🔀 Notify if 3+?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔀 Notify if 3+?": {
+      "main": [
+        [
+          {
+            "node": "📱 Notify",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "name": "enrichment"
+    },
+    {
+      "name": "hunter"
+    },
+    {
+      "name": "serpapi"
+    },
+    {
+      "name": "background-agent"
+    },
+    {
+      "name": "dcs"
+    }
+  ],
+  "triggerCount": 1,
+  "pinData": {},
+  "versionId": "1",
+  "meta": {
+    "description": "Background enrichment processor that takes pending research runs and enriches company data using Hunter.io and SerpAPI. Updates DCS scores and saves enrichment results. Runs every 2 hours.",
+    "category": "enrichment",
+    "triggers": [
+      "schedule"
+    ],
+    "outputs": [
+      "enrichment_results",
+      "companies",
+      "research_runs",
+      "agent_audit_log"
+    ],
+    "requiredCredentials": [
+      "Supabase Postgres",
+      "Hunter.io API",
+      "SerpAPI",
+      "Salesmessage API"
+    ]
+  }
+}

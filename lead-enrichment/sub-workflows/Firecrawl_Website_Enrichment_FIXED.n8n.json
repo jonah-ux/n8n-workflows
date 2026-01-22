@@ -1,0 +1,462 @@
+{
+  "name": "Firecrawl - Website Enrichment (FIXED)",
+  "nodes": [
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            { "name": "airtable_id" },
+            { "name": "company_id" },
+            { "name": "company_name" },
+            { "name": "location" },
+            { "name": "city" },
+            { "name": "state" },
+            { "name": "domain" },
+            { "name": "search_domain" },
+            { "name": "phone" },
+            { "name": "timestamp" },
+            { "name": "enrichment_id" },
+            { "name": "research_run_id" },
+            { "name": "meta" }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [-144, -496],
+      "id": "trigger",
+      "name": "When Executed by Another Workflow"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT COALESCE(context_jsonb, '{}'::jsonb) AS context_jsonb\nFROM company_contexts\nWHERE company_id = $1",
+        "options": {
+          "queryReplacement": "={{ [$json.company_id] }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [48, -384],
+      "id": "read-context",
+      "name": "📥 DB — Read Context (Master)",
+      "credentials": {
+        "postgres": {
+          "id": "xogKD739Qe4gqWBU",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [256, -480],
+      "id": "merge-context",
+      "name": "🤝 Merge Context"
+    },
+    {
+      "parameters": {
+        "jsCode": "const merged = $json;\n\nlet ctx = merged.context_jsonb ?? {};\nif (typeof ctx === \"string\") {\n  try { ctx = JSON.parse(ctx); } catch { ctx = {}; }\n}\n\nconst derived = ctx?.derived ?? {};\n\nlet url =\n  merged.domain ||\n  derived.website ||\n  ctx.website ||\n  merged.search_domain ||\n  \"\";\n\nif (url && !url.startsWith(\"http\")) url = \"https://\" + url.replace(/^\\/+/, \"\");\nurl = url ? url.replace(/\\/$/, \"\") : null;\n\nreturn [{\n  json: {\n    ...merged,\n    context_jsonb: ctx,\n    website_seed_url: url,\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [448, -480],
+      "id": "normalize-url",
+      "name": "⚙️ Normalize Website Seed URL"
+    },
+    {
+      "parameters": {
+        "operation": "map",
+        "url": "={{ $json.website_seed_url }}",
+        "mapOptions": {
+          "options": {
+            "limit": 100
+          }
+        },
+        "requestOptions": {}
+      },
+      "type": "@mendable/n8n-nodes-firecrawl.firecrawl",
+      "typeVersion": 1,
+      "position": [656, -480],
+      "id": "firecrawl-map",
+      "name": "🧭 Firecrawl — MAP Site Links",
+      "credentials": {
+        "firecrawlApi": {
+          "id": "h7HuUbKWgCMkuZK8",
+          "name": "Firecrawl account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const MAX_TOTAL = 15;\nconst MAX_PER_BUCKET = 5;\n\nconst baseNodeName = \"⚙️ Normalize Website Seed URL\";\nconst baseItem = $items(baseNodeName, 0, 0)?.[0]?.json ?? {};\nconst base = { ...baseItem };\n\nconst rawLinks = $json.links || $json.data?.links || [];\n\nconst excludeSubstrings = [\n  \"privacy\", \"terms\", \"cookie\", \"login\", \"signup\", \"cart\", \n  \"wp-json\", \"cdn-cgi\", \"mailto:\", \"tel:\", \".pdf\", \".jpg\"\n];\n\nconst isExcluded = (u) => {\n  const s = (u || \"\").toLowerCase();\n  return excludeSubstrings.some(x => s.includes(x));\n};\n\nconst BUCKETS = [\n  { action: \"contact\",  keywords: [\"contact\", \"location\", \"hours\", \"directions\"] },\n  { action: \"services\", keywords: [\"services\", \"repair\", \"maintenance\", \"tires\", \"brakes\", \"oil\", \"engine\", \"suspension\", \"transmission\", \"cooling\", \"alignment\", \"filtration\", \"batteries\"] },\n  { action: \"pricing\",  keywords: [\"pricing\", \"cost\", \"coupon\", \"special\", \"offer\", \"finance\"] },\n  { action: \"about\",    keywords: [\"about\", \"team\", \"story\", \"testimonials\", \"reviews\"] },\n  { action: \"careers\",  keywords: [\"careers\", \"jobs\", \"join\"] },\n];\n\nconst getBucket = (url) => {\n  const u = url.toLowerCase();\n  for (const b of BUCKETS) {\n    if (b.keywords.some(k => u.includes(k))) return b.action;\n  }\n  return null;\n};\n\nconst candidates = [];\n\nfor (const linkObj of rawLinks) {\n  const u = linkObj.url;\n  if (!u || isExcluded(u)) continue;\n\n  const bucket = getBucket(u);\n  if (bucket) {\n    const depth = u.split('/').length; \n    candidates.push({\n      ...base,\n      action: bucket,\n      target_url: u,\n      page_title: linkObj.title,\n      score: 10 + depth, \n      reason: \"keyword_match\"\n    });\n  }\n}\n\nconst byBucket = {};\nBUCKETS.forEach(b => byBucket[b.action] = []);\n\ncandidates.sort((a, b) => b.score - a.score);\nfor (const c of candidates) {\n  if (byBucket[c.action].length < MAX_PER_BUCKET) {\n    byBucket[c.action].push(c);\n  }\n}\n\nconst output = [];\nfor (const b of BUCKETS) {\n  output.push(...byBucket[b.action]);\n  if (output.length >= MAX_TOTAL) break;\n}\n\nif (output.length === 0) {\n  return [{\n    json: {\n      ...base,\n      action: \"homepage\",\n      target_url: base.website_seed_url || base.domain,\n      score: 1,\n      reason: \"fallback_no_matches\"\n    }\n  }];\n}\n\nreturn output.map(i => ({ json: i }));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [864, -480],
+      "id": "filter-urls",
+      "name": "⚙️ Filter + Prioritize URLs"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [1088, -480],
+      "id": "loop",
+      "name": "Loop Over Items"
+    },
+    {
+      "parameters": {
+        "operation": "scrape",
+        "url": "={{$json.target_url}}",
+        "scrapeOptions": {
+          "options": {
+            "formats": {
+              "format": [{}]
+            },
+            "headers": {},
+            "waitFor": 2000
+          }
+        },
+        "requestOptions": {}
+      },
+      "type": "@mendable/n8n-nodes-firecrawl.firecrawl",
+      "typeVersion": 1,
+      "position": [1312, -480],
+      "id": "firecrawl-scrape",
+      "name": "🔥 Firecrawl — SCRAPE Page",
+      "retryOnFail": true,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "firecrawlApi": {
+          "id": "h7HuUbKWgCMkuZK8",
+          "name": "Firecrawl account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const raw = $json;\nconst original = $item(\"0\").$node[\"Loop Over Items\"].json;\n\nconst markdown = \n  raw.data?.markdown ?? \n  raw.markdown ?? \n  raw.data?.content ?? \n  null;\n\nconst title = \n  raw.data?.metadata?.title ?? \n  raw.metadata?.title ?? \n  original.page_title ?? \n  null;\n\nconst ok = !!markdown && (typeof markdown === 'string') && markdown.trim().length > 0;\n\nreturn [{\n  json: {\n    ...original, \n    scrape: {\n      ok,\n      title,\n      markdown,\n      status: raw.status ?? 200\n    }\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1536, -480],
+      "id": "normalize-scrape",
+      "name": "⚙️ Normalize Scrape Result"
+    },
+    {
+      "parameters": {
+        "jsCode": "const j = $json;\n\nconst research_run_id = j.research_run_id || null;\nconst company_id = j.company_id || null;\nconst enrichment_id = j.enrichment_id || null;\n\nconst action = j.action || 'unknown';\nconst target_url = j.target_url || null;\n\nconst md = j.scrape?.markdown || '';\nconst md_len = typeof md === 'string' ? md.length : 0;\nconst md_preview = typeof md === 'string' ? md.slice(0, 5000) + (md_len > 5000 ? '...[TRUNCATED]' : '') : null;\n\nreturn [{\n  json: {\n    research_run_id,\n    company_id,\n    enrichment_id,\n\n    node_name: `website_scrape_${action}`,\n    node_id: 'firecrawl_deep_scrape_page',\n    node_type: 'tool_log',\n    stage: 'Stage 2',\n    status: j.scrape?.ok ? 'completed' : 'error',\n\n    output_data: {\n      action,\n      target_url,\n      title: j.scrape?.title,\n      markdown_preview: md_preview,\n    },\n\n    metadata: {\n      action,\n      target_url,\n      ok: j.scrape?.ok || false,\n      content_length: md_len,\n      page_title: j.scrape?.title || 'Unknown',\n      api_calls: 1,\n      estimated_cost_usd: 0.003\n    }\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1760, -480],
+      "id": "build-page-log",
+      "name": "🧾 Build Page Log"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO workflow_step_logs (research_run_id, company_id, enrichment_id, node_name, node_id, node_type, stage, status, output_data, metadata)\nVALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)\nRETURNING log_id, company_id, research_run_id",
+        "options": {
+          "queryReplacement": "={{ [\n  $json.research_run_id,\n  $json.company_id,\n  $json.enrichment_id,\n  $json.node_name,\n  $json.node_id,\n  $json.node_type,\n  $json.stage,\n  $json.status,\n  JSON.stringify($json.output_data),\n  JSON.stringify($json.metadata)\n] }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [1984, -480],
+      "id": "log-page",
+      "name": "🗄️ Log Page (RETURNING log_id)",
+      "credentials": {
+        "postgres": {
+          "id": "xogKD739Qe4gqWBU",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Collect log_id for later batch context update\nconst j = $json;\nreturn [{ json: { log_id: j.log_id, company_id: j.company_id, research_run_id: j.research_run_id } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2208, -480],
+      "id": "collect-log-id",
+      "name": "📋 Collect Log ID"
+    },
+    {
+      "parameters": {
+        "mode": "chooseBranch"
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [2432, -480],
+      "id": "merge-loop",
+      "name": "🤝 Merge Loop"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Aggregate all scraped content + collected log IDs\nconst allLogs = $items(\"📋 Collect Log ID\");\nconst allScrapes = $items(\"🧾 Build Page Log\");\n\n// Collect all log_ids\nconst log_ids = allLogs.map(i => i.json.log_id).filter(Boolean);\nconst company_id = allLogs[0]?.json?.company_id || null;\nconst research_run_id = allLogs[0]?.json?.research_run_id || null;\n\n// Build combined content for AI summary\nlet context_text = \"\";\nlet page_count = 0;\nconst urls_scraped = [];\n\nfor (const item of allScrapes) {\n  const data = item.json.output_data || {};\n  if (!data.markdown_preview) continue;\n\n  page_count++;\n  urls_scraped.push(data.target_url);\n\n  context_text += `\\n### SOURCE (${data.action}): ${data.target_url}\\n`;\n  context_text += `TITLE: ${data.title}\\n`;\n  context_text += `CONTENT:\\n${data.markdown_preview.substring(0, 3000)}\\n`;\n  context_text += `\\n----------------\\n`;\n}\n\nif (page_count === 0) {\n  return [{ json: { \n    prompt: \"No content found.\", \n    skip_ai: true,\n    company_id,\n    research_run_id,\n    log_ids\n  }}];\n}\n\nconst prompt = `You are a Lead Intelligence Analyst. I have scraped ${page_count} pages from the target company's website.\n\nYOUR GOAL: Analyze the RAW CONTENT below and extract a structured business dossier.\n\nGUIDELINES:\n- **Pricing:** Look for specific numbers, tiers (e.g. \"$99/mo\"), or terms like \"Request Quote\".\n- **Services:** List the specific services they offer (e.g. \"Oil Change\", \"Engine Tuning\").\n- **Tech Stack:** Look for mentions of \"Portal\", \"Login\", \"Powered by\", or scheduling tools.\n- **About:** Summarize their history, owner name, or mission.\n- **Contact:** Extract phone numbers, emails, addresses, contact form URLs.\n\nRAW CONTENT:\n${context_text}`;\n\nreturn [{\n  json: {\n    prompt,\n    stats: {\n      pages: page_count,\n      urls: urls_scraped\n    },\n    company_id,\n    research_run_id,\n    log_ids\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2656, -480],
+      "id": "aggregate",
+      "name": "🏁 Aggregate All Content"
+    },
+    {
+      "parameters": {
+        "options": {
+          "responseFormat": "json_object",
+          "temperature": 0.2
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1,
+      "position": [2880, -280],
+      "id": "openai-model",
+      "name": "OpenAI Chat Model (Mini)",
+      "credentials": {
+        "openAiApi": {
+          "id": "Lb7LQd5GQa1bZ9yX",
+          "name": "OpenAi account 4"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.prompt }}",
+        "hasOutputParser": true,
+        "messages": {
+          "messageValues": [
+            {
+              "message": "You are an expert research analyst. Your task is to summarize raw website content into a structured JSON format. Extract: services (array), pricing (object or string), about (string), contact_info (object with phone, email, address, form_url), tech_stack (array), owner_mentions (array of names found). Do not include markdown formatting."
+            }
+          ]
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.4,
+      "position": [2880, -480],
+      "id": "ai-summarize",
+      "name": "🤖 Summarize (GPT-4o-mini)"
+    },
+    {
+      "parameters": {
+        "schemaType": "manual",
+        "inputSchema": "{\n  \"type\": \"object\",\n  \"properties\": {\n    \"services\": { \"type\": \"array\", \"items\": { \"type\": \"string\" } },\n    \"pricing\": { \"type\": \"object\" },\n    \"about\": { \"type\": \"string\" },\n    \"contact_info\": {\n      \"type\": \"object\",\n      \"properties\": {\n        \"phone\": { \"type\": \"string\" },\n        \"email\": { \"type\": \"string\" },\n        \"address\": { \"type\": \"string\" },\n        \"form_url\": { \"type\": \"string\" }\n      }\n    },\n    \"tech_stack\": { \"type\": \"array\", \"items\": { \"type\": \"string\" } },\n    \"owner_mentions\": { \"type\": \"array\", \"items\": { \"type\": \"string\" } }\n  }\n}"
+      },
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1.2,
+      "position": [3104, -280],
+      "id": "output-parser",
+      "name": "Structured Output Parser"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Combine AI summary with metadata\nconst ai = $json.output || $json || {};\nconst input = $items(\"🏁 Aggregate All Content\")[0].json;\n\nreturn [{\n  json: {\n    success: true,\n    \n    // AI extracted data\n    services: ai.services || [],\n    pricing: ai.pricing || null,\n    about: ai.about || null,\n    contact_info: ai.contact_info || {},\n    tech_stack: ai.tech_stack || [],\n    owner_mentions: ai.owner_mentions || [],\n\n    // Stats\n    scrape_stats: input.stats,\n\n    // IDs for final log\n    company_id: input.company_id,\n    research_run_id: input.research_run_id,\n    log_ids: input.log_ids\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3328, -480],
+      "id": "format-output",
+      "name": "🏁 Format Final Output"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build final summary log entry\nconst j = $json;\n\nreturn [{\n  json: {\n    research_run_id: j.research_run_id,\n    company_id: j.company_id,\n    enrichment_id: j.enrichment_id || null,\n\n    node_name: 'website_enrichment_summary',\n    node_id: 'firecrawl_website_enrichment_final',\n    node_type: 'tool_log',\n    stage: 'Stage 2',\n    status: 'completed',\n\n    output_data: {\n      services: j.services,\n      pricing: j.pricing,\n      about: j.about,\n      contact_info: j.contact_info,\n      tech_stack: j.tech_stack,\n      owner_mentions: j.owner_mentions,\n      pages_scraped: j.scrape_stats?.pages || 0,\n      urls_scraped: j.scrape_stats?.urls || []\n    },\n\n    metadata: {\n      source: 'firecrawl_website_enrichment',\n      pages_scraped: j.scrape_stats?.pages || 0,\n      ai_model: 'gpt-4o-mini',\n      is_summary: true\n    }\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3552, -480],
+      "id": "build-final-log",
+      "name": "🧾 Build Final Summary Log"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO workflow_step_logs (research_run_id, company_id, enrichment_id, node_name, node_id, node_type, stage, status, output_data, metadata)\nVALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)\nRETURNING log_id, company_id, research_run_id",
+        "options": {
+          "queryReplacement": "={{ [\n  $json.research_run_id,\n  $json.company_id,\n  $json.enrichment_id,\n  $json.node_name,\n  $json.node_id,\n  $json.node_type,\n  $json.stage,\n  $json.status,\n  JSON.stringify($json.output_data),\n  JSON.stringify($json.metadata)\n] }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [3776, -480],
+      "id": "log-final",
+      "name": "🗄️ Log Final Summary",
+      "credentials": {
+        "postgres": {
+          "id": "xogKD739Qe4gqWBU",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "A4-U5nCoP9WMSikDE3qdi",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "log_id": "={{ $json.log_id }}",
+            "company_id": "={{ $json.company_id }}",
+            "research_run_id": "={{ $json.research_run_id }}"
+          },
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [4000, -480],
+      "id": "context-updater",
+      "name": "📤 Call Context Updater (ONCE)",
+      "notes": "Called ONCE at the end with the final summary log_id"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Return final result to orchestrator\nconst finalOutput = $items(\"🏁 Format Final Output\")[0].json;\nconst contextResult = $json;\n\nreturn [{\n  json: {\n    success: true,\n    ...finalOutput,\n    context_updated: true\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [4224, -480],
+      "id": "return-result",
+      "name": "📤 Return Result"
+    }
+  ],
+  "connections": {
+    "When Executed by Another Workflow": {
+      "main": [[
+        { "node": "📥 DB — Read Context (Master)", "type": "main", "index": 0 },
+        { "node": "🤝 Merge Context", "type": "main", "index": 0 }
+      ]]
+    },
+    "📥 DB — Read Context (Master)": {
+      "main": [[
+        { "node": "🤝 Merge Context", "type": "main", "index": 1 }
+      ]]
+    },
+    "🤝 Merge Context": {
+      "main": [[
+        { "node": "⚙️ Normalize Website Seed URL", "type": "main", "index": 0 }
+      ]]
+    },
+    "⚙️ Normalize Website Seed URL": {
+      "main": [[
+        { "node": "🧭 Firecrawl — MAP Site Links", "type": "main", "index": 0 }
+      ]]
+    },
+    "🧭 Firecrawl — MAP Site Links": {
+      "main": [[
+        { "node": "⚙️ Filter + Prioritize URLs", "type": "main", "index": 0 }
+      ]]
+    },
+    "⚙️ Filter + Prioritize URLs": {
+      "main": [[
+        { "node": "Loop Over Items", "type": "main", "index": 0 }
+      ]]
+    },
+    "Loop Over Items": {
+      "main": [
+        [{ "node": "🏁 Aggregate All Content", "type": "main", "index": 0 }],
+        [{ "node": "🔥 Firecrawl — SCRAPE Page", "type": "main", "index": 0 }]
+      ]
+    },
+    "🔥 Firecrawl — SCRAPE Page": {
+      "main": [[
+        { "node": "⚙️ Normalize Scrape Result", "type": "main", "index": 0 }
+      ]]
+    },
+    "⚙️ Normalize Scrape Result": {
+      "main": [[
+        { "node": "🧾 Build Page Log", "type": "main", "index": 0 }
+      ]]
+    },
+    "🧾 Build Page Log": {
+      "main": [[
+        { "node": "🗄️ Log Page (RETURNING log_id)", "type": "main", "index": 0 }
+      ]]
+    },
+    "🗄️ Log Page (RETURNING log_id)": {
+      "main": [[
+        { "node": "📋 Collect Log ID", "type": "main", "index": 0 }
+      ]]
+    },
+    "📋 Collect Log ID": {
+      "main": [[
+        { "node": "🤝 Merge Loop", "type": "main", "index": 0 }
+      ]]
+    },
+    "🤝 Merge Loop": {
+      "main": [[
+        { "node": "Loop Over Items", "type": "main", "index": 0 }
+      ]]
+    },
+    "🏁 Aggregate All Content": {
+      "main": [[
+        { "node": "🤖 Summarize (GPT-4o-mini)", "type": "main", "index": 0 }
+      ]]
+    },
+    "OpenAI Chat Model (Mini)": {
+      "ai_languageModel": [[
+        { "node": "🤖 Summarize (GPT-4o-mini)", "type": "ai_languageModel", "index": 0 }
+      ]]
+    },
+    "Structured Output Parser": {
+      "ai_outputParser": [[
+        { "node": "🤖 Summarize (GPT-4o-mini)", "type": "ai_outputParser", "index": 0 }
+      ]]
+    },
+    "🤖 Summarize (GPT-4o-mini)": {
+      "main": [[
+        { "node": "🏁 Format Final Output", "type": "main", "index": 0 }
+      ]]
+    },
+    "🏁 Format Final Output": {
+      "main": [[
+        { "node": "🧾 Build Final Summary Log", "type": "main", "index": 0 }
+      ]]
+    },
+    "🧾 Build Final Summary Log": {
+      "main": [[
+        { "node": "🗄️ Log Final Summary", "type": "main", "index": 0 }
+      ]]
+    },
+    "🗄️ Log Final Summary": {
+      "main": [[
+        { "node": "📤 Call Context Updater (ONCE)", "type": "main", "index": 0 }
+      ]]
+    },
+    "📤 Call Context Updater (ONCE)": {
+      "main": [[
+        { "node": "📤 Return Result", "type": "main", "index": 0 }
+      ]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "2d82e0d27c2a88970c7ba9693b6bad225f1d31f9cf0d392d33dd9cabf99f185f"
+  }
+}

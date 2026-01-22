@@ -1,0 +1,449 @@
+{
+  "name": "🕵️ Company Intelligence Aggregator",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 4
+            }
+          ]
+        }
+      },
+      "id": "schedule-trigger",
+      "name": "⏰ Every 4 Hours",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -1000,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "intelligence/aggregate",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "🌐 Manual Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -1000,
+        500
+      ],
+      "webhookId": "intelligence-aggregate"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Get companies needing intelligence aggregation\nSELECT \n  c.id,\n  c.place_id,\n  c.business_name,\n  c.phone,\n  c.website_url,\n  c.domain,\n  c.address,\n  c.dcs_tier,\n  c.dcs_score,\n  c.raw_data,\n  c.created_at,\n  -- Count enrichment data sources\n  (SELECT COUNT(*) FROM enrichment_results er WHERE er.company_id = c.place_id) as enrichment_count,\n  -- Get research run status\n  (SELECT status FROM research_runs rr WHERE rr.company_id = c.place_id ORDER BY created_at DESC LIMIT 1) as latest_research_status,\n  -- Get outreach status\n  (SELECT status FROM outreach_sequences os WHERE os.company_id = c.id ORDER BY created_at DESC LIMIT 1) as outreach_status,\n  -- HubSpot connection\n  (SELECT id FROM hubspot_companies hc WHERE LOWER(hc.name) = LOWER(c.business_name) OR hc.domain = c.domain LIMIT 1) as hubspot_company_id,\n  -- Call history\n  (SELECT COUNT(*) FROM retell_calls rc WHERE rc.company_id = c.id) as call_count,\n  (SELECT outcome FROM retell_calls rc WHERE rc.company_id = c.id ORDER BY created_at DESC LIMIT 1) as last_call_outcome\nFROM companies c\nWHERE \n  -- Companies that haven't been aggregated recently\n  (c.raw_data->>'last_intelligence_aggregate' IS NULL \n   OR (c.raw_data->>'last_intelligence_aggregate')::timestamptz < NOW() - INTERVAL '24 hours')\n  -- Or companies with new data\n  OR EXISTS (\n    SELECT 1 FROM enrichment_results er \n    WHERE er.company_id = c.place_id \n    AND er.completed_at > COALESCE((c.raw_data->>'last_intelligence_aggregate')::timestamptz, '1970-01-01')\n  )\nORDER BY c.dcs_tier DESC, c.dcs_score DESC\nLIMIT 25;",
+        "options": {}
+      },
+      "id": "get-companies",
+      "name": "🔍 Get Companies",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        -760,
+        400
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CRED_ID",
+          "name": "Postgres account"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "has-companies",
+              "leftValue": "={{ $json.id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "exists",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "has-companies",
+      "name": "🔀 Has Companies?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.1,
+      "position": [
+        -520,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Get all enrichment data for this company\nSELECT \n  workflow_name,\n  data,\n  data_quality_score,\n  data_points_collected,\n  completed_at\nFROM enrichment_results\nWHERE company_id = $1\nORDER BY completed_at DESC;",
+        "options": {
+          "queryReplacement": "={{ [$json.place_id] }}"
+        }
+      },
+      "id": "get-enrichment-data",
+      "name": "🔍 Get Enrichment Data",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        -280,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CRED_ID",
+          "name": "Postgres account"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Get outreach history for this company\nSELECT \n  om.channel,\n  om.status,\n  om.sent_at,\n  om.opened_at,\n  om.replied_at,\n  orr.response_sentiment,\n  orr.response_type,\n  orr.ai_analysis\nFROM outreach_messages om\nLEFT JOIN outreach_responses orr ON orr.company_id = om.company_id\nWHERE om.company_id = $1::uuid\nORDER BY om.sent_at DESC\nLIMIT 20;",
+        "options": {
+          "queryReplacement": "={{ [$('🔀 Has Companies?').first().json.id] }}"
+        }
+      },
+      "id": "get-outreach-history",
+      "name": "🔍 Get Outreach History",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        -280,
+        500
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CRED_ID",
+          "name": "Postgres account"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// ═══════════════════════════════════════════════════════════════════\n// 🧠 Aggregate All Intelligence into Unified Profile\n// ═══════════════════════════════════════════════════════════════════\n\nconst company = $('🔀 Has Companies?').first().json;\nconst enrichmentData = $('🔍 Get Enrichment Data').all().map(i => i.json);\nconst outreachHistory = $('🔍 Get Outreach History').all().map(i => i.json);\n\n// Merge all enrichment data into unified structure\nconst mergedEnrichment = {};\nlet totalDataPoints = 0;\nlet avgQualityScore = 0;\n\nfor (const enrichment of enrichmentData) {\n  const source = enrichment.workflow_name || 'unknown';\n  mergedEnrichment[source] = enrichment.data;\n  totalDataPoints += enrichment.data_points_collected || 0;\n  avgQualityScore += enrichment.data_quality_score || 0;\n}\navgQualityScore = enrichmentData.length > 0 ? avgQualityScore / enrichmentData.length : 0;\n\n// Extract key contacts from enrichment\nconst contacts = [];\nfor (const [source, data] of Object.entries(mergedEnrichment)) {\n  if (data && typeof data === 'object') {\n    // Extract from Hunter.io data\n    if (data.emails) {\n      for (const email of data.emails) {\n        contacts.push({\n          source: 'hunter',\n          email: email.value,\n          first_name: email.first_name,\n          last_name: email.last_name,\n          position: email.position,\n          confidence: email.confidence\n        });\n      }\n    }\n    // Extract from other sources\n    if (data.owner_name || data.contact_name) {\n      contacts.push({\n        source: source,\n        name: data.owner_name || data.contact_name,\n        email: data.owner_email || data.email,\n        phone: data.owner_phone || data.phone\n      });\n    }\n  }\n}\n\n// Analyze outreach engagement\nconst outreachAnalysis = {\n  total_messages: outreachHistory.length,\n  sent: outreachHistory.filter(m => m.status === 'sent').length,\n  opened: outreachHistory.filter(m => m.opened_at).length,\n  replied: outreachHistory.filter(m => m.replied_at).length,\n  avg_sentiment: outreachHistory.filter(m => m.response_sentiment)\n    .reduce((sum, m) => sum + m.response_sentiment, 0) / Math.max(1, outreachHistory.filter(m => m.response_sentiment).length),\n  channels_used: [...new Set(outreachHistory.map(m => m.channel))]\n};\n\n// Calculate comprehensive intelligence score\nlet intelligenceScore = 0;\n\n// Base data completeness (0-30)\nif (company.business_name) intelligenceScore += 5;\nif (company.phone) intelligenceScore += 5;\nif (company.website_url) intelligenceScore += 5;\nif (company.domain) intelligenceScore += 5;\nif (company.address) intelligenceScore += 5;\nif (contacts.length > 0) intelligenceScore += 5;\n\n// Enrichment depth (0-30)\nintelligenceScore += Math.min(30, totalDataPoints * 2);\n\n// Engagement quality (0-20)\nif (outreachAnalysis.replied > 0) intelligenceScore += 10;\nif (outreachAnalysis.avg_sentiment > 0.5) intelligenceScore += 5;\nif (company.last_call_outcome === 'interested') intelligenceScore += 5;\n\n// Data freshness (0-10)\nconst latestEnrichment = enrichmentData[0];\nif (latestEnrichment) {\n  const daysSinceEnrichment = (Date.now() - new Date(latestEnrichment.completed_at)) / (1000 * 60 * 60 * 24);\n  if (daysSinceEnrichment < 7) intelligenceScore += 10;\n  else if (daysSinceEnrichment < 30) intelligenceScore += 5;\n}\n\n// CRM integration (0-10)\nif (company.hubspot_company_id) intelligenceScore += 10;\n\n// Build unified intelligence profile\nconst intelligenceProfile = {\n  company_id: company.id,\n  place_id: company.place_id,\n  \n  // Core info\n  core: {\n    business_name: company.business_name,\n    phone: company.phone,\n    website: company.website_url,\n    domain: company.domain,\n    address: company.address\n  },\n  \n  // Scoring\n  scoring: {\n    dcs_tier: company.dcs_tier,\n    dcs_score: company.dcs_score,\n    intelligence_score: Math.min(100, intelligenceScore),\n    data_quality_avg: Math.round(avgQualityScore * 100) / 100,\n    total_data_points: totalDataPoints\n  },\n  \n  // Contacts\n  contacts: contacts.slice(0, 10),\n  primary_contact: contacts[0] || null,\n  \n  // Enrichment summary\n  enrichment: {\n    sources: Object.keys(mergedEnrichment),\n    source_count: Object.keys(mergedEnrichment).length,\n    last_enriched: latestEnrichment?.completed_at\n  },\n  \n  // Outreach summary\n  outreach: outreachAnalysis,\n  \n  // CRM status\n  crm: {\n    hubspot_connected: !!company.hubspot_company_id,\n    hubspot_company_id: company.hubspot_company_id\n  },\n  \n  // Call history\n  calls: {\n    total_calls: company.call_count || 0,\n    last_outcome: company.last_call_outcome\n  },\n  \n  // Metadata\n  aggregated_at: new Date().toISOString(),\n  data_sources: enrichmentData.length\n};\n\n// Determine recommended next action\nlet recommendedAction = 'continue_monitoring';\nif (intelligenceScore < 30) {\n  recommendedAction = 'needs_enrichment';\n} else if (!outreachAnalysis.total_messages) {\n  recommendedAction = 'start_outreach';\n} else if (outreachAnalysis.avg_sentiment > 0.7) {\n  recommendedAction = 'escalate_to_sales';\n} else if (company.last_call_outcome === 'callback_requested') {\n  recommendedAction = 'schedule_callback';\n}\n\nintelligenceProfile.recommended_action = recommendedAction;\n\nreturn [{ \n  json: { \n    company,\n    intelligenceProfile,\n    rawEnrichment: mergedEnrichment\n  } \n}];"
+      },
+      "id": "aggregate-intelligence",
+      "name": "🧠 Aggregate Intelligence",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -40,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Update company with aggregated intelligence\nUPDATE companies\nSET \n  raw_data = COALESCE(raw_data, '{}'::jsonb) || $1::jsonb,\n  dcs_score = GREATEST(dcs_score, $2),\n  updated_at = NOW()\nWHERE id = $3::uuid;",
+        "options": {
+          "queryReplacement": "={{ [JSON.stringify({intelligence_profile: $json.intelligenceProfile, last_intelligence_aggregate: new Date().toISOString()}) ,  $json.intelligenceProfile.scoring.intelligence_score ,  $json.company.id] }}"
+        }
+      },
+      "id": "update-company",
+      "name": "🗄️ Update Company",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        200,
+        400
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CRED_ID",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "needs-action",
+              "leftValue": "={{ $('🧠 Aggregate Intelligence').first().json.intelligenceProfile.recommended_action }}",
+              "rightValue": "continue_monitoring",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "needs-action",
+      "name": "🔀 Needs Action?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.1,
+      "position": [
+        440,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Queue action to communication queue\nINSERT INTO communication_queue (\n  type, severity, body, channel, status, scheduled_for, metadata\n) VALUES (\n  $1,\n  CASE \n    WHEN $1 = 'escalate_to_sales' THEN 'high'\n    WHEN $1 = 'schedule_callback' THEN 'high'\n    ELSE 'medium'\n  END,\n  $2,\n  'internal',\n  'pending',\n  NOW(),\n  $3::jsonb\n);",
+        "options": {
+          "queryReplacement": "={{ [$('🧠 Aggregate Intelligence').first().json.intelligenceProfile.recommended_action ,  $('🧠 Aggregate Intelligence').first().json.company.business_name + ': ' + $('🧠 Aggregate Intelligence').first().json.intelligenceProfile.recommended_action ,  JSON.stringify({company_id: $('🧠 Aggregate Intelligence').first().json.company.id, intelligence_score: $('🧠 Aggregate Intelligence').first().json.intelligenceProfile.scoring.intelligence_score})] }}"
+        }
+      },
+      "id": "queue-action",
+      "name": "🗄️ Queue Action",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        680,
+        200
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CRED_ID",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Log intelligence aggregation\nINSERT INTO agent_audit_log (\n  action, action_type, success, output_data\n) VALUES (\n  'intelligence_aggregated',\n  'enrichment',\n  true,\n  $1::jsonb\n);",
+        "options": {
+          "queryReplacement": "={{ [JSON.stringify({company_id: $('🧠 Aggregate Intelligence').first().json.company.id, intelligence_score: $('🧠 Aggregate Intelligence').first().json.intelligenceProfile.scoring.intelligence_score, recommended_action: $('🧠 Aggregate Intelligence').first().json.intelligenceProfile.recommended_action, data_sources: $('🧠 Aggregate Intelligence').first().json.intelligenceProfile.enrichment.source_count})] }}"
+        }
+      },
+      "id": "log-aggregation",
+      "name": "🗄️ Log Aggregation",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        680,
+        500
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CRED_ID",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "no-companies",
+              "name": "message",
+              "value": "No companies need intelligence aggregation",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "no-companies",
+      "name": "📋 No Companies",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -280,
+        600
+      ]
+    }
+  ],
+  "connections": {
+    "⏰ Every 4 Hours": {
+      "main": [
+        [
+          {
+            "node": "🔍 Get Companies",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🌐 Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "🔍 Get Companies",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔍 Get Companies": {
+      "main": [
+        [
+          {
+            "node": "🔀 Has Companies?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔀 Has Companies?": {
+      "main": [
+        [
+          {
+            "node": "🔍 Get Enrichment Data",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "🔍 Get Outreach History",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "📋 No Companies",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔍 Get Enrichment Data": {
+      "main": [
+        [
+          {
+            "node": "🧠 Aggregate Intelligence",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔍 Get Outreach History": {
+      "main": [
+        [
+          {
+            "node": "🧠 Aggregate Intelligence",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🧠 Aggregate Intelligence": {
+      "main": [
+        [
+          {
+            "node": "🗄️ Update Company",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🗄️ Update Company": {
+      "main": [
+        [
+          {
+            "node": "🔀 Needs Action?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔀 Needs Action?": {
+      "main": [
+        [
+          {
+            "node": "🗄️ Queue Action",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "🗄️ Log Aggregation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🗄️ Queue Action": {
+      "main": [
+        [
+          {
+            "node": "🗄️ Log Aggregation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "name": "intelligence"
+    },
+    {
+      "name": "enrichment"
+    },
+    {
+      "name": "aggregation"
+    },
+    {
+      "name": "background-agent"
+    }
+  ],
+  "triggerCount": 2,
+  "pinData": {},
+  "versionId": "1",
+  "meta": {
+    "description": "Aggregates all intelligence about each company from multiple sources: enrichment results, outreach history, call outcomes, and CRM connections. Calculates comprehensive intelligence score and determines recommended next actions.",
+    "category": "enrichment",
+    "triggers": [
+      "schedule",
+      "webhook"
+    ],
+    "outputs": [
+      "companies",
+      "communication_queue",
+      "agent_audit_log"
+    ],
+    "requiredCredentials": [
+      "Supabase Postgres"
+    ]
+  }
+}

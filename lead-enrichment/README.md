@@ -6,7 +6,7 @@ A comprehensive **multi-tier lead enrichment system** for n8n that transforms ba
 
 This collection provides a complete lead enrichment pipeline with:
 - **9 orchestrator versions** (v2-v8 + adaptive + auto processor)
-- **9 specialized sub-workflows** for different data sources (including the critical Context Updater)
+- **10 specialized sub-workflows** for different data sources (including the critical Context Updater and Outreach Compiler)
 - **4 supporting workflows** for intelligence gathering and CRM sync
 
 ## Architecture
@@ -73,6 +73,7 @@ lead-enrichment/
 │
 ├── sub-workflows/           # Individual enrichment steps
 │   ├── Context_Updater_Company_Dossier.n8n.json  ⭐ CRITICAL - AI Context Merger
+│   ├── Lead_Outreach_Compiler.n8n.json           ⭐ CRITICAL - Final Outreach Prep
 │   ├── Firecrawl_Website_Enrichment_WORKING.n8n.json
 │   ├── Firecrawl_Website_Enrichment_FIXED.n8n.json
 │   ├── Firecrawl_Contact_Hunt_Sub-Workflow.n8n.json
@@ -239,6 +240,96 @@ The AI follows these rules:
 ```
 
 **Why this matters:** Without this workflow, each sub-workflow's data would be isolated. The Context Updater creates a unified, ever-growing dossier that subsequent enrichment steps can read and build upon.
+
+---
+
+### ⭐ Lead Outreach Compiler — Prepare for Sales (CRITICAL)
+**File:** `sub-workflows/Lead_Outreach_Compiler.n8n.json`
+
+**The final step that prepares enriched leads for outreach.** Aggregates all data, scores candidates, and generates sales-ready payloads.
+
+```
+Enrichment Complete
+        ↓
+Get Enriched Lead (enriched_leads table)
+Get Company Context (company_contexts table)
+Get Step Logs (workflow_step_logs table)
+        ↓
+Assemble Single Run Payload
+        ↓
+Build AI Candidate Context (scoring, outreach snippets)
+        ↓
+Filter & Enrich AI Candidates
+        ↓
+AI Candidate Extractor (Gemini 2.5 Flash)
+        ↓
+Parse & Score Candidates
+        ↓
+Build Final Enriched Row + HubSpot Payload
+        ↓
+Update enriched_leads table
+```
+
+**How it works:**
+
+| Step | Node | Action |
+|------|------|--------|
+| 1 | Get Enriched Lead | Fetch from `enriched_leads` table |
+| 2 | Get Company Context | Fetch `context_jsonb` from `company_contexts` |
+| 3 | Get Step Logs | Fetch all logs for this research run |
+| 4 | Assemble Payload | Merge, dedupe, sort logs by timestamp |
+| 5 | Build AI Candidate | Create candidate with scoring, outreach snippets |
+| 6 | Filter Candidates | Remove low-score with red flags, flag for manual review |
+| 7 | AI Extractor | Gemini 2.5 Flash extracts structured fields with provenance |
+| 8 | Candidate Scorer | Score by tool priority, provenance count, freshness |
+| 9 | Build Final Row | Merge AI picks with existing data, generate HubSpot payload |
+| 10 | Update DB | Upsert to `enriched_leads` with all fields |
+
+**Candidate Scoring Algorithm:**
+
+| Factor | Points |
+|--------|--------|
+| Provenance count | +3 per source |
+| Hunter.io data | +9 |
+| LinkedIn data | +8 |
+| Firecrawl data | +7 |
+| SerpAPI/Apify data | +6 |
+| Tool confidence | +0.2 × confidence |
+| LLM confidence | +0.1 × confidence |
+| Freshness (<1 day) | +10 |
+| Freshness (<7 days) | +6 |
+| Freshness (<30 days) | +3 |
+
+**Output (enriched_leads row):**
+```json
+{
+  "research_run_id": "...",
+  "company_id": "...",
+  "company_name": "Smith Auto Repair",
+  "company_domain": "smithauto.com",
+  "company_phone": "+15551234567",
+  "contact_firstname": "John",
+  "contact_lastname": "Smith",
+  "contact_email": "john@smithauto.com",
+  "contact_title": "Owner",
+  "dcs_score": 85,
+  "dcs_tier": "Gold",
+  "personalization_hooks": ["Family-owned 15 years", "4.8★ rating"],
+  "pain_points": ["Manual booking process"],
+  "buying_signals": ["Hiring technicians", "Recent expansion"],
+  "red_flags": [],
+  "talking_points": ["Consolidate listings", "Capture more bookings"],
+  "recommended_channel": "call",
+  "best_time_to_contact": "morning",
+  "outreach_ready": true,
+  "hubspot_payload": {
+    "company": { "name": "...", "domain": "...", ... },
+    "contact": { "firstname": "...", "email": "...", ... }
+  }
+}
+```
+
+**Why this matters:** This is where all the enrichment data becomes actionable. It scores, ranks, and packages leads for your sales team with ready-to-use outreach snippets and HubSpot-ready payloads.
 
 ---
 
@@ -624,9 +715,9 @@ The pipeline calculates a weighted completeness score:
 | Category | Files | Total Size |
 |----------|-------|-----------|
 | Orchestrators | 9 | ~306 KB |
-| Sub-workflows | 9 | ~200 KB |
+| Sub-workflows | 10 | ~230 KB |
 | Supporting | 4 | ~98 KB |
-| **Total** | **22 workflows** | **~604 KB** |
+| **Total** | **23 workflows** | **~634 KB** |
 
 ---
 

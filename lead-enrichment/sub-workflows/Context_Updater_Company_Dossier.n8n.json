@@ -1,0 +1,243 @@
+{
+  "name": "🧠 Context Updater — Company Dossier (workflow_step_logs → company_contexts)",
+  "nodes": [
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "select\n  coalesce(context_jsonb, '{}'::jsonb) as context_jsonb,\n  coalesce(context_summary, '') as context_summary\nfrom public.company_contexts\nwhere company_id = $1\n\nunion all\n\nselect '{}'::jsonb, ''\nwhere not exists (\n  select 1 from public.company_contexts where company_id = $1\n);",
+        "options": {
+          "queryReplacement": "={{$json.company_id}}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        80,
+        -16
+      ],
+      "id": "1649bd02-992b-4008-88b7-19e05fe191f2",
+      "name": "📥 DB — Get Company Context",
+      "credentials": {
+        "postgres": {
+          "id": "xogKD739Qe4gqWBU",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "gpt-5-mini",
+          "mode": "list",
+          "cachedResultName": "GPT-5-MINI"
+        },
+        "responses": {
+          "values": [
+            {
+              "content": "=Update the company context using the new log event.\n\ncompany_id: {{ $('📥 DB — Get Log By ID').item.json.company_id }}\n\nexisting_context_jsonb:\n{{ JSON.stringify($node[\"📥 DB — Get Company Context\"].json.context_jsonb) }}\n\nexisting_context_summary:\n{{ $node[\"📥 DB — Get Company Context\"].json.context_summary }}\n\nnew_log_event (already trimmed):\n{{ JSON.stringify($node[\"📥 DB — Get Log By ID\"].json, null, 2) }}\n"
+            },
+            {
+              "role": "system",
+              "content": "You are the Chief Intelligence Archivist. Your job is to build a comprehensive \"Master Dossier\" for a target company.\n\nGOAL:\nIncorporate new log data into the existing Master Dossier. Your goal is COMPLETENESS and ACCURACY.\n\nTOOLS:\n- You have access to a \"Date & Time\" tool. You MUST use this to get the current timestamp to resolve conflicts (e.g., \"Is this new log older than what I already have?\").\n\nRULES:\n1. **Accumulate:** Keep every unique phone number, email, and address.\n2. **Clean Data (IMPORTANT):** - Convert all phone numbers to strict E.164 format (e.g., +15551234567).\n   - Lowercase all emails.\n   - If you see a duplicate (e.g., \"(555) 123-4567\" and \"+15551234567\"), keep only the formatted E.164 version.\n3. **Structure:**\n   - 🆔 IDENTITY\n   - 📍 LOCATIONS\n   - 📞 CONTACTS\n   - 🌐 DIGITAL FOOTPRINT\n   - 🛠️ TECH & METRICS\n   - 📝 NOTES\n4. **Timestamps:** If a new log provides an \"Owner Name\" but the log is 6 months old, and you have an \"Owner Name\" from yesterday, KEEP THE NEWER ONE. Use your Date tool to figure this out.\n\n5. **IGNORE PRIVACY PLACEHOLDERS (CRITICAL):**\n   - If the \"Owner Name\" or \"Organization\" matches any of the following, DO NOT treat it as a valid identity. Mark the identity as \"Unknown\" instead.\n   - BLACKLIST:\n     - \"Knock Knock WHOIS Not There\"\n     - \"Domains By Proxy\"\n     - \"Super Privacy Service\"\n     - \"WhoisGuard\"\n     - \"Privacy Protect\"\n     - \"Contact Privacy Inc\"\n     - \"REDACTED FOR PRIVACY\"\n     - \"GDPR Masked\"\n   - If the only name found is on this list, leave the `identity.owner_name` field null.\n\nINPUTS:\n- Current Dossier\n- New Log Data\n\nOUTPUT:\nJSON object with \"context_jsonb\" and \"context_summary\"."
+            }
+          ]
+        },
+        "builtInTools": {},
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 2.1,
+      "position": [
+        288,
+        -16
+      ],
+      "id": "cb6e6598-a478-4d5a-b8c9-8749dc67da2a",
+      "name": "🧠 AI — Update Company Context (JSON)",
+      "credentials": {
+        "openAiApi": {
+          "id": "Lb7LQd5GQa1bZ9yX",
+          "name": "OpenAi account 4"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "company_id"
+            },
+            {
+              "name": "log_id"
+            },
+            {
+              "name": "research_run_id"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        -352,
+        -16
+      ],
+      "id": "441b218d-e08b-4d93-bbf5-5ae7f5fcb766",
+      "name": "When Executed by Another Workflow"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "select\n  log_id,\n  company_id,\n  research_run_id,\n  node_name,\n  node_id,\n  node_type,\n  stage,\n  status,\n  metadata,\n  output_data\nfrom workflow_step_logs\nwhere log_id = $1\nlimit 1;",
+        "options": {
+          "queryReplacement": "={{ [$json.log_id] }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -160,
+        -16
+      ],
+      "id": "1615b136-540a-4a3b-9e86-f706db9ed243",
+      "name": "📥 DB — Get Log By ID",
+      "credentials": {
+        "postgres": {
+          "id": "xogKD739Qe4gqWBU",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// 🧾 Extract — AI Context JSON (Fixed for Chat Model Output)\n// We fetch IDs directly from the Trigger node so they are never lost.\n// We robustly parse the AI response found in output[0].content[0].text\n\nconst inputContext = $('When Executed by Another Workflow').first().json;\nconst aiItem = $input.item.json;\n\nlet parsedAi = {};\n\ntry {\n  // 1. Locate the text string inside the complex AI output structure\n  let text = '';\n  \n  if (aiItem.output && Array.isArray(aiItem.output) && aiItem.output[0].content) {\n     // Standard Chat Model location\n     text = aiItem.output[0].content[0].text;\n  } else if (aiItem.message && aiItem.message.content) {\n     // Alternative location\n     text = aiItem.message.content;\n  } else {\n     // Fallback: assume the root might be the object (unlikely here but safe)\n     parsedAi = aiItem;\n  }\n\n  // 2. If we found text, clean it (remove ```json tags) and parse it\n  if (text) {\n      const cleanText = text.replace(/```json/g, '').replace(/```/g, '').trim();\n      parsedAi = JSON.parse(cleanText);\n  }\n\n} catch (e) {\n  // If parsing fails, default to empty to prevent workflow crash\n  parsedAi = {};\n}\n\nreturn [{\n  json: {\n    // 🔑 Re-attach IDs from the start of the workflow\n    company_id: inputContext.company_id,\n    log_id: inputContext.log_id,\n    research_run_id: inputContext.research_run_id,\n\n    // 🧠 Attach the AI's parsed output\n    context_jsonb: parsedAi.context_jsonb || {},\n    context_summary: parsedAi.context_summary || ''\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        624,
+        -16
+      ],
+      "id": "54e41b0d-47bc-4dc8-80c2-09b97cad88d5",
+      "name": "🧾 Extract — AI Context JSON"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "insert into public.company_contexts (\n  company_id, context_jsonb, context_summary, updated_at, last_research_run_id, last_log_id\n)\nvalues (\n  $1, $2::jsonb, $3, now(), $4, $5\n)\non conflict (company_id)\ndo update set\n  context_jsonb = excluded.context_jsonb,\n  context_summary = excluded.context_summary,\n  updated_at = now(),\n  last_research_run_id = excluded.last_research_run_id,\n  last_log_id = excluded.last_log_id;",
+        "options": {
+          "queryReplacement": "={{\n[\n  $json.company_id,\n  JSON.stringify($json.context_jsonb),\n  $json.context_summary,\n  $json.research_run_id,\n  $json.log_id\n]\n}}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        864,
+        -16
+      ],
+      "id": "74ae90dc-62cc-45ec-83f7-0e8d277c9ef6",
+      "name": "🗄️ DB — Upsert Company Context",
+      "credentials": {
+        "postgres": {
+          "id": "xogKD739Qe4gqWBU",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.dateTimeTool",
+      "typeVersion": 2,
+      "position": [
+        432,
+        192
+      ],
+      "id": "b304b800-2ff6-48d7-8462-3e159755bc78",
+      "name": "Date & Time"
+    }
+  ],
+  "connections": {
+    "📥 DB — Get Company Context": {
+      "main": [
+        [
+          {
+            "node": "🧠 AI — Update Company Context (JSON)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🧠 AI — Update Company Context (JSON)": {
+      "main": [
+        [
+          {
+            "node": "🧾 Extract — AI Context JSON",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "When Executed by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "📥 DB — Get Log By ID",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📥 DB — Get Log By ID": {
+      "main": [
+        [
+          {
+            "node": "📥 DB — Get Company Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🧾 Extract — AI Context JSON": {
+      "main": [
+        [
+          {
+            "node": "🗄️ DB — Upsert Company Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🗄️ DB — Upsert Company Context": {
+      "main": [
+        []
+      ]
+    },
+    "Date & Time": {
+      "ai_tool": [
+        [
+          {
+            "node": "🧠 AI — Update Company Context (JSON)",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "2d82e0d27c2a88970c7ba9693b6bad225f1d31f9cf0d392d33dd9cabf99f185f"
+  }
+}

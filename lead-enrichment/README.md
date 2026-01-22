@@ -6,7 +6,7 @@ A comprehensive **multi-tier lead enrichment system** for n8n that transforms ba
 
 This collection provides a complete lead enrichment pipeline with:
 - **9 orchestrator versions** (v2-v8 + adaptive + auto processor)
-- **8 specialized sub-workflows** for different data sources
+- **9 specialized sub-workflows** for different data sources (including the critical Context Updater)
 - **4 supporting workflows** for intelligence gathering and CRM sync
 
 ## Architecture
@@ -72,6 +72,7 @@ lead-enrichment/
 │   └── Auto_Enrichment_Processor.n8n.json
 │
 ├── sub-workflows/           # Individual enrichment steps
+│   ├── Context_Updater_Company_Dossier.n8n.json  ⭐ CRITICAL - AI Context Merger
 │   ├── Firecrawl_Website_Enrichment_WORKING.n8n.json
 │   ├── Firecrawl_Website_Enrichment_FIXED.n8n.json
 │   ├── Firecrawl_Contact_Hunt_Sub-Workflow.n8n.json
@@ -155,6 +156,91 @@ Batch processor for enriching multiple leads:
 ---
 
 ## Sub-Workflows
+
+### ⭐ Context Updater — Company Dossier (CRITICAL)
+**File:** `sub-workflows/Context_Updater_Company_Dossier.n8n.json`
+
+**This is the brain of the entire enrichment system.** Every sub-workflow calls this after logging data. It uses AI to intelligently merge new enrichment data into the master company dossier.
+
+```
+Sub-Workflow completes
+        ↓
+Writes to workflow_step_logs
+        ↓
+Calls Context Updater with log_id
+        ↓
+Context Updater reads log + existing context
+        ↓
+AI (GPT-5-mini) merges intelligently
+        ↓
+Upserts to company_contexts
+        ↓
+Next sub-workflow reads fresh context
+```
+
+**How it works:**
+
+| Step | Node | Action |
+|------|------|--------|
+| 1 | Get Log By ID | Fetch the new enrichment log from `workflow_step_logs` |
+| 2 | Get Company Context | Fetch existing `context_jsonb` from `company_contexts` |
+| 3 | AI Update Context | GPT-5-mini merges new data into existing dossier |
+| 4 | Extract JSON | Parse AI response, handle errors gracefully |
+| 5 | Upsert Context | Save merged context back to `company_contexts` |
+
+**AI System Prompt (Chief Intelligence Archivist):**
+
+The AI follows these rules:
+- **Accumulate:** Keep every unique phone, email, address
+- **Clean Data:**
+  - Phone → E.164 format (+15551234567)
+  - Email → lowercase
+  - Deduplicate formatted versions
+- **Structure:** Organize into sections (Identity, Locations, Contacts, Digital Footprint, Tech & Metrics, Notes)
+- **Timestamps:** Newer data wins for conflicting fields
+- **Privacy Blacklist:** Ignores fake owner names like "Domains By Proxy", "WhoisGuard", "REDACTED FOR PRIVACY"
+
+**Output Schema (context_jsonb):**
+```json
+{
+  "identity": {
+    "owner_name": "John Smith",
+    "company_name": "Smith Auto Repair",
+    "legal_name": "Smith Automotive LLC"
+  },
+  "locations": {
+    "primary_address": "123 Main St, Austin, TX 78701",
+    "coordinates": { "lat": 30.123, "lng": -97.456 }
+  },
+  "contacts": {
+    "phones": ["+15551234567", "+15559876543"],
+    "emails": ["john@smithauto.com", "service@smithauto.com"],
+    "social": {
+      "linkedin": "https://linkedin.com/in/johnsmith",
+      "facebook": "https://facebook.com/smithauto"
+    }
+  },
+  "digital_footprint": {
+    "domain": "smithauto.com",
+    "tech_stack": ["Shop-Ware", "Podium", "Google Business"],
+    "google_rating": 4.8,
+    "review_count": 245
+  },
+  "tech_metrics": {
+    "employee_count": 12,
+    "years_in_business": 15,
+    "services": ["Oil Change", "Brakes", "Tires", "Engine Repair"]
+  },
+  "notes": {
+    "enrichment_sources": ["firecrawl", "serpapi", "hunter", "linkedin"],
+    "last_updated": "2024-01-22T14:30:00Z"
+  }
+}
+```
+
+**Why this matters:** Without this workflow, each sub-workflow's data would be isolated. The Context Updater creates a unified, ever-growing dossier that subsequent enrichment steps can read and build upon.
+
+---
 
 ### Firecrawl Website Enrichment
 **File:** `sub-workflows/Firecrawl_Website_Enrichment_WORKING.n8n.json`
@@ -538,9 +624,9 @@ The pipeline calculates a weighted completeness score:
 | Category | Files | Total Size |
 |----------|-------|-----------|
 | Orchestrators | 9 | ~306 KB |
-| Sub-workflows | 8 | ~190 KB |
+| Sub-workflows | 9 | ~200 KB |
 | Supporting | 4 | ~98 KB |
-| **Total** | **21 workflows** | **~594 KB** |
+| **Total** | **22 workflows** | **~604 KB** |
 
 ---
 

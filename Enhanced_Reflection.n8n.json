@@ -1,0 +1,531 @@
+{
+  "name": "Enhanced Reflection & Learning",
+  "nodes": [
+    {
+      "id": "trigger-001",
+      "name": "When Executed by Another Workflow",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        240,
+        300
+      ],
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "session_id",
+              "type": "string"
+            },
+            {
+              "name": "user_input",
+              "type": "string"
+            },
+            {
+              "name": "intake_plan",
+              "type": "string"
+            },
+            {
+              "name": "main_agent_output",
+              "type": "string"
+            },
+            {
+              "name": "tools_used",
+              "type": "string"
+            },
+            {
+              "name": "was_successful",
+              "type": "boolean"
+            },
+            {
+              "name": "user_feedback",
+              "type": "string"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "parse-intake-001",
+      "name": "Parse Intake Plan",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        460,
+        300
+      ],
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\n\nlet intake = {};\ntry {\n  // Try to parse intake_plan as JSON\n  let planStr = input.intake_plan || '';\n  \n  // Extract JSON from markdown if present\n  const jsonMatch = planStr.match(/```json\\n?([\\s\\S]*?)\\n?```/);\n  if (jsonMatch) {\n    planStr = jsonMatch[1];\n  }\n  \n  intake = JSON.parse(planStr);\n} catch (e) {\n  intake = {\n    intent: 'unknown',\n    priority: 'medium',\n    confidence_score: 0.5,\n    execution_plan: [],\n    context_notes: ''\n  };\n}\n\n// Parse tools_used\nlet tools = [];\ntry {\n  tools = JSON.parse(input.tools_used || '[]');\n  if (!Array.isArray(tools)) tools = [tools];\n} catch (e) {\n  // Try splitting by comma\n  tools = (input.tools_used || '').split(',').map(t => t.trim()).filter(Boolean);\n}\n\nreturn [{\n  json: {\n    session_id: input.session_id,\n    user_input: input.user_input,\n    user_intent: intake.intent || 'unknown',\n    task_type: intake.priority || 'medium',\n    predicted_confidence: parseFloat(intake.confidence_score) || 0.5,\n    execution_plan: intake.execution_plan || [],\n    context_notes: intake.context_notes || '',\n    tools_used: tools,\n    main_agent_output: input.main_agent_output,\n    was_successful: input.was_successful !== false,\n    user_feedback: input.user_feedback || ''\n  }\n}];"
+      }
+    },
+    {
+      "id": "reflect-001",
+      "name": "Generate Reflection (LLM)",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.4,
+      "position": [
+        680,
+        300
+      ],
+      "parameters": {
+        "promptType": "define",
+        "text": "=You are the REFLECTION module of an AI agent. Analyze this interaction and provide metacognitive insights.\n\n## Interaction Data\n**User Request:** {{ $json.user_input }}\n\n**Predicted Intent:** {{ $json.user_intent }}\n\n**Predicted Confidence:** {{ $json.predicted_confidence }}\n\n**Execution Plan:** {{ JSON.stringify($json.execution_plan) }}\n\n**Tools Actually Used:** {{ JSON.stringify($json.tools_used) }}\n\n**Agent Output:** {{ $json.main_agent_output?.substring(0, 500) }}...\n\n**Was Successful:** {{ $json.was_successful }}\n\n**User Feedback:** {{ $json.user_feedback || 'None provided' }}\n\n## Your Analysis Task\n\nRate the interaction and provide insights:\n\n1. **Outcome Score (0-1):** How well did the agent accomplish the task?\n   - 1.0 = Perfect execution, user satisfied\n   - 0.7-0.9 = Completed with minor issues\n   - 0.4-0.6 = Partially completed or needed multiple attempts\n   - 0.1-0.3 = Failed or user frustrated\n\n2. **Calibration Analysis:** Compare predicted_confidence vs actual outcome\n   - Was the agent overconfident or underconfident?\n\n3. **Tool Efficiency:** Did the agent use the right tools? Too many? Too few?\n\n4. **Improvement Suggestions:** What should the agent do differently next time?\n\n## Output Format (JSON only):\n```json\n{\n  \"actual_outcome_score\": 0.0-1.0,\n  \"calibration_error\": predicted_confidence - actual_outcome_score,\n  \"was_overconfident\": true/false,\n  \"tool_efficiency\": \"optimal|excessive|insufficient\",\n  \"reflection_notes\": \"What went well or poorly\",\n  \"suggested_improvements\": [\"improvement 1\", \"improvement 2\"],\n  \"should_create_lesson\": true/false,\n  \"lesson_type\": \"success|failure|insight\"\n}\n```"
+      }
+    },
+    {
+      "id": "llm-001",
+      "name": "GPT-4o-mini",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.2,
+      "position": [
+        500,
+        180
+      ],
+      "parameters": {
+        "model": "gpt-4o-mini",
+        "options": {
+          "temperature": 0.3,
+          "maxTokens": 400
+        }
+      },
+      "credentials": {
+        "openAiApi": {
+          "id": "OPENAI_CRED_ID",
+          "name": "OpenAI API"
+        }
+      }
+    },
+    {
+      "id": "parse-reflection-001",
+      "name": "Parse Reflection",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        900,
+        300
+      ],
+      "parameters": {
+        "jsCode": "const input = $('Parse Intake Plan').first().json;\nconst llmOutput = $input.first().json.text || $input.first().json.response || '';\n\nlet reflection = {};\ntry {\n  let jsonStr = llmOutput;\n  const jsonMatch = llmOutput.match(/```json\\n?([\\s\\S]*?)\\n?```/);\n  if (jsonMatch) {\n    jsonStr = jsonMatch[1];\n  }\n  reflection = JSON.parse(jsonStr);\n} catch (e) {\n  reflection = {\n    actual_outcome_score: input.was_successful ? 0.8 : 0.3,\n    calibration_error: 0,\n    reflection_notes: 'Failed to parse reflection',\n    suggested_improvements: [],\n    should_create_lesson: false\n  };\n}\n\nreturn [{\n  json: {\n    ...input,\n    actual_outcome_score: parseFloat(reflection.actual_outcome_score) || 0.5,\n    calibration_error: parseFloat(reflection.calibration_error) || (input.predicted_confidence - (reflection.actual_outcome_score || 0.5)),\n    was_overconfident: reflection.was_overconfident || false,\n    tool_efficiency: reflection.tool_efficiency || 'unknown',\n    reflection_notes: reflection.reflection_notes || '',\n    suggested_improvements: reflection.suggested_improvements || [],\n    should_create_lesson: reflection.should_create_lesson || false,\n    lesson_type: reflection.lesson_type || 'insight'\n  }\n}];"
+      }
+    },
+    {
+      "id": "save-metacog-001",
+      "name": "Save Metacognition",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1120,
+        300
+      ],
+      "parameters": {
+        "operation": "insert",
+        "schema": "public",
+        "table": "agent_metacognition",
+        "columns": {
+          "mappingMode": "defineBelow",
+          "values": [
+            {
+              "column": "session_id",
+              "value": "={{ $json.session_id }}"
+            },
+            {
+              "column": "user_intent",
+              "value": "={{ $json.user_intent }}"
+            },
+            {
+              "column": "task_type",
+              "value": "={{ $json.task_type }}"
+            },
+            {
+              "column": "tools_used",
+              "value": "={{ JSON.stringify($json.tools_used) }}"
+            },
+            {
+              "column": "predicted_confidence",
+              "value": "={{ $json.predicted_confidence }}"
+            },
+            {
+              "column": "actual_outcome_score",
+              "value": "={{ $json.actual_outcome_score }}"
+            },
+            {
+              "column": "calibration_error",
+              "value": "={{ $json.calibration_error }}"
+            },
+            {
+              "column": "reflection_notes",
+              "value": "={{ $json.reflection_notes }}"
+            },
+            {
+              "column": "suggested_improvements",
+              "value": "={{ JSON.stringify($json.suggested_improvements) }}"
+            }
+          ]
+        },
+        "options": {
+          "returnFields": [
+            "id"
+          ]
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CRED_ID",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "id": "prep-metacog-001",
+      "name": "Prepare Metacognition Data",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1120,
+        180
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "session_id",
+              "name": "session_id",
+              "type": "string",
+              "value": "={{ $json.session_id }}"
+            },
+            {
+              "id": "user_intent",
+              "name": "user_intent",
+              "type": "string",
+              "value": "={{ $json.user_intent }}"
+            },
+            {
+              "id": "task_type",
+              "name": "task_type",
+              "type": "string",
+              "value": "={{ $json.task_type }}"
+            },
+            {
+              "id": "tools_used",
+              "name": "tools_used",
+              "type": "string",
+              "value": "={{ JSON.stringify($json.tools_used) }}"
+            },
+            {
+              "id": "predicted_confidence",
+              "name": "predicted_confidence",
+              "type": "number",
+              "value": "={{ $json.predicted_confidence }}"
+            },
+            {
+              "id": "actual_outcome_score",
+              "name": "actual_outcome_score",
+              "type": "number",
+              "value": "={{ $json.actual_outcome_score }}"
+            },
+            {
+              "id": "calibration_error",
+              "name": "calibration_error",
+              "type": "number",
+              "value": "={{ $json.calibration_error }}"
+            },
+            {
+              "id": "reflection_notes",
+              "name": "reflection_notes",
+              "type": "string",
+              "value": "={{ $json.reflection_notes }}"
+            },
+            {
+              "id": "suggested_improvements",
+              "name": "suggested_improvements",
+              "type": "string",
+              "value": "={{ JSON.stringify($json.suggested_improvements) }}"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "check-lesson-001",
+      "name": "IF Should Create Lesson",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1340,
+        300
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "should-lesson",
+              "leftValue": "={{ $('Parse Reflection').first().json.should_create_lesson }}",
+              "rightValue": "true",
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "call-extractor-001",
+      "name": "Call Smart Lesson Extractor",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        1560,
+        200
+      ],
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "REPLACE_WITH_LESSON_EXTRACTOR_ID"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "prep-extractor-001",
+      "name": "Prepare Extractor Input",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1560,
+        80
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "user_input",
+              "name": "user_input",
+              "type": "string",
+              "value": "={{ $('Parse Reflection').first().json.user_input }}"
+            },
+            {
+              "id": "agent_plan",
+              "name": "agent_plan",
+              "type": "string",
+              "value": "={{ JSON.stringify($('Parse Reflection').first().json.execution_plan) }}"
+            },
+            {
+              "id": "tools_used",
+              "name": "tools_used",
+              "type": "string",
+              "value": "={{ JSON.stringify($('Parse Reflection').first().json.tools_used) }}"
+            },
+            {
+              "id": "agent_output",
+              "name": "agent_output",
+              "type": "string",
+              "value": "={{ $('Parse Reflection').first().json.main_agent_output }}"
+            },
+            {
+              "id": "was_successful",
+              "name": "was_successful",
+              "type": "boolean",
+              "value": "={{ $('Parse Reflection').first().json.was_successful }}"
+            },
+            {
+              "id": "session_id",
+              "name": "session_id",
+              "type": "string",
+              "value": "={{ $('Parse Reflection').first().json.session_id }}"
+            },
+            {
+              "id": "task_type",
+              "name": "task_type",
+              "type": "string",
+              "value": "={{ $('Parse Reflection').first().json.lesson_type }}"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "skip-lesson-001",
+      "name": "Skip Lesson Creation",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        1560,
+        400
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "return-001",
+      "name": "Return Result",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1780,
+        300
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "result",
+              "name": "result",
+              "type": "object",
+              "value": "={{ {\n  reflected: true,\n  outcome_score: $('Parse Reflection').first().json.actual_outcome_score,\n  calibration_error: $('Parse Reflection').first().json.calibration_error,\n  lesson_created: $('Parse Reflection').first().json.should_create_lesson\n} }}"
+            }
+          ]
+        },
+        "options": {}
+      }
+    }
+  ],
+  "connections": {
+    "When Executed by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "Parse Intake Plan",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Intake Plan": {
+      "main": [
+        [
+          {
+            "node": "Generate Reflection (LLM)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Reflection (LLM)": {
+      "main": [
+        [
+          {
+            "node": "Parse Reflection",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GPT-4o-mini": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Generate Reflection (LLM)",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Reflection": {
+      "main": [
+        [
+          {
+            "node": "Prepare Metacognition Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Metacognition Data": {
+      "main": [
+        [
+          {
+            "node": "Save Metacognition",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Metacognition": {
+      "main": [
+        [
+          {
+            "node": "IF Should Create Lesson",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF Should Create Lesson": {
+      "main": [
+        [
+          {
+            "node": "Prepare Extractor Input",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Skip Lesson Creation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Extractor Input": {
+      "main": [
+        [
+          {
+            "node": "Call Smart Lesson Extractor",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Smart Lesson Extractor": {
+      "main": [
+        [
+          {
+            "node": "Return Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Skip Lesson Creation": {
+      "main": [
+        [
+          {
+            "node": "Return Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "saveManualExecutions": true,
+    "saveExecutionProgress": true,
+    "callerPolicy": "workflowsFromSameOwner"
+  }
+}

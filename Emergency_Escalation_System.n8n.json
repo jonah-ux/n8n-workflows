@@ -1,0 +1,794 @@
+{
+  "name": "🚨 Emergency Escalation System",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 2
+            }
+          ]
+        }
+      },
+      "id": "trigger-frequent",
+      "name": "🔄 Every 2 Minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Check for emergency conditions\nWITH error_surge AS (\n  SELECT \n    COUNT(*) as error_count,\n    COUNT(*) > 20 as is_surge\n  FROM workflow_execution_errors\n  WHERE created_at >= NOW() - INTERVAL '10 minutes'\n),\ncritical_failures AS (\n  SELECT \n    workflow_name,\n    COUNT(*) as failure_count\n  FROM workflow_executions\n  WHERE status = 'error'\n    AND started_at >= NOW() - INTERVAL '30 minutes'\n  GROUP BY workflow_name\n  HAVING COUNT(*) >= 5\n),\nstalled_processes AS (\n  SELECT \n    COUNT(*) as stalled_count\n  FROM research_runs\n  WHERE status = 'processing'\n    AND updated_at < NOW() - INTERVAL '2 hours'\n),\nunacknowledged_criticals AS (\n  SELECT \n    COUNT(*) as unacked_count\n  FROM communication_queue\n  WHERE severity = 'critical'\n    AND status = 'sent'\n    AND sent_at < NOW() - INTERVAL '15 minutes'\n    AND id NOT IN (SELECT message_id FROM alert_acknowledgments)\n),\nkill_switch AS (\n  SELECT kill_switch FROM agent_controls LIMIT 1\n)\nSELECT \n  es.error_count,\n  es.is_surge,\n  COALESCE(array_agg(DISTINCT cf.workflow_name) FILTER (WHERE cf.workflow_name IS NOT NULL), ARRAY[]::text[]) as failing_workflows,\n  sp.stalled_count,\n  uc.unacked_count,\n  ks.kill_switch,\n  CASE \n    WHEN ks.kill_switch = true THEN 'kill_switch_active'\n    WHEN es.error_count > 50 THEN 'critical'\n    WHEN es.error_count > 20 OR uc.unacked_count > 0 THEN 'high'\n    WHEN es.error_count > 10 OR sp.stalled_count > 5 THEN 'medium'\n    ELSE 'normal'\n  END as system_status\nFROM error_surge es\nCROSS JOIN stalled_processes sp\nCROSS JOIN unacknowledged_criticals uc\nCROSS JOIN kill_switch ks\nLEFT JOIN critical_failures cf ON true\nGROUP BY es.error_count, es.is_surge, sp.stalled_count, uc.unacked_count, ks.kill_switch",
+        "options": {}
+      },
+      "id": "check-emergency",
+      "name": "🗄️ Check Emergency Conditions",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        220,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CRED_ID",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "is-emergency",
+              "leftValue": "={{ $json[0]?.system_status }}",
+              "rightValue": "normal",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-status",
+      "name": "📋 Emergency Status?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.1,
+      "position": [
+        440,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Determine escalation level and actions\nconst status = $input.item.json[0] || {};\n\nconst escalation = {\n  timestamp: new Date().toISOString(),\n  system_status: status.system_status,\n  error_count: status.error_count || 0,\n  is_surge: status.is_surge,\n  stalled_count: status.stalled_count || 0,\n  unacked_criticals: status.unacked_count || 0,\n  failing_workflows: status.failing_workflows || [],\n  kill_switch_active: status.kill_switch || false,\n  \n  // Escalation level\n  level: 0,\n  actions: [],\n  notifications: []\n};\n\n// Determine level and required actions\nswitch(status.system_status) {\n  case 'kill_switch_active':\n    escalation.level = 4;\n    escalation.actions = ['all_workflows_paused', 'manual_intervention_required'];\n    escalation.notifications = ['sms_owner', 'slack_critical', 'email_team'];\n    break;\n    \n  case 'critical':\n    escalation.level = 3;\n    escalation.actions = [\n      'pause_outreach_workflows',\n      'enable_error_throttling',\n      'snapshot_system_state',\n      'trigger_diagnostic'\n    ];\n    escalation.notifications = ['sms_owner', 'sms_oncall', 'slack_critical', 'phone_call'];\n    break;\n    \n  case 'high':\n    escalation.level = 2;\n    escalation.actions = [\n      'throttle_batch_operations',\n      'increase_monitoring',\n      'prepare_rollback'\n    ];\n    escalation.notifications = ['sms_owner', 'slack_urgent'];\n    break;\n    \n  case 'medium':\n    escalation.level = 1;\n    escalation.actions = [\n      'log_warning',\n      'increase_monitoring'\n    ];\n    escalation.notifications = ['slack_warning'];\n    break;\n}\n\n// Generate summary message\nconst summaryParts = [];\nif (status.error_count > 0) summaryParts.push(`${status.error_count} errors in last 10min`);\nif (status.stalled_count > 0) summaryParts.push(`${status.stalled_count} stalled processes`);\nif (status.unacked_count > 0) summaryParts.push(`${status.unacked_count} unacked critical alerts`);\nif (status.failing_workflows?.length > 0) summaryParts.push(`Failing: ${status.failing_workflows.slice(0, 3).join(', ')}`);\n\nescalation.summary = summaryParts.join(' | ') || 'Unknown issue';\n\nreturn [{ json: escalation }];"
+      },
+      "id": "determine-escalation",
+      "name": "⚙️ Determine Escalation",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        -100
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Log escalation event\nINSERT INTO escalation_events (\n  escalation_level,\n  system_status,\n  error_count,\n  stalled_count,\n  failing_workflows,\n  summary,\n  actions_taken,\n  notifications_sent,\n  created_at\n) VALUES (\n  $1, $2, $3, $4, $5, $6, $7, $8, NOW()\n)\nRETURNING id",
+        "options": {
+          "queryReplacement": "={{ [\n  $json.level,\n  $json.system_status,\n  $json.error_count,\n  $json.stalled_count,\n  $json.failing_workflows,\n  $json.summary,\n  $json.actions,\n  $json.notifications\n] }}"
+        }
+      },
+      "id": "log-escalation",
+      "name": "🗄️ Log Escalation",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        880,
+        -100
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CRED_ID",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "level-3-plus",
+              "leftValue": "={{ $json.level }}",
+              "rightValue": 3,
+              "operator": {
+                "type": "number",
+                "operation": "gte"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-critical",
+      "name": "📋 Critical Level?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.1,
+      "position": [
+        1100,
+        -100
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Pause outreach workflows (critical action)\nUPDATE outreach_sequences\nSET \n  status = 'paused',\n  pause_reason = 'emergency_escalation',\n  paused_at = NOW()\nWHERE status = 'active'",
+        "options": {}
+      },
+      "id": "pause-outreach",
+      "name": "🗄️ Pause Outreach",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1320,
+        -200
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CRED_ID",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "=https://api.salesmsg.com/v1/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.SALESMSG_API_KEY }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"to\": \"{{ $env.OWNER_PHONE_NUMBER }}\",\n  \"message\": \"🚨 CRITICAL SYSTEM ALERT\\n\\nLevel: {{ $('⚙️ Determine Escalation').item.json.level }}/4\\nStatus: {{ $('⚙️ Determine Escalation').item.json.system_status }}\\n\\n{{ $('⚙️ Determine Escalation').item.json.summary }}\\n\\nOutreach workflows PAUSED.\\n\\nTime: {{ new Date().toLocaleString() }}\\n\\nReply RESUME to restore operations.\"\n}",
+        "options": {}
+      },
+      "id": "sms-owner-critical",
+      "name": "📤 SMS Owner (Critical)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1540,
+        -300
+      ],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "url": "=https://api.salesmsg.com/v1/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.SALESMSG_API_KEY }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"to\": \"{{ $env.ONCALL_PHONE_NUMBER }}\",\n  \"message\": \"🚨 CRITICAL: Auto Shop Media systems need attention.\\n\\n{{ $('⚙️ Determine Escalation').item.json.summary }}\\n\\nCheck Slack #tech-alerts immediately.\"\n}",
+        "options": {}
+      },
+      "id": "sms-oncall",
+      "name": "📤 SMS On-Call",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1540,
+        -100
+      ],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO communication_queue (\n  severity,\n  type,\n  title,\n  body,\n  channel,\n  status,\n  scheduled_for,\n  metadata\n) VALUES (\n  'critical',\n  'system_emergency',\n  $1,\n  $2,\n  'slack',\n  'pending',\n  NOW(),\n  $3\n)",
+        "options": {
+          "queryReplacement": "={{ [\n  `🚨 CRITICAL SYSTEM ALERT - Level ${$('⚙️ Determine Escalation').item.json.level}`,\n  `**System Status:** ${$('⚙️ Determine Escalation').item.json.system_status}\\n\\n**Summary:** ${$('⚙️ Determine Escalation').item.json.summary}\\n\\n**Actions Taken:**\\n${$('⚙️ Determine Escalation').item.json.actions.map(a => `• ${a}`).join('\\n')}\\n\\n**Failing Workflows:**\\n${($('⚙️ Determine Escalation').item.json.failing_workflows || []).map(w => `• ${w}`).join('\\n') || 'None identified'}\\n\\n⚠️ Outreach workflows have been PAUSED.\\n\\n@channel Please investigate immediately.`,\n  JSON.stringify({\n    level: $('⚙️ Determine Escalation').item.json.level,\n    system_status: $('⚙️ Determine Escalation').item.json.system_status\n  })\n] }}"
+        }
+      },
+      "id": "queue-slack-critical",
+      "name": "🗄️ Queue Slack Critical",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1760,
+        -200
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CRED_ID",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "level-2",
+              "leftValue": "={{ $('⚙️ Determine Escalation').item.json.level }}",
+              "rightValue": 2,
+              "operator": {
+                "type": "number",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-high",
+      "name": "📋 High Level?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.1,
+      "position": [
+        1320,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "url": "=https://api.salesmsg.com/v1/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.SALESMSG_API_KEY }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"to\": \"{{ $env.OWNER_PHONE_NUMBER }}\",\n  \"message\": \"⚠️ HIGH ALERT\\n\\n{{ $('⚙️ Determine Escalation').item.json.summary }}\\n\\nMonitoring increased. Check Slack for details.\"\n}",
+        "options": {}
+      },
+      "id": "sms-owner-high",
+      "name": "📤 SMS Owner (High)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1540,
+        100
+      ],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO communication_queue (\n  severity,\n  type,\n  title,\n  body,\n  channel,\n  status,\n  scheduled_for,\n  metadata\n) VALUES (\n  'high',\n  'system_warning',\n  $1,\n  $2,\n  'slack',\n  'pending',\n  NOW(),\n  $3\n)",
+        "options": {
+          "queryReplacement": "={{ [\n  `⚠️ HIGH ALERT - System Warning`,\n  `**Summary:** ${$('⚙️ Determine Escalation').item.json.summary}\\n\\n**Error Count:** ${$('⚙️ Determine Escalation').item.json.error_count}\\n**Stalled Processes:** ${$('⚙️ Determine Escalation').item.json.stalled_count}\\n\\n**Actions:**\\n${$('⚙️ Determine Escalation').item.json.actions.map(a => `• ${a}`).join('\\n')}`,\n  JSON.stringify({\n    level: 2,\n    error_count: $('⚙️ Determine Escalation').item.json.error_count\n  })\n] }}"
+        }
+      },
+      "id": "queue-slack-high",
+      "name": "🗄️ Queue Slack High",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1760,
+        100
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CRED_ID",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO communication_queue (\n  severity,\n  type,\n  title,\n  body,\n  channel,\n  status,\n  scheduled_for,\n  metadata\n) VALUES (\n  'medium',\n  'system_notice',\n  $1,\n  $2,\n  'slack',\n  'pending',\n  NOW(),\n  $3\n)",
+        "options": {
+          "queryReplacement": "={{ [\n  `📢 System Notice - Elevated Activity`,\n  `${$('⚙️ Determine Escalation').item.json.summary}\\n\\nMonitoring has been increased. No action required unless escalation continues.`,\n  JSON.stringify({\n    level: 1,\n    error_count: $('⚙️ Determine Escalation').item.json.error_count\n  })\n] }}"
+        }
+      },
+      "id": "queue-slack-medium",
+      "name": "🗄️ Queue Slack Medium",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1540,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CRED_ID",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineAll",
+        "options": {}
+      },
+      "id": "merge-all",
+      "name": "🤝 Merge All",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [
+        1980,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO workflow_executions (\n  execution_id,\n  workflow_id,\n  workflow_name,\n  status,\n  started_at,\n  finished_at,\n  duration_ms,\n  metadata\n) VALUES (\n  $1,\n  'emergency-escalation-system',\n  '🚨 Emergency Escalation System',\n  'success',\n  $2,\n  NOW(),\n  EXTRACT(EPOCH FROM (NOW() - $2::timestamp)) * 1000,\n  $3\n)",
+        "options": {
+          "queryReplacement": "={{ [\n  $execution.id,\n  $execution.startedAt || new Date().toISOString(),\n  JSON.stringify({\n    system_status: $('🗄️ Check Emergency Conditions').item.json[0]?.system_status || 'normal',\n    escalation_triggered: $('📋 Emergency Status?').item.json !== undefined\n  })\n] }}"
+        }
+      },
+      "id": "log-execution",
+      "name": "🗄️ Log Execution",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        2200,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CRED_ID",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "emergency-resume",
+        "options": {}
+      },
+      "id": "webhook-resume",
+      "name": "🔔 Resume Operations Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        500
+      ],
+      "webhookId": "emergency-resume"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Validate resume request\nconst body = $input.item.json.body || $input.item.json;\nconst authToken = body.auth_token;\nconst expectedToken = $env.EMERGENCY_AUTH_TOKEN || 'default-secure-token';\n\nif (authToken !== expectedToken) {\n  return [{\n    json: {\n      authorized: false,\n      message: 'Invalid authorization token'\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    authorized: true,\n    requested_by: body.requested_by || 'unknown',\n    resume_type: body.resume_type || 'all',\n    timestamp: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "validate-resume",
+      "name": "⚙️ Validate Resume Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "is-authorized",
+              "leftValue": "={{ $json.authorized }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-authorized",
+      "name": "📋 Authorized?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.1,
+      "position": [
+        440,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Resume paused outreach sequences\nUPDATE outreach_sequences\nSET \n  status = 'active',\n  pause_reason = NULL,\n  resumed_at = NOW(),\n  resumed_by = $1\nWHERE status = 'paused'\n  AND pause_reason = 'emergency_escalation'\nRETURNING *",
+        "options": {
+          "queryReplacement": "={{ [$json.requested_by] }}"
+        }
+      },
+      "id": "resume-outreach",
+      "name": "🗄️ Resume Outreach",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        660,
+        400
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CRED_ID",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Log resume event\nINSERT INTO escalation_events (\n  escalation_level,\n  system_status,\n  summary,\n  actions_taken,\n  created_at\n) VALUES (\n  0,\n  'resumed',\n  $1,\n  ARRAY['operations_resumed'],\n  NOW()\n)",
+        "options": {
+          "queryReplacement": "={{ [`Operations resumed by ${$('⚙️ Validate Resume Request').item.json.requested_by}`] }}"
+        }
+      },
+      "id": "log-resume",
+      "name": "🗄️ Log Resume",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        880,
+        400
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CRED_ID",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"success\": {{ $('📋 Authorized?').item.json.authorized ? 'true' : 'false' }},\n  \"message\": \"{{ $('📋 Authorized?').item.json.authorized ? 'Operations resumed successfully' : 'Unauthorized request' }}\",\n  \"sequences_resumed\": {{ $('🗄️ Resume Outreach').item.json?.length || 0 }}\n}",
+        "options": {}
+      },
+      "id": "respond-resume",
+      "name": "📤 Respond Resume",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1100,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Emergency Escalation System\n\n**Purpose:** Monitor system health and escalate emergencies\n\n**Schedule:** Every 2 minutes (fast response)\n\n**Emergency Conditions:**\n- Error surge (>20 in 10 min)\n- Critical failures (>5 per workflow)\n- Stalled processes (>2 hours)\n- Unacknowledged criticals (>15 min)\n- Kill switch activated\n\n**Escalation Levels:**\n- Level 4: Kill switch (all paused)\n- Level 3: Critical (pause + multi-channel alert)\n- Level 2: High (SMS owner + Slack)\n- Level 1: Medium (Slack warning)\n- Level 0: Normal (no action)\n\n**Actions by Level:**\n- Critical: Pause outreach, SMS all, phone call\n- High: Throttle batches, SMS owner\n- Medium: Increased monitoring\n\n**Recovery:**\n- Resume webhook with auth token\n- Resumes paused sequences\n- Logs recovery event\n\n**Tables:**\n- escalation_events (history)\n- alert_acknowledgments (tracking)\n- agent_controls (kill switch)",
+        "height": 560,
+        "width": 360,
+        "color": 4
+      },
+      "id": "workflow-note",
+      "name": "📝 Workflow Info",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -60,
+        -520
+      ]
+    }
+  ],
+  "connections": {
+    "🔄 Every 2 Minutes": {
+      "main": [
+        [
+          {
+            "node": "🗄️ Check Emergency Conditions",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🗄️ Check Emergency Conditions": {
+      "main": [
+        [
+          {
+            "node": "📋 Emergency Status?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📋 Emergency Status?": {
+      "main": [
+        [
+          {
+            "node": "⚙️ Determine Escalation",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "🗄️ Log Execution",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "⚙️ Determine Escalation": {
+      "main": [
+        [
+          {
+            "node": "🗄️ Log Escalation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🗄️ Log Escalation": {
+      "main": [
+        [
+          {
+            "node": "📋 Critical Level?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📋 Critical Level?": {
+      "main": [
+        [
+          {
+            "node": "🗄️ Pause Outreach",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "📋 High Level?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🗄️ Pause Outreach": {
+      "main": [
+        [
+          {
+            "node": "📤 SMS Owner (Critical)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "📤 SMS On-Call",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📤 SMS Owner (Critical)": {
+      "main": [
+        [
+          {
+            "node": "🗄️ Queue Slack Critical",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📤 SMS On-Call": {
+      "main": [
+        [
+          {
+            "node": "🗄️ Queue Slack Critical",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🗄️ Queue Slack Critical": {
+      "main": [
+        [
+          {
+            "node": "🤝 Merge All",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📋 High Level?": {
+      "main": [
+        [
+          {
+            "node": "📤 SMS Owner (High)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "🗄️ Queue Slack Medium",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📤 SMS Owner (High)": {
+      "main": [
+        [
+          {
+            "node": "🗄️ Queue Slack High",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🗄️ Queue Slack High": {
+      "main": [
+        [
+          {
+            "node": "🤝 Merge All",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🗄️ Queue Slack Medium": {
+      "main": [
+        [
+          {
+            "node": "🤝 Merge All",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🤝 Merge All": {
+      "main": [
+        [
+          {
+            "node": "🗄️ Log Execution",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔔 Resume Operations Webhook": {
+      "main": [
+        [
+          {
+            "node": "⚙️ Validate Resume Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "⚙️ Validate Resume Request": {
+      "main": [
+        [
+          {
+            "node": "📋 Authorized?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📋 Authorized?": {
+      "main": [
+        [
+          {
+            "node": "🗄️ Resume Outreach",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "📤 Respond Resume",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🗄️ Resume Outreach": {
+      "main": [
+        [
+          {
+            "node": "🗄️ Log Resume",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🗄️ Log Resume": {
+      "main": [
+        [
+          {
+            "node": "📤 Respond Resume",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "id": "god-mode",
+      "name": "God Mode"
+    },
+    {
+      "id": "emergency",
+      "name": "Emergency"
+    }
+  ]
+}

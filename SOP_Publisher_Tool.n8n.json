@@ -1,0 +1,563 @@
+{
+  "name": "Tool: SOP Publisher",
+  "nodes": [
+    {
+      "id": "trigger-001",
+      "name": "When Executed by Another Workflow",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        240,
+        300
+      ],
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "sopId",
+              "type": "string"
+            },
+            {
+              "name": "sopName",
+              "type": "string"
+            },
+            {
+              "name": "status",
+              "type": "string"
+            },
+            {
+              "name": "category",
+              "type": "string"
+            },
+            {
+              "name": "priority",
+              "type": "string"
+            },
+            {
+              "name": "tags",
+              "type": "string"
+            },
+            {
+              "name": "quickSummary",
+              "type": "string"
+            },
+            {
+              "name": "content",
+              "type": "string"
+            },
+            {
+              "name": "source",
+              "type": "string"
+            },
+            {
+              "name": "version",
+              "type": "string"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "normalize-001",
+      "name": "Normalize Input",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        460,
+        300
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "sopId",
+              "name": "sopId",
+              "type": "string",
+              "value": "={{ $json.sopId || `SOP-${Date.now()}` }}"
+            },
+            {
+              "id": "sopName",
+              "name": "sopName",
+              "type": "string",
+              "value": "={{ $json.sopName }}"
+            },
+            {
+              "id": "status",
+              "name": "status",
+              "type": "string",
+              "value": "={{ $json.status || 'Draft' }}"
+            },
+            {
+              "id": "category",
+              "name": "category",
+              "type": "string",
+              "value": "={{ $json.category || 'General' }}"
+            },
+            {
+              "id": "priority",
+              "name": "priority",
+              "type": "string",
+              "value": "={{ $json.priority || 'Medium' }}"
+            },
+            {
+              "id": "tags",
+              "name": "tags",
+              "type": "json",
+              "value": "={{ Array.isArray($json.tags) ? $json.tags : (typeof $json.tags === 'string' && $json.tags ? $json.tags.split(',').map(t => t.trim()).filter(Boolean) : []) }}"
+            },
+            {
+              "id": "quickSummary",
+              "name": "quickSummary",
+              "type": "string",
+              "value": "={{ $json.quickSummary || '' }}"
+            },
+            {
+              "id": "content",
+              "name": "content",
+              "type": "string",
+              "value": "={{ $json.content || '' }}"
+            },
+            {
+              "id": "source",
+              "name": "source",
+              "type": "string",
+              "value": "={{ $json.source || 'Agent-Generated' }}"
+            },
+            {
+              "id": "version",
+              "name": "version",
+              "type": "string",
+              "value": "={{ $json.version || '1.0' }}"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "validate-001",
+      "name": "IF Missing sopName",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        680,
+        300
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "check-name",
+              "leftValue": "={{ $json.sopName }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "empty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "error-001",
+      "name": "Return Error",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        900,
+        420
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "result",
+              "name": "result",
+              "type": "object",
+              "value": "={{ { success: false, error: 'sopName is required', hint: 'Provide a clear, descriptive name for the SOP' } }}"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "search-001",
+      "name": "Search Existing SOP",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        900,
+        180
+      ],
+      "onError": "continueRegularOutput",
+      "credentials": {},
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.notion.com/v1/databases/5daa56637e0043f0a86f64bc1ed34dfb/query",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "notionApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Notion-Version",
+              "value": "2022-06-28"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ filter: { property: 'SOP Name', title: { equals: $json.sopName } }, page_size: 1 }) }}"
+      }
+    },
+    {
+      "id": "check-exists-001",
+      "name": "IF Exists",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1120,
+        180
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "exists-check",
+              "leftValue": "={{ $json.results?.length }}",
+              "rightValue": "0",
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "prep-update-001",
+      "name": "Prepare Update",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1340,
+        80
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "pageId",
+              "name": "pageId",
+              "type": "string",
+              "value": "={{ $json.results[0].id }}"
+            },
+            {
+              "id": "action",
+              "name": "action",
+              "type": "string",
+              "value": "update"
+            },
+            {
+              "id": "properties",
+              "name": "properties",
+              "type": "object",
+              "value": "={{ {\n  \"SOP Name\": { \"title\": [{ \"text\": { \"content\": $('Normalize Input').item.json.sopName } }] },\n  \"SOP ID\": { \"rich_text\": [{ \"text\": { \"content\": $('Normalize Input').item.json.sopId } }] },\n  \"Status\": { \"status\": { \"name\": $('Normalize Input').item.json.status } },\n  \"Category\": { \"select\": { \"name\": $('Normalize Input').item.json.category } },\n  \"Priority\": { \"select\": { \"name\": $('Normalize Input').item.json.priority } },\n  \"Quick Summary\": { \"rich_text\": [{ \"text\": { \"content\": $('Normalize Input').item.json.quickSummary } }] },\n  \"Source\": { \"rich_text\": [{ \"text\": { \"content\": $('Normalize Input').item.json.source } }] },\n  \"Version\": { \"rich_text\": [{ \"text\": { \"content\": $('Normalize Input').item.json.version } }] },\n  \"Tags\": { \"multi_select\": $('Normalize Input').item.json.tags.map(t => ({ \"name\": t })) }\n} }}"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "prep-create-001",
+      "name": "Prepare Create",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1340,
+        280
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "action",
+              "name": "action",
+              "type": "string",
+              "value": "create"
+            },
+            {
+              "id": "properties",
+              "name": "properties",
+              "type": "object",
+              "value": "={{ {\n  \"SOP Name\": { \"title\": [{ \"text\": { \"content\": $('Normalize Input').item.json.sopName } }] },\n  \"SOP ID\": { \"rich_text\": [{ \"text\": { \"content\": $('Normalize Input').item.json.sopId } }] },\n  \"Status\": { \"status\": { \"name\": $('Normalize Input').item.json.status } },\n  \"Category\": { \"select\": { \"name\": $('Normalize Input').item.json.category } },\n  \"Priority\": { \"select\": { \"name\": $('Normalize Input').item.json.priority } },\n  \"Quick Summary\": { \"rich_text\": [{ \"text\": { \"content\": $('Normalize Input').item.json.quickSummary } }] },\n  \"Source\": { \"rich_text\": [{ \"text\": { \"content\": $('Normalize Input').item.json.source } }] },\n  \"Version\": { \"rich_text\": [{ \"text\": { \"content\": $('Normalize Input').item.json.version } }] },\n  \"Tags\": { \"multi_select\": $('Normalize Input').item.json.tags.map(t => ({ \"name\": t })) }\n} }}"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "update-001",
+      "name": "Update Notion Page",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1560,
+        80
+      ],
+      "onError": "continueRegularOutput",
+      "credentials": {},
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://api.notion.com/v1/pages/{{ $json.pageId }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "notionApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Notion-Version",
+              "value": "2022-06-28"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ properties: $json.properties }) }}"
+      }
+    },
+    {
+      "id": "create-001",
+      "name": "Create Notion Page",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1560,
+        280
+      ],
+      "onError": "continueRegularOutput",
+      "credentials": {},
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.notion.com/v1/pages",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "notionApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Notion-Version",
+              "value": "2022-06-28"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ parent: { database_id: '5daa56637e0043f0a86f64bc1ed34dfb' }, properties: $json.properties }) }}"
+      }
+    },
+    {
+      "id": "merge-001",
+      "name": "Merge Results",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [
+        1780,
+        180
+      ],
+      "parameters": {
+        "mode": "combine",
+        "combinationMode": "multiplex"
+      }
+    },
+    {
+      "id": "format-result-001",
+      "name": "Format Result",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        2000,
+        180
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "result",
+              "name": "result",
+              "type": "object",
+              "value": "={{ {\n  success: true,\n  action: $('Prepare Update').item?.json?.action || $('Prepare Create').item?.json?.action || 'unknown',\n  sopName: $('Normalize Input').item.json.sopName,\n  sopId: $('Normalize Input').item.json.sopId,\n  notionPageId: $json.id,\n  notionUrl: $json.url,\n  message: ($('Prepare Update').item?.json?.action === 'update' ? 'SOP updated successfully' : 'SOP created successfully')\n} }}"
+            }
+          ]
+        },
+        "options": {}
+      }
+    }
+  ],
+  "connections": {
+    "When Executed by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "Normalize Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Input": {
+      "main": [
+        [
+          {
+            "node": "IF Missing sopName",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF Missing sopName": {
+      "main": [
+        [
+          {
+            "node": "Return Error",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Search Existing SOP",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Return Error": {
+      "main": [
+        []
+      ]
+    },
+    "Search Existing SOP": {
+      "main": [
+        [
+          {
+            "node": "IF Exists",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF Exists": {
+      "main": [
+        [
+          {
+            "node": "Prepare Update",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare Create",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Update": {
+      "main": [
+        [
+          {
+            "node": "Update Notion Page",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Create": {
+      "main": [
+        [
+          {
+            "node": "Create Notion Page",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Notion Page": {
+      "main": [
+        [
+          {
+            "node": "Merge Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Notion Page": {
+      "main": [
+        [
+          {
+            "node": "Merge Results",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge Results": {
+      "main": [
+        [
+          {
+            "node": "Format Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "saveManualExecutions": true,
+    "saveExecutionProgress": true,
+    "callerPolicy": "workflowsFromSameOwner"
+  }
+}

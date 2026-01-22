@@ -1,0 +1,1076 @@
+{
+  "name": "🎯 Ops Agent Master",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "ops-agent",
+        "options": {
+          "responseMode": "responseNode"
+        }
+      },
+      "id": "webhook-trigger",
+      "name": "🌐 Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [-1200, 300],
+      "webhookId": "ops-agent-master"
+    },
+    {
+      "parameters": {
+        "updates": ["message"],
+        "additionalFields": {}
+      },
+      "id": "telegram-trigger",
+      "name": "💬 Telegram Trigger",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.2,
+      "position": [-1200, 520],
+      "webhookId": "ops-agent-telegram",
+      "credentials": {
+        "telegramApi": {
+          "id": "lnK3x3CBHsSqVAaT",
+          "name": "GodModeJan2026"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// ═══════════════════════════════════════════════════════════════════\n// 📋 Normalize Input - Handle both Webhook and Telegram triggers\n// ═══════════════════════════════════════════════════════════════════\n\nconst input = $input.first().json;\nconst executionId = $execution.id;\nconst timestamp = new Date().toISOString();\n\n// Determine source\nconst isWebhook = input.body !== undefined || input.mode !== undefined;\nconst isTelegram = input.message !== undefined;\n\nlet normalized = {\n  request_id: null,\n  mode: 'inspect',\n  target: {},\n  instructions: '',\n  constraints: {\n    dry_run: true,\n    requires_approval: true,\n    max_cost_usd: 0.25,\n    time_budget_sec: 120\n  },\n  notify: {\n    channel: 'telegram',\n    destination: '5408798342'\n  },\n  source: 'unknown',\n  chat_id: null,\n  message_id: null,\n  user_id: null\n};\n\nif (isWebhook) {\n  // Webhook payload\n  const body = input.body || input;\n  normalized.request_id = body.request_id || `ops-${Date.now()}`;\n  normalized.mode = body.mode || 'inspect';\n  normalized.target = body.target || {};\n  normalized.instructions = body.instructions || '';\n  normalized.constraints = { ...normalized.constraints, ...(body.constraints || {}) };\n  normalized.notify = { ...normalized.notify, ...(body.notify || {}) };\n  normalized.source = 'webhook';\n} else if (isTelegram) {\n  // Telegram message\n  const msg = input.message;\n  const text = msg.text || '';\n  \n  normalized.request_id = `tg-${msg.message_id}-${Date.now()}`;\n  normalized.instructions = text;\n  normalized.source = 'telegram';\n  normalized.chat_id = msg.chat.id;\n  normalized.message_id = msg.message_id;\n  normalized.user_id = msg.from.id;\n  \n  // Auto-detect mode from message\n  const lowerText = text.toLowerCase();\n  if (lowerText.includes('build') || lowerText.includes('create') || lowerText.includes('make')) {\n    normalized.mode = 'build';\n  } else if (lowerText.includes('debug') || lowerText.includes('fix') || lowerText.includes('error') || lowerText.includes('broke') || lowerText.includes('fail')) {\n    normalized.mode = 'debug';\n  } else if (lowerText.includes('improve') || lowerText.includes('optimize') || lowerText.includes('faster') || lowerText.includes('better')) {\n    normalized.mode = 'improve';\n  } else {\n    normalized.mode = 'inspect';\n  }\n  \n  // Extract workflow ID if mentioned\n  const workflowIdMatch = text.match(/workflow[\\s_-]*(?:id)?[:\\s]*([a-zA-Z0-9_-]+)/i);\n  if (workflowIdMatch) {\n    normalized.target.workflow_id = workflowIdMatch[1];\n  }\n  \n  // Extract execution ID if mentioned\n  const execIdMatch = text.match(/execution[\\s_-]*(?:id)?[:\\s]*([a-zA-Z0-9_-]+)/i);\n  if (execIdMatch) {\n    normalized.target.execution_id = execIdMatch[1];\n  }\n}\n\nreturn [{ json: normalized }];"
+      },
+      "id": "normalize-input",
+      "name": "📋 Normalize Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-960, 400]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT kill_switch, comms_enabled, write_enabled, jobs_enabled, external_comms_enabled, destructive_enabled, system_state, kill_switch_reason FROM agent_controls LIMIT 1;",
+        "options": {}
+      },
+      "id": "check-controls",
+      "name": "🛡️ Check Controls",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [-720, 400],
+      "credentials": {
+        "postgres": {
+          "id": "BwXy2JHETe47vH1I",
+          "name": "Postgres account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "kill-switch",
+              "leftValue": "={{ $json.kill_switch }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "or"
+        },
+        "options": {}
+      },
+      "id": "kill-switch-check",
+      "name": "🛑 Kill Switch?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.1,
+      "position": [-480, 400]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { success: false, error: 'Kill switch active', reason: $('🛡️ Check Controls').first().json.kill_switch_reason || 'Manual activation' } }}",
+        "options": {}
+      },
+      "id": "kill-switch-response",
+      "name": "🛑 Kill Switch Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [-240, 200]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('📋 Normalize Input').first().json.chat_id }}",
+        "text": "⚠️ **OPS AGENT BLOCKED**\n\nKill switch is active.\nReason: {{ $('🛡️ Check Controls').first().json.kill_switch_reason || 'Manual activation' }}\n\nTo deactivate:\n```sql\nUPDATE agent_controls SET kill_switch = false;\n```",
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      },
+      "id": "kill-switch-telegram",
+      "name": "🛑 Kill Switch Telegram",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [-240, 360],
+      "credentials": {
+        "telegramApi": {
+          "id": "lnK3x3CBHsSqVAaT",
+          "name": "GodModeJan2026"
+        }
+      },
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT jsonb_build_object(\n  'controls', (SELECT row_to_json(ac) FROM agent_controls ac LIMIT 1),\n  'recent_errors', COALESCE((\n    SELECT json_agg(sub) FROM (\n      SELECT workflow_id, error_message, last_node, error_category, created_at\n      FROM workflow_execution_errors\n      WHERE created_at > NOW() - INTERVAL '24 hours'\n      ORDER BY created_at DESC LIMIT 10\n    ) sub\n  ), '[]'::json),\n  'active_workflows', COALESCE((\n    SELECT json_agg(sub) FROM (\n      SELECT workflow_id, name, is_active, updated_at\n      FROM workflows\n      WHERE is_active = true\n      ORDER BY updated_at DESC LIMIT 20\n    ) sub\n  ), '[]'::json),\n  'pending_proposals', COALESCE((\n    SELECT json_agg(sub) FROM (\n      SELECT id, title, priority, confidence, created_at\n      FROM proposals\n      WHERE status = 'pending'\n      ORDER BY priority ASC, created_at DESC LIMIT 5\n    ) sub\n  ), '[]'::json),\n  'stats', jsonb_build_object(\n    'errors_24h', (SELECT COUNT(*) FROM workflow_execution_errors WHERE created_at > NOW() - INTERVAL '24 hours'),\n    'executions_24h', (SELECT COUNT(*) FROM workflow_executions WHERE started_at > NOW() - INTERVAL '24 hours'),\n    'success_rate_24h', ROUND((\n      SELECT COUNT(*) FILTER (WHERE status = 'success')::numeric / NULLIF(COUNT(*)::numeric, 0) * 100\n      FROM workflow_executions WHERE started_at > NOW() - INTERVAL '24 hours'\n    ), 1)\n  )\n) AS system_context;",
+        "options": {}
+      },
+      "id": "get-system-context",
+      "name": "🔍 Get System Context",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [-240, 560],
+      "credentials": {
+        "postgres": {
+          "id": "BwXy2JHETe47vH1I",
+          "name": "Postgres account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('📋 Normalize Input').first().json.chat_id || '5408798342' }}",
+        "text": "🎯 **Ops Agent Started**\n\nMode: `{{ $('📋 Normalize Input').first().json.mode }}`\nRequest: {{ $('📋 Normalize Input').first().json.request_id }}\n\n_Gathering context and planning..._",
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      },
+      "id": "send-started-notification",
+      "name": "📤 Send Started",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [0, 560],
+      "credentials": {
+        "telegramApi": {
+          "id": "lnK3x3CBHsSqVAaT",
+          "name": "GodModeJan2026"
+        }
+      },
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// ═══════════════════════════════════════════════════════════════════\n// 🔧 Compile Context for Agent\n// ═══════════════════════════════════════════════════════════════════\n\nconst input = $('📋 Normalize Input').first().json;\nconst controls = $('🛡️ Check Controls').first().json;\nconst systemContext = $('🔍 Get System Context').first().json.system_context;\n\n// Build context object\nconst context = {\n  request: input,\n  controls: controls,\n  system: systemContext,\n  permissions: {\n    can_write: controls.write_enabled && !input.constraints.dry_run,\n    can_deploy: controls.write_enabled && !input.constraints.dry_run && !input.constraints.requires_approval,\n    can_delete: controls.destructive_enabled && !input.constraints.dry_run,\n    requires_approval: input.constraints.requires_approval\n  },\n  timestamp: new Date().toISOString()\n};\n\nreturn [{ json: context }];"
+      },
+      "id": "compile-context",
+      "name": "🔧 Compile Context",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [240, 560]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $('📋 Normalize Input').first().json.instructions }}",
+        "options": {
+          "systemMessage": "=You are the **OPS AGENT** - an autonomous automation engineer for Auto Shop Media.\n\n## YOUR MISSION\nYou handle ALL automation operations: building, debugging, improving, and inspecting n8n workflows, HubSpot integrations, and Postgres data.\n\n## CURRENT REQUEST\n- **Mode:** {{ $json.request.mode }}\n- **Instructions:** {{ $json.request.instructions }}\n- **Target:** {{ JSON.stringify($json.request.target) }}\n- **Constraints:** dry_run={{ $json.request.constraints.dry_run }}, requires_approval={{ $json.request.constraints.requires_approval }}\n\n## PERMISSIONS\n- Write enabled: {{ $json.permissions.can_write }}\n- Deploy enabled: {{ $json.permissions.can_deploy }}\n- Delete enabled: {{ $json.permissions.can_delete }}\n\n## SYSTEM STATE (Last 24h)\n- Errors: {{ $json.system.stats.errors_24h }}\n- Executions: {{ $json.system.stats.executions_24h }}\n- Success Rate: {{ $json.system.stats.success_rate_24h }}%\n\n## RECENT ERRORS\n{{ JSON.stringify($json.system.recent_errors, null, 2) }}\n\n## TOOL HIERARCHY (CRITICAL)\n\n### LEVEL 1: SPECIALIZED TOOLS (Use 90% of time)\n| Tool | When to Use |\n|------|-------------|\n| `search_sops` | Find documented procedures FIRST |\n| `smart_memory_recall` | Check if we've done this before |\n| `execution_debugger` | Analyze WHY an execution failed |\n| `auto_fixer` | Apply fixes to failing workflows |\n| `health_monitor` | Check system-wide health |\n| `workflow_builder` | Generate NEW workflow JSON |\n| `workflow_deployer` | Deploy workflow JSON to n8n |\n| `workflow_updater` | Make SURGICAL edits to existing workflows |\n| `workflow_optimizer` | Improve performance/reliability |\n\n### LEVEL 2: CODE & EXPRESSION TOOLS\n| Tool | When to Use |\n|------|-------------|\n| `code_generator` | Generate JavaScript for Code nodes |\n| `expression_builder` | Build complex n8n expressions |\n| `think` | Plan your approach FIRST |\n\n### LEVEL 3: DATA & INTEGRATION TOOLS\n| Tool | When to Use |\n|------|-------------|\n| `hubspot_agent` | CRM operations (contacts, deals, etc.) |\n| `deep_research` | Complex web research tasks |\n| `postgres_query` | Direct SQL queries |\n| `n8n_operator` | Manage workflows (list, activate, etc.) |\n| `lesson_extractor` | Save lessons after fixing issues |\n\n### LEVEL 4: MCP TOOLS (Fallback only)\n- `mcp_supabase` - Direct database queries\n- `mcp_n8n` - Direct n8n API calls\n\n## MODE-SPECIFIC PROTOCOLS\n\n### DEBUG MODE\n1. Get execution_id from user or find recent failures\n2. Call `execution_debugger` to analyze the error\n3. Identify root cause (check error_category)\n4. If auto-fixable: Use `auto_fixer`\n5. If not: Create fix proposal and explain\n\n### BUILD MODE\n1. Check `search_sops` for similar existing workflows\n2. Check `smart_memory_recall` for patterns\n3. Use `workflow_builder` to generate JSON\n4. If dry_run=false AND requires_approval=false: Deploy with `workflow_deployer`\n5. Otherwise: Return JSON for manual import\n\n### IMPROVE MODE\n1. Use `workflow_optimizer` with workflow_id\n2. Review optimization suggestions\n3. If dry_run=false: Apply changes\n4. Return before/after metrics\n\n### INSPECT MODE\n1. Use `health_monitor` for system overview\n2. Query specific data with MCP tools\n3. Search `search_sops` for documentation\n4. Provide clear summary\n\n## RESPONSE RULES\n\n1. **Be Direct** - Don't explain what you're about to do, just do it\n2. **Use Tools First** - Always call the appropriate tool before responding\n3. **Show Evidence** - Quote execution IDs, error messages, workflow names\n4. **One Fix at a Time** - For debugging, propose ONE minimal fix\n5. **Cite Sources** - Reference SOP names, memory items, or tool outputs\n\n## SAFETY RULES\n\n1. NEVER modify production workflows without dry_run=false\n2. ALWAYS check if workflow exists before updating\n3. NEVER hallucinate workflow IDs - verify with MCP first\n4. If unsure, ASK via the progress notification\n\n## OUTPUT FORMAT\n\nAfter completing your task, provide:\n\n```\n## Summary\n[What you did in 1-2 sentences]\n\n## Details\n[Specific findings, changes made, or recommendations]\n\n## Next Steps\n[What the user should do next, if anything]\n```",
+          "maxIterations": 25
+        }
+      },
+      "id": "main-agent",
+      "name": "🎯 Main Agent",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [480, 560],
+      "retryOnFail": true,
+      "waitBetweenTries": 3000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "list",
+          "value": "gpt-4o",
+          "cachedResultName": "gpt-4o"
+        },
+        "options": {
+          "temperature": 0.2,
+          "timeout": 180000
+        }
+      },
+      "id": "llm-main",
+      "name": "🧠 LLM (GPT-4o)",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [720, 780],
+      "credentials": {
+        "openAiApi": {
+          "id": "Lb7LQd5GQa1bZ9yX",
+          "name": "OpenAi account 4"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "name": "search_sops",
+        "description": "Search the SOP database for documented procedures. Use FIRST when user asks about processes, procedures, or 'how to' questions. Returns SOP names, summaries, and Google Doc URLs.\n\nParameters:\n- query (required): Search term\n- category (optional): Filter by category\n- limit (optional): Max results (default: 5)",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "REPLACE_WITH_SOP_SEARCH_WORKFLOW_ID"
+        },
+        "fields": {
+          "values": [
+            {
+              "name": "query",
+              "description": "Search term for SOPs",
+              "type": "string",
+              "required": true
+            },
+            {
+              "name": "category",
+              "description": "Category filter (optional)",
+              "type": "string",
+              "required": false
+            },
+            {
+              "name": "limit",
+              "description": "Max results (default 5)",
+              "type": "number",
+              "required": false
+            }
+          ]
+        }
+      },
+      "id": "tool-sop-search",
+      "name": "Tool: SOP Search",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.2,
+      "position": [240, 780]
+    },
+    {
+      "parameters": {
+        "name": "smart_memory_recall",
+        "description": "Search long-term memory for relevant lessons, patterns, and past solutions. Call this BEFORE complex tasks to see if we've solved similar problems.\n\nParameters:\n- query (required): What to search for\n- category_filter (optional): Filter by category\n- include_failures (optional): Include failed attempts (default: true)",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "0_hBbOVEmx8MOYXUKlKR4",
+          "cachedResultName": "Tool: Smart Memory Recall"
+        },
+        "fields": {
+          "values": [
+            {
+              "name": "query",
+              "description": "Search query",
+              "type": "string",
+              "required": true
+            },
+            {
+              "name": "category_filter",
+              "description": "Category filter",
+              "type": "string",
+              "required": false
+            },
+            {
+              "name": "include_failures",
+              "description": "Include failed attempts",
+              "type": "boolean",
+              "required": false
+            }
+          ]
+        }
+      },
+      "id": "tool-memory-recall",
+      "name": "Tool: Memory Recall",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.2,
+      "position": [400, 780]
+    },
+    {
+      "parameters": {
+        "name": "execution_debugger",
+        "description": "Analyze a failed execution to find the root cause. Returns the failing node, error message, and suggested fix.\n\nParameters:\n- execution_id (required): The n8n execution ID to analyze\n- analysis_depth (optional): shallow|normal|deep (default: normal)",
+        "workflowId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "yyY3SS0xgjNNqA8lC1j6P",
+          "cachedResultName": "🔍 Execution Debugger Tool (Final)"
+        },
+        "fields": {
+          "values": [
+            {
+              "name": "execution_id",
+              "description": "n8n execution ID to analyze",
+              "type": "string",
+              "required": true
+            },
+            {
+              "name": "analysis_depth",
+              "description": "shallow|normal|deep",
+              "type": "string",
+              "required": false
+            }
+          ]
+        }
+      },
+      "id": "tool-execution-debugger",
+      "name": "Tool: Execution Debugger",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.2,
+      "position": [560, 780]
+    },
+    {
+      "parameters": {
+        "name": "auto_fixer",
+        "description": "Automatically fix a failing workflow. Requires workflow_id, execution_id, and issue_type.\n\nParameters:\n- workflow_id (required): ID of the failing workflow\n- execution_id (required): ID of the failed execution\n- issue_type (required): Type of error (CREDENTIAL_ERROR, TIMEOUT, RATE_LIMIT, etc.)\n- error_details (optional): Additional error info",
+        "workflowId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "gQ1llEB74saEh7RXWcxG7",
+          "cachedResultName": "🔧 Auto-Fixer Tool"
+        },
+        "fields": {
+          "values": [
+            {
+              "name": "workflow_id",
+              "description": "ID of the failing workflow",
+              "type": "string",
+              "required": true
+            },
+            {
+              "name": "execution_id",
+              "description": "ID of the failed execution",
+              "type": "string",
+              "required": true
+            },
+            {
+              "name": "issue_type",
+              "description": "Type of error",
+              "type": "string",
+              "required": true
+            },
+            {
+              "name": "error_details",
+              "description": "Additional error info",
+              "type": "string",
+              "required": false
+            }
+          ]
+        }
+      },
+      "id": "tool-auto-fixer",
+      "name": "Tool: Auto-Fixer",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.2,
+      "position": [720, 940]
+    },
+    {
+      "parameters": {
+        "name": "health_monitor",
+        "description": "Get system-wide health metrics: execution counts, failure rates, workflow status.\n\nParameters:\n- time_range_hours (optional): Lookback period (default: 24)\n- monitor_type (optional): 'all' or 'specific'",
+        "workflowId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "TH4_ydlstABdOI7nKvoCH",
+          "cachedResultName": "🏥 Workflow Health Monitor Tool"
+        },
+        "fields": {
+          "values": [
+            {
+              "name": "time_range_hours",
+              "description": "Lookback period in hours",
+              "type": "number",
+              "required": false
+            },
+            {
+              "name": "monitor_type",
+              "description": "all or specific",
+              "type": "string",
+              "required": false
+            }
+          ]
+        }
+      },
+      "id": "tool-health-monitor",
+      "name": "Tool: Health Monitor",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.2,
+      "position": [240, 940]
+    },
+    {
+      "parameters": {
+        "name": "workflow_builder",
+        "description": "Generate a complete n8n workflow JSON from a description. Use when asked to 'create', 'build', or 'make' a new workflow.\n\nParameters:\n- description (required): What the workflow should do\n- workflow_type (optional): general|enrichment|scraping|comms|ops\n- required_services (optional): Comma-separated services (supabase, hubspot, etc.)\n- optimization_level (optional): speed|cost|balanced|reliability",
+        "workflowId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "Xf24pNABaHYMjcuPiLMpJ",
+          "cachedResultName": "🏗️ Ultimate Workflow Builder v2.0"
+        },
+        "fields": {
+          "values": [
+            {
+              "name": "description",
+              "description": "What the workflow should do",
+              "type": "string",
+              "required": true
+            },
+            {
+              "name": "workflow_type",
+              "description": "Type of workflow",
+              "type": "string",
+              "required": false
+            },
+            {
+              "name": "required_services",
+              "description": "Comma-separated services",
+              "type": "string",
+              "required": false
+            },
+            {
+              "name": "optimization_level",
+              "description": "speed|cost|balanced|reliability",
+              "type": "string",
+              "required": false
+            }
+          ]
+        }
+      },
+      "id": "tool-workflow-builder",
+      "name": "Tool: Workflow Builder",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.2,
+      "position": [400, 940]
+    },
+    {
+      "parameters": {
+        "name": "workflow_deployer",
+        "description": "Deploy a workflow JSON to n8n. Creates new or overwrites existing.\n\nParameters:\n- workflow_json (required): The complete workflow JSON\n- workflow_name (optional): Name for the workflow\n- activate (optional): Activate after deploy (default: true)",
+        "workflowId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "h4MG3yGAca7PDPU1ys1GV",
+          "cachedResultName": "🚀 Workflow Deployment Tool"
+        },
+        "fields": {
+          "values": [
+            {
+              "name": "workflow_json",
+              "description": "The workflow JSON",
+              "type": "string",
+              "required": true
+            },
+            {
+              "name": "workflow_name",
+              "description": "Name for the workflow",
+              "type": "string",
+              "required": false
+            },
+            {
+              "name": "activate",
+              "description": "Activate after deploy",
+              "type": "boolean",
+              "required": false
+            }
+          ]
+        }
+      },
+      "id": "tool-workflow-deployer",
+      "name": "Tool: Workflow Deployer",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.2,
+      "position": [560, 940]
+    },
+    {
+      "parameters": {
+        "name": "workflow_updater",
+        "description": "Make surgical edits to an existing workflow. Use for targeted changes without full rewrite.\n\nParameters:\n- workflow_id (required): Target workflow ID\n- action (required): add_node|update_node|remove_node|update_connection|update_settings\n- changes (required): JSON describing exact changes",
+        "workflowId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "xyf2aW6ZUK16WsgWhby0x",
+          "cachedResultName": "✏️ Workflow Updater Tool"
+        },
+        "fields": {
+          "values": [
+            {
+              "name": "workflow_id",
+              "description": "Target workflow ID",
+              "type": "string",
+              "required": true
+            },
+            {
+              "name": "action",
+              "description": "Action to perform",
+              "type": "string",
+              "required": true
+            },
+            {
+              "name": "changes",
+              "description": "JSON describing changes",
+              "type": "string",
+              "required": true
+            }
+          ]
+        }
+      },
+      "id": "tool-workflow-updater",
+      "name": "Tool: Workflow Updater",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.2,
+      "position": [240, 1100]
+    },
+    {
+      "parameters": {
+        "name": "workflow_optimizer",
+        "description": "Analyze a workflow for performance, cost, and reliability improvements.\n\nParameters:\n- workflow_id (required): ID of workflow to optimize\n- optimization_type (optional): full|structure|reliability|performance|cost\n- apply_changes (optional): Apply optimizations immediately (default: false)",
+        "workflowId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "OBpYWGIz04j07vNgmn0dC",
+          "cachedResultName": "⚡ Workflow Optimizer Tool"
+        },
+        "fields": {
+          "values": [
+            {
+              "name": "workflow_id",
+              "description": "Workflow to optimize",
+              "type": "string",
+              "required": true
+            },
+            {
+              "name": "optimization_type",
+              "description": "Type of optimization",
+              "type": "string",
+              "required": false
+            },
+            {
+              "name": "apply_changes",
+              "description": "Apply changes immediately",
+              "type": "boolean",
+              "required": false
+            }
+          ]
+        }
+      },
+      "id": "tool-workflow-optimizer",
+      "name": "Tool: Workflow Optimizer",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.2,
+      "position": [400, 1100]
+    },
+    {
+      "parameters": {
+        "endpointUrl": "https://mcp.supabase.com/mcp?project_ref=zgexrnpctugtwwssbkss&features=docs%2Caccount%2Cbranching%2Cfunctions%2Cdevelopment%2Cdebugging%2Cdatabase%2Cstorage",
+        "authentication": "bearerAuth",
+        "options": {}
+      },
+      "id": "mcp-supabase",
+      "name": "MCP: Supabase",
+      "type": "@n8n/n8n-nodes-langchain.mcpClientTool",
+      "typeVersion": 1.2,
+      "position": [560, 1100],
+      "credentials": {
+        "httpBearerAuth": {
+          "id": "EMb3SbsCJMpRGko2",
+          "name": "SupabaseMCPAuth"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "endpointUrl": "https://api.n8n-mcp.com/mcp",
+        "authentication": "bearerAuth",
+        "options": {}
+      },
+      "id": "mcp-n8n",
+      "name": "MCP: n8n Operations",
+      "type": "@n8n/n8n-nodes-langchain.mcpClientTool",
+      "typeVersion": 1.2,
+      "position": [720, 1100],
+      "credentials": {
+        "httpBearerAuth": {
+          "id": "vIK1oBw1xj0khNvy",
+          "name": "n8n-mcp-BearerToken"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "name": "code_generator",
+        "description": "Generate JavaScript code snippets for n8n Code nodes. Use when you need to write transformation logic, data processing, or complex expressions.\n\nParameters:\n- task (required): What the code should do\n- input_format (optional): Expected input data structure\n- output_format (optional): Desired output structure",
+        "workflowId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "CYH6WIpuzCPh_rQP463_F",
+          "cachedResultName": "💻 Code Generator Tool"
+        },
+        "fields": {
+          "values": [
+            {
+              "name": "task",
+              "description": "What the code should do",
+              "type": "string",
+              "required": true
+            },
+            {
+              "name": "input_format",
+              "description": "Expected input structure",
+              "type": "string",
+              "required": false
+            },
+            {
+              "name": "output_format",
+              "description": "Desired output structure",
+              "type": "string",
+              "required": false
+            }
+          ]
+        }
+      },
+      "id": "tool-code-generator",
+      "name": "Tool: Code Generator",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.2,
+      "position": [240, 1260]
+    },
+    {
+      "parameters": {
+        "name": "expression_builder",
+        "description": "Build and validate n8n expressions. Use when you need to construct complex expressions for node parameters.\n\nParameters:\n- goal (required): What the expression should accomplish\n- context (optional): Available data context",
+        "workflowId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "A5EE9a76e5F70Od52yKuH",
+          "cachedResultName": "🎯 Expression Builder Tool"
+        },
+        "fields": {
+          "values": [
+            {
+              "name": "goal",
+              "description": "What the expression should do",
+              "type": "string",
+              "required": true
+            },
+            {
+              "name": "context",
+              "description": "Available data context",
+              "type": "string",
+              "required": false
+            }
+          ]
+        }
+      },
+      "id": "tool-expression-builder",
+      "name": "Tool: Expression Builder",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.2,
+      "position": [400, 1260]
+    },
+    {
+      "parameters": {
+        "name": "n8n_operator",
+        "description": "Direct n8n workflow management - create, list, update, delete, activate workflows and manage credentials/executions.\n\nParameters:\n- action (required): create|list|update|delete|activate|deactivate|get_executions\n- workflowId (optional): Target workflow ID\n- name (optional): Workflow name for search/create\n- updateData (optional): JSON data for updates",
+        "workflowId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "PwiORtWz5NICcLC9",
+          "cachedResultName": "n8n_Operator Workflow Tool"
+        },
+        "fields": {
+          "values": [
+            {
+              "name": "action",
+              "description": "Operation to perform",
+              "type": "string",
+              "required": true
+            },
+            {
+              "name": "workflowId",
+              "description": "Target workflow ID",
+              "type": "string",
+              "required": false
+            },
+            {
+              "name": "name",
+              "description": "Workflow name",
+              "type": "string",
+              "required": false
+            },
+            {
+              "name": "updateData",
+              "description": "JSON data for updates",
+              "type": "string",
+              "required": false
+            }
+          ]
+        }
+      },
+      "id": "tool-n8n-operator",
+      "name": "Tool: n8n Operator",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.2,
+      "position": [560, 1260]
+    },
+    {
+      "parameters": {
+        "name": "lesson_extractor",
+        "description": "Extract and save lessons from workflow executions, errors, and solutions. Use after fixing issues to build learning database.\n\nParameters:\n- context (required): What happened (error, fix, pattern)\n- lesson (required): What was learned\n- category (optional): Category for the lesson",
+        "workflowId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "9bBOt3_aJmhu9v1g1WiUE",
+          "cachedResultName": "Tool: Smart Lesson Extractor"
+        },
+        "fields": {
+          "values": [
+            {
+              "name": "context",
+              "description": "What happened",
+              "type": "string",
+              "required": true
+            },
+            {
+              "name": "lesson",
+              "description": "What was learned",
+              "type": "string",
+              "required": true
+            },
+            {
+              "name": "category",
+              "description": "Lesson category",
+              "type": "string",
+              "required": false
+            }
+          ]
+        }
+      },
+      "id": "tool-lesson-extractor",
+      "name": "Tool: Lesson Extractor",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.2,
+      "position": [720, 1260]
+    },
+    {
+      "parameters": {
+        "name": "hubspot_agent",
+        "description": "Perform HubSpot CRM operations - search contacts/companies/deals, create records, update properties, manage associations.\n\nParameters:\n- query (required): Natural language instruction for HubSpot operation",
+        "workflowId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "iVklPvTUaxjw4940",
+          "cachedResultName": "HubSpot Agent Sub Workflow"
+        },
+        "fields": {
+          "values": [
+            {
+              "name": "query",
+              "description": "Natural language HubSpot instruction",
+              "type": "string",
+              "required": true
+            }
+          ]
+        }
+      },
+      "id": "tool-hubspot-agent",
+      "name": "Tool: HubSpot Agent",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.2,
+      "position": [240, 1420]
+    },
+    {
+      "parameters": {
+        "name": "deep_research",
+        "description": "Perform deep web research with retries and self-correction. Use for complex research tasks, finding missing data, competitor analysis.\n\nParameters:\n- query (required): Research question or task",
+        "workflowId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "nRsto2yhRlLStMeq",
+          "cachedResultName": "ASM Deep Research Agent"
+        },
+        "fields": {
+          "values": [
+            {
+              "name": "query",
+              "description": "Research question",
+              "type": "string",
+              "required": true
+            }
+          ]
+        }
+      },
+      "id": "tool-deep-research",
+      "name": "Tool: Deep Research",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.2,
+      "position": [400, 1420]
+    },
+    {
+      "parameters": {
+        "name": "postgres_query",
+        "description": "Execute direct SQL queries against the Postgres database. Use for custom data retrieval, aggregations, or updates.\n\nParameters:\n- query (required): SQL query to execute\n- operation (optional): read|write (default: read)",
+        "workflowId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "jIg4G9gOepu78ayb",
+          "cachedResultName": "Tool: Postgres SQL Query"
+        },
+        "fields": {
+          "values": [
+            {
+              "name": "query",
+              "description": "SQL query",
+              "type": "string",
+              "required": true
+            },
+            {
+              "name": "operation",
+              "description": "read or write",
+              "type": "string",
+              "required": false
+            }
+          ]
+        }
+      },
+      "id": "tool-postgres-query",
+      "name": "Tool: Postgres Query",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.2,
+      "position": [560, 1420]
+    },
+    {
+      "parameters": {
+        "description": "ALWAYS call this tool FIRST to plan your approach. Create a numbered step-by-step execution plan before using other tools."
+      },
+      "id": "tool-think",
+      "name": "Tool: Think",
+      "type": "@n8n/n8n-nodes-langchain.toolThink",
+      "typeVersion": 1.1,
+      "position": [720, 1420]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ═══════════════════════════════════════════════════════════════════\n// 📤 Format Final Response\n// ═══════════════════════════════════════════════════════════════════\n\nconst input = $('📋 Normalize Input').first().json;\nconst agentOutput = $('🎯 Main Agent').first().json.output || 'No response generated';\n\n// Clean up the output for Telegram (max 4096 chars)\nlet telegramMessage = agentOutput;\nif (telegramMessage.length > 4000) {\n  telegramMessage = telegramMessage.substring(0, 3900) + '\\n\\n... _Response truncated_';\n}\n\n// Build structured response\nconst response = {\n  success: true,\n  request_id: input.request_id,\n  mode: input.mode,\n  output: agentOutput,\n  telegram_message: telegramMessage,\n  chat_id: input.chat_id,\n  source: input.source,\n  timestamp: new Date().toISOString()\n};\n\nreturn [{ json: response }];"
+      },
+      "id": "format-response",
+      "name": "📤 Format Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [720, 560]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "is-telegram",
+              "leftValue": "={{ $json.source }}",
+              "rightValue": "telegram",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "route-response",
+      "name": "🔀 Route Response",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.1,
+      "position": [960, 560]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chat_id }}",
+        "text": "={{ $json.telegram_message }}",
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      },
+      "id": "send-telegram-response",
+      "name": "📤 Send Telegram Response",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [1200, 440],
+      "credentials": {
+        "telegramApi": {
+          "id": "lnK3x3CBHsSqVAaT",
+          "name": "GodModeJan2026"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { success: $json.success, request_id: $json.request_id, mode: $json.mode, output: $json.output, timestamp: $json.timestamp } }}",
+        "options": {}
+      },
+      "id": "send-webhook-response",
+      "name": "📤 Send Webhook Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1200, 680]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO agent_audit_log (action, action_type, success, input_data, output_data, source, target) VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6, $7)",
+        "options": {
+          "queryReplacement": "={{ ['ops_agent_request', $('📋 Normalize Input').first().json.mode, true, JSON.stringify({request_id: $('📋 Normalize Input').first().json.request_id, instructions: $('📋 Normalize Input').first().json.instructions, target: $('📋 Normalize Input').first().json.target}), JSON.stringify({output_length: ($('📤 Format Response').first().json.output || '').length}), $('📋 Normalize Input').first().json.source, 'ops_agent'] }}"
+        }
+      },
+      "id": "log-request",
+      "name": "🗄️ Log Request",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1440, 560],
+      "credentials": {
+        "postgres": {
+          "id": "BwXy2JHETe47vH1I",
+          "name": "Postgres account 2"
+        }
+      },
+      "onError": "continueRegularOutput"
+    }
+  ],
+  "connections": {
+    "🌐 Webhook Trigger": {
+      "main": [[{ "node": "📋 Normalize Input", "type": "main", "index": 0 }]]
+    },
+    "💬 Telegram Trigger": {
+      "main": [[{ "node": "📋 Normalize Input", "type": "main", "index": 0 }]]
+    },
+    "📋 Normalize Input": {
+      "main": [[{ "node": "🛡️ Check Controls", "type": "main", "index": 0 }]]
+    },
+    "🛡️ Check Controls": {
+      "main": [[{ "node": "🛑 Kill Switch?", "type": "main", "index": 0 }]]
+    },
+    "🛑 Kill Switch?": {
+      "main": [
+        [
+          { "node": "🛑 Kill Switch Response", "type": "main", "index": 0 },
+          { "node": "🛑 Kill Switch Telegram", "type": "main", "index": 0 }
+        ],
+        [{ "node": "🔍 Get System Context", "type": "main", "index": 0 }]
+      ]
+    },
+    "🔍 Get System Context": {
+      "main": [[{ "node": "📤 Send Started", "type": "main", "index": 0 }]]
+    },
+    "📤 Send Started": {
+      "main": [[{ "node": "🔧 Compile Context", "type": "main", "index": 0 }]]
+    },
+    "🔧 Compile Context": {
+      "main": [[{ "node": "🎯 Main Agent", "type": "main", "index": 0 }]]
+    },
+    "🎯 Main Agent": {
+      "main": [[{ "node": "📤 Format Response", "type": "main", "index": 0 }]]
+    },
+    "🧠 LLM (GPT-4o)": {
+      "ai_languageModel": [[{ "node": "🎯 Main Agent", "type": "ai_languageModel", "index": 0 }]]
+    },
+    "Tool: SOP Search": {
+      "ai_tool": [[{ "node": "🎯 Main Agent", "type": "ai_tool", "index": 0 }]]
+    },
+    "Tool: Memory Recall": {
+      "ai_tool": [[{ "node": "🎯 Main Agent", "type": "ai_tool", "index": 0 }]]
+    },
+    "Tool: Execution Debugger": {
+      "ai_tool": [[{ "node": "🎯 Main Agent", "type": "ai_tool", "index": 0 }]]
+    },
+    "Tool: Auto-Fixer": {
+      "ai_tool": [[{ "node": "🎯 Main Agent", "type": "ai_tool", "index": 0 }]]
+    },
+    "Tool: Health Monitor": {
+      "ai_tool": [[{ "node": "🎯 Main Agent", "type": "ai_tool", "index": 0 }]]
+    },
+    "Tool: Workflow Builder": {
+      "ai_tool": [[{ "node": "🎯 Main Agent", "type": "ai_tool", "index": 0 }]]
+    },
+    "Tool: Workflow Deployer": {
+      "ai_tool": [[{ "node": "🎯 Main Agent", "type": "ai_tool", "index": 0 }]]
+    },
+    "Tool: Workflow Updater": {
+      "ai_tool": [[{ "node": "🎯 Main Agent", "type": "ai_tool", "index": 0 }]]
+    },
+    "Tool: Workflow Optimizer": {
+      "ai_tool": [[{ "node": "🎯 Main Agent", "type": "ai_tool", "index": 0 }]]
+    },
+    "MCP: Supabase": {
+      "ai_tool": [[{ "node": "🎯 Main Agent", "type": "ai_tool", "index": 0 }]]
+    },
+    "MCP: n8n Operations": {
+      "ai_tool": [[{ "node": "🎯 Main Agent", "type": "ai_tool", "index": 0 }]]
+    },
+    "Tool: Code Generator": {
+      "ai_tool": [[{ "node": "🎯 Main Agent", "type": "ai_tool", "index": 0 }]]
+    },
+    "Tool: Expression Builder": {
+      "ai_tool": [[{ "node": "🎯 Main Agent", "type": "ai_tool", "index": 0 }]]
+    },
+    "Tool: n8n Operator": {
+      "ai_tool": [[{ "node": "🎯 Main Agent", "type": "ai_tool", "index": 0 }]]
+    },
+    "Tool: Lesson Extractor": {
+      "ai_tool": [[{ "node": "🎯 Main Agent", "type": "ai_tool", "index": 0 }]]
+    },
+    "Tool: HubSpot Agent": {
+      "ai_tool": [[{ "node": "🎯 Main Agent", "type": "ai_tool", "index": 0 }]]
+    },
+    "Tool: Deep Research": {
+      "ai_tool": [[{ "node": "🎯 Main Agent", "type": "ai_tool", "index": 0 }]]
+    },
+    "Tool: Postgres Query": {
+      "ai_tool": [[{ "node": "🎯 Main Agent", "type": "ai_tool", "index": 0 }]]
+    },
+    "Tool: Think": {
+      "ai_tool": [[{ "node": "🎯 Main Agent", "type": "ai_tool", "index": 0 }]]
+    },
+    "📤 Format Response": {
+      "main": [[{ "node": "🔀 Route Response", "type": "main", "index": 0 }]]
+    },
+    "🔀 Route Response": {
+      "main": [
+        [{ "node": "📤 Send Telegram Response", "type": "main", "index": 0 }],
+        [{ "node": "📤 Send Webhook Response", "type": "main", "index": 0 }]
+      ]
+    },
+    "📤 Send Telegram Response": {
+      "main": [[{ "node": "🗄️ Log Request", "type": "main", "index": 0 }]]
+    },
+    "📤 Send Webhook Response": {
+      "main": [[{ "node": "🗄️ Log Request", "type": "main", "index": 0 }]]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "saveManualExecutions": true,
+    "saveExecutionProgress": true,
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "description": "Master automation operations agent with 19 tools. Handles build, debug, improve, and inspect modes for n8n workflows, HubSpot, and Postgres. Features: kill switch, progress notifications, approval flow, full audit logging. Tools: SOP Search, Memory Recall, Execution Debugger, Auto-Fixer, Health Monitor, Workflow Builder/Deployer/Updater/Optimizer, Code Generator, Expression Builder, Think, HubSpot Agent, Deep Research, Postgres Query, n8n Operator, Lesson Extractor, MCP Supabase, MCP n8n.",
+    "category": "ops",
+    "version": "1.1"
+  }
+}

@@ -1,0 +1,819 @@
+{
+  "name": "Lead Enrichment Orchestrator v3 - Full Pipeline",
+  "nodes": [
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [-1808, -432],
+      "id": "73a1d09e-28a2-4ae2-ac41-05b1547da050",
+      "name": "When Executed by Another Workflow"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [-1808, -256],
+      "id": "46591f13-7d1e-446f-b8d1-68e35e8a7b58",
+      "name": "When clicking 'Execute workflow'"
+    },
+    {
+      "parameters": {
+        "operation": "search",
+        "base": {
+          "__rl": true,
+          "value": "appUmr7c5VACTjiJj",
+          "mode": "list",
+          "cachedResultName": "ASM Lead Intelligence Hub (Copy)",
+          "cachedResultUrl": "https://airtable.com/appUmr7c5VACTjiJj"
+        },
+        "table": {
+          "__rl": true,
+          "value": "tblLxOBg1zHfLYyUJ",
+          "mode": "list",
+          "cachedResultName": "Companies (Canonical)",
+          "cachedResultUrl": "https://airtable.com/appUmr7c5VACTjiJj/tblLxOBg1zHfLYyUJ"
+        },
+        "filterByFormula": "AND({research_status}=BLANK())",
+        "returnAll": false,
+        "limit": 1,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2.1,
+      "position": [-1584, -352],
+      "id": "90442022-641b-4e7d-a1e8-85ea18cc648b",
+      "name": "🔍 Search Airtable Records",
+      "credentials": {
+        "airtableTokenApi": {
+          "id": "mP0iHEaWU9UB0y9B",
+          "name": "Jonah's n8n Personal Access Token Confirmed"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Normalizes Airtable output whether fields are nested ($json.fields) or flattened ($json)\nconst item = $input.first();\nconst j = item.json;\n\nconst f = (j.fields && typeof j.fields === 'object') ? j.fields : j;\n\nconst safe = (v) => (v === null || v === undefined) ? '' : String(v);\nconst normalizeDomain = (urlOrDomain) =>\n  safe(urlOrDomain)\n    .replace(/^https?:\\/\\//i, '')\n    .replace(/^www\\./i, '')\n    .split('/')[0]\n    .trim();\n\nconst hq = safe(f['HQ Address'] || f['Address'] || f['Location'] || '');\nconst parts = hq.split(',').map(s => s.trim());\nconst city = parts[1] || '';\nconst state = (parts[2] || '').split(' ')[0] || '';\n\nconst companyName = safe(f['Company Name'] || f['company_name'] || f['name'] || '');\nconst website = safe(f['Website'] || f['website'] || f['domain'] || '');\nconst phone = safe(f['Phone'] || f['phone'] || '');\n\nconst out = {\n  airtable_id: safe(j.id || f.id || ''),\n  company_name: companyName,\n  location: hq,\n  city,\n  state,\n  domain: website,\n  search_domain: normalizeDomain(website),\n  phone,\n  timestamp: new Date().toISOString(),\n  enrichment_id: `${new Date().toISOString().replace(/[:.]/g,'')}-${companyName.replace(/[^a-zA-Z0-9]/g,'') || 'unknown'}`,\n};\n\nreturn [{ json: out }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-1408, -352],
+      "id": "502fad57-fdb1-42ef-9992-919429eadf15",
+      "name": "🧱 Normalize Airtable Record"
+    },
+    {
+      "parameters": {
+        "jsCode": "const inputData = $json;\nreturn {\n  ...inputData,\n  research_run_id: $execution.id.toString(),\n  company_id: inputData.airtable_id || 'unknown_id',\n  workflow_version: 'lead_enrichment_orchestrator_v3',\n  pipeline_started_at: new Date().toISOString()\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-1216, -352],
+      "id": "e8e8ce5c-1893-4e18-9c57-e12586cbdea4",
+      "name": "🧾 Init Run Context (GLOBAL)"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO public.research_runs (id, company_id, status) VALUES ($1, $2, 'processing') ON CONFLICT (id) DO NOTHING;",
+        "options": {
+          "queryReplacement": "={{ [$json.research_run_id, $json.company_id] }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [-1008, -256],
+      "id": "fa32f761-bfef-4f74-97bd-064413ebb13e",
+      "name": "🗄️ DB — Register Run",
+      "credentials": {
+        "postgres": {
+          "id": "xogKD739Qe4gqWBU",
+          "name": "Postgres account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "mode": "chooseBranch"
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [-832, -336],
+      "id": "fb60c079-f632-4eb6-98c6-1174195b554e",
+      "name": "🤝 Merge — Run Registered"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {"id": "airtable_id", "name": "airtable_id", "type": "string", "value": "={{ $json.airtable_id }}"},
+            {"id": "company_name", "name": "company_name", "type": "string", "value": "={{ $json.company_name }}"},
+            {"id": "location", "name": "location", "type": "string", "value": "={{ $json.location }}"},
+            {"id": "city", "name": "city", "type": "string", "value": "={{ $json.city }}"},
+            {"id": "state", "name": "state", "type": "string", "value": "={{ $json.state }}"},
+            {"id": "domain", "name": "domain", "type": "string", "value": "={{ $json.domain }}"},
+            {"id": "search_domain", "name": "search_domain", "type": "string", "value": "={{ $json.search_domain }}"},
+            {"id": "phone", "name": "phone", "type": "string", "value": "={{ $json.phone }}"},
+            {"id": "timestamp", "name": "timestamp", "type": "string", "value": "={{ $json.timestamp }}"},
+            {"id": "enrichment_id", "name": "enrichment_id", "type": "string", "value": "={{ $json.enrichment_id }}"},
+            {"id": "research_run_id", "name": "research_run_id", "type": "string", "value": "={{ $json.research_run_id }}"},
+            {"id": "company_id", "name": "company_id", "type": "string", "value": "={{ $json.company_id }}"}
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [-656, -336],
+      "id": "58e73fdf-e8a0-48d9-b37f-48ae9ce700be",
+      "name": "📋 Input Validation & Prep"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "ICy-FJLl7ZNFNQEzf3iKE",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/ICy-FJLl7ZNFNQEzf3iKE",
+          "cachedResultName": "Smart Entry Router - Domain Discovery (Stage 0)"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "airtable_id": "={{ $json.airtable_id }}",
+            "company_name": "={{ $json.company_name }}",
+            "location": "={{ $json.location }}",
+            "city": "={{ $json.city }}",
+            "state": "={{ $json.state }}",
+            "domain": "={{ $json.domain }}",
+            "search_domain": "={{ $json.search_domain }}",
+            "phone": "={{ $json.phone }}",
+            "timestamp": "={{ $json.timestamp }}",
+            "enrichment_id": "={{ $json.enrichment_id }}",
+            "research_run_id": "={{ $json.research_run_id }}",
+            "company_id": "={{ $json.company_id }}"
+          },
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [-432, -336],
+      "id": "smart-entry-router-001",
+      "name": "🚦 Stage 0: Smart Entry Router",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract routing decision from Smart Entry Router output\nconst data = $json;\nconst runSummary = data.run_summary || {};\n\n// Determine if we have a valid domain to proceed\nconst hasDomain = !!runSummary.domain_found && !!runSummary.domain;\nconst routingPath = runSummary.routing_path || 'unknown';\n\nreturn [{\n  json: {\n    ...data,\n    // Flatten key fields for downstream\n    resolved_domain: runSummary.domain || data.search_domain || data.domain || null,\n    has_valid_domain: hasDomain,\n    routing_path: routingPath,\n    next_action: runSummary.next_action || 'unknown',\n    stage_0_status: runSummary.status || 'unknown'\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-208, -336],
+      "id": "process-router-output",
+      "name": "⚙️ Process Router Output"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "has-domain-check",
+              "leftValue": "={{ $json.has_valid_domain }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [16, -336],
+      "id": "check-domain-found",
+      "name": "🔀 Has Valid Domain?"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "DVDTaG8QlJkivPVgFDx8Z",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/DVDTaG8QlJkivPVgFDx8Z",
+          "cachedResultName": "Firecrawl - Enrichment Tool (About, Services, Pricing, Contact, & Careers)"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "airtable_id": "={{ $json.airtable_id }}",
+            "company_name": "={{ $json.company_name }}",
+            "location": "={{ $json.location }}",
+            "city": "={{ $json.city }}",
+            "state": "={{ $json.state }}",
+            "domain": "={{ $json.resolved_domain }}",
+            "search_domain": "={{ $json.resolved_domain }}",
+            "phone": "={{ $json.phone }}",
+            "timestamp": "={{ $json.timestamp }}",
+            "enrichment_id": "={{ $json.enrichment_id }}",
+            "research_run_id": "={{ $json.research_run_id }}",
+            "company_id": "={{ $json.company_id }}"
+          },
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [256, -432],
+      "id": "8b10d227-4f02-4e90-bc03-db19737800a4",
+      "name": "🔥 Stage 1: Firecrawl Website Enrichment",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "HfMeQf6oCHhL9Q0p2H9ye",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/HfMeQf6oCHhL9Q0p2H9ye",
+          "cachedResultName": "Firecrawl - Contact Form & Email Hunter"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "airtable_id": "={{ $json.airtable_id }}",
+            "company_name": "={{ $json.company_name }}",
+            "location": "={{ $json.location }}",
+            "city": "={{ $json.city }}",
+            "state": "={{ $json.state }}",
+            "domain": "={{ $json.resolved_domain }}",
+            "search_domain": "={{ $json.resolved_domain }}",
+            "phone": "={{ $json.phone }}",
+            "timestamp": "={{ $json.timestamp }}",
+            "enrichment_id": "={{ $json.enrichment_id }}",
+            "research_run_id": "={{ $json.research_run_id }}",
+            "company_id": "={{ $json.company_id }}"
+          },
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [496, -432],
+      "id": "contact-form-hunter",
+      "name": "📧 Stage 2a: Contact Form & Email Hunter",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "4YgfhwtJDdVoBaQu",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/4YgfhwtJDdVoBaQu",
+          "cachedResultName": "Specialist - Hunter.io (Universal)"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "airtable_id": "={{ $json.airtable_id }}",
+            "company_name": "={{ $json.company_name }}",
+            "location": "={{ $json.location }}",
+            "city": "={{ $json.city }}",
+            "state": "={{ $json.state }}",
+            "domain": "={{ $json.resolved_domain }}",
+            "search_domain": "={{ $json.resolved_domain }}",
+            "phone": "={{ $json.phone }}",
+            "timestamp": "={{ $json.timestamp }}",
+            "enrichment_id": "={{ $json.enrichment_id }}",
+            "research_run_id": "={{ $json.research_run_id }}",
+            "company_id": "={{ $json.company_id }}"
+          },
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [496, -272],
+      "id": "hunter-io-universal",
+      "name": "📧 Stage 2b: Hunter.io (Universal)",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "mode": "chooseBranch"
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [736, -352],
+      "id": "merge-stage-2",
+      "name": "🤝 Merge Stage 2"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "Hl9aGZsO2GRt4eWGIkvxs",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/Hl9aGZsO2GRt4eWGIkvxs",
+          "cachedResultName": "Firmographics Enrichment Tool (Apollo)"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "airtable_id": "={{ $json.airtable_id }}",
+            "company_name": "={{ $json.company_name }}",
+            "location": "={{ $json.location }}",
+            "city": "={{ $json.city }}",
+            "state": "={{ $json.state }}",
+            "domain": "={{ $json.resolved_domain }}",
+            "search_domain": "={{ $json.resolved_domain }}",
+            "phone": "={{ $json.phone }}",
+            "timestamp": "={{ $json.timestamp }}",
+            "enrichment_id": "={{ $json.enrichment_id }}",
+            "research_run_id": "={{ $json.research_run_id }}",
+            "company_id": "={{ $json.company_id }}"
+          },
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [976, -352],
+      "id": "3e1dffe0-ffe5-4f36-a31c-0dd7a0968889",
+      "name": "📊 Stage 3: Firmographics (Apollo)",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "IBw7IpH80m0TMa45KCJF5",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/IBw7IpH80m0TMa45KCJF5",
+          "cachedResultName": "Enrichment Tool - Headhunter Agent"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "airtable_id": "={{ $json.airtable_id }}",
+            "company_name": "={{ $json.company_name }}",
+            "location": "={{ $json.location }}",
+            "city": "={{ $json.city }}",
+            "state": "={{ $json.state }}",
+            "domain": "={{ $json.resolved_domain }}",
+            "search_domain": "={{ $json.resolved_domain }}",
+            "phone": "={{ $json.phone }}",
+            "timestamp": "={{ $json.timestamp }}",
+            "enrichment_id": "={{ $json.enrichment_id }}",
+            "research_run_id": "={{ $json.research_run_id }}",
+            "company_id": "={{ $json.company_id }}"
+          },
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [1216, -432],
+      "id": "a66c50f6-0c31-4930-b56b-c0a321b21b26",
+      "name": "👤 Stage 4a: Headhunter Agent",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "LkcBjvdlGqBOYSdP",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/LkcBjvdlGqBOYSdP",
+          "cachedResultName": "Stage 6 (Sub-Agent) - Owner Research Agent"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "company_name": "={{ $json.company_name }}",
+            "location": "={{ $json.location }}",
+            "enrichment_id": "={{ $json.enrichment_id }}",
+            "research_run_id": "={{ $json.research_run_id }}",
+            "company_id": "={{ $json.company_id }}"
+          },
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [1216, -272],
+      "id": "owner-research-agent",
+      "name": "👤 Stage 4b: Owner Research Agent",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "mode": "chooseBranch"
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [1456, -352],
+      "id": "merge-stage-4",
+      "name": "🤝 Merge Stage 4"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "LIhNhNsPemc-merLoqThs",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/LIhNhNsPemc-merLoqThs",
+          "cachedResultName": "Enrichment Tool - Intel Analyst Agent"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "airtable_id": "={{ $json.airtable_id }}",
+            "company_name": "={{ $json.company_name }}",
+            "location": "={{ $json.location }}",
+            "city": "={{ $json.city }}",
+            "state": "={{ $json.state }}",
+            "domain": "={{ $json.resolved_domain }}",
+            "search_domain": "={{ $json.resolved_domain }}",
+            "phone": "={{ $json.phone }}",
+            "timestamp": "={{ $json.timestamp }}",
+            "enrichment_id": "={{ $json.enrichment_id }}",
+            "research_run_id": "={{ $json.research_run_id }}",
+            "company_id": "={{ $json.company_id }}"
+          },
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [1696, -512],
+      "id": "b144ad7d-ef8a-4329-987a-c85f7067dccb",
+      "name": "🕵️ Stage 5a: Intel Analyst Agent",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "8KCihPqoU_xH5QkiP8UAr",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/8KCihPqoU_xH5QkiP8UAr",
+          "cachedResultName": "Job Board Hunter - Hiring Intent Detection (SerpAPI)"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "company_name": "={{ $json.company_name }}",
+            "location": "={{ $json.location }}",
+            "city": "={{ $json.city }}",
+            "state": "={{ $json.state }}",
+            "enrichment_id": "={{ $json.enrichment_id }}",
+            "research_run_id": "={{ $json.research_run_id }}",
+            "company_id": "={{ $json.company_id }}"
+          },
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [1696, -352],
+      "id": "job-board-hunter",
+      "name": "💼 Stage 5b: Job Board Hunter",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "JllE0lttkSdFofbqzdibL",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/JllE0lttkSdFofbqzdibL",
+          "cachedResultName": "Firecrawl - Career Page Analyzer (Hiring Signals)"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "airtable_id": "={{ $json.airtable_id }}",
+            "company_name": "={{ $json.company_name }}",
+            "location": "={{ $json.location }}",
+            "city": "={{ $json.city }}",
+            "state": "={{ $json.state }}",
+            "domain": "={{ $json.resolved_domain }}",
+            "search_domain": "={{ $json.resolved_domain }}",
+            "phone": "={{ $json.phone }}",
+            "timestamp": "={{ $json.timestamp }}",
+            "enrichment_id": "={{ $json.enrichment_id }}",
+            "research_run_id": "={{ $json.research_run_id }}",
+            "company_id": "={{ $json.company_id }}"
+          },
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [1696, -192],
+      "id": "career-page-analyzer",
+      "name": "📄 Stage 5c: Career Page Analyzer",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "mode": "chooseBranch",
+        "numberInputs": 3
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [1936, -352],
+      "id": "merge-stage-5",
+      "name": "🤝 Merge Stage 5"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "I039785tdTuohF_CqRlIB",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/I039785tdTuohF_CqRlIB",
+          "cachedResultName": "Apify Review Scraper (Social Proof)"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "airtable_id": "={{ $json.airtable_id }}",
+            "company_name": "={{ $json.company_name }}",
+            "location": "={{ $json.location }}",
+            "city": "={{ $json.city }}",
+            "state": "={{ $json.state }}",
+            "domain": "={{ $json.resolved_domain }}",
+            "search_domain": "={{ $json.resolved_domain }}",
+            "phone": "={{ $json.phone }}",
+            "timestamp": "={{ $json.timestamp }}",
+            "enrichment_id": "={{ $json.enrichment_id }}",
+            "research_run_id": "={{ $json.research_run_id }}",
+            "company_id": "={{ $json.company_id }}"
+          },
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [2176, -352],
+      "id": "f8c68ee8-5e8a-4e9b-9e1a-3c4f5d6e7a8b",
+      "name": "⭐ Stage 6: Apify Review Scraper",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "A4-U5nCoP9WMSikDE3qdi",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/A4-U5nCoP9WMSikDE3qdi",
+          "cachedResultName": "🧠 Context Updater — Company Dossier"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "company_id": "={{ $json.company_id }}",
+            "research_run_id": "={{ $json.research_run_id }}"
+          },
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [2416, -352],
+      "id": "final-context-update",
+      "name": "🧠 Stage 7: Final Context Update",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE research_runs SET status = 'completed', context_summary = $2 WHERE id = $1;",
+        "options": {
+          "queryReplacement": "={{ [$json.research_run_id, 'Enrichment pipeline completed at ' + new Date().toISOString()] }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [2656, -352],
+      "id": "mark-run-complete",
+      "name": "🗄️ Mark Run Complete",
+      "credentials": {
+        "postgres": {
+          "id": "xogKD739Qe4gqWBU",
+          "name": "Postgres account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build final pipeline summary\nconst data = $json;\n\nreturn [{\n  json: {\n    status: 'completed',\n    research_run_id: data.research_run_id,\n    company_id: data.company_id,\n    company_name: data.company_name,\n    domain: data.resolved_domain,\n    completed_at: new Date().toISOString(),\n    stages_executed: [\n      'Stage 0: Smart Entry Router',\n      'Stage 1: Website Enrichment',\n      'Stage 2: Contact Discovery',\n      'Stage 3: Firmographics',\n      'Stage 4: People Intelligence',\n      'Stage 5: Market Intelligence',\n      'Stage 6: Social Proof',\n      'Stage 7: Context Update'\n    ]\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2896, -352],
+      "id": "build-final-summary",
+      "name": "📤 Build Final Summary"
+    },
+    {
+      "parameters": {
+        "jsCode": "// No domain found - log and skip enrichment\nconst data = $json;\n\nreturn [{\n  json: {\n    status: 'skipped',\n    reason: 'no_domain_found',\n    research_run_id: data.research_run_id,\n    company_id: data.company_id,\n    company_name: data.company_name,\n    routing_path: data.routing_path,\n    skipped_at: new Date().toISOString()\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [256, -176],
+      "id": "no-domain-handler",
+      "name": "⚠️ No Domain - Skip Enrichment"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE research_runs SET status = 'skipped', context_summary = $2 WHERE id = $1;",
+        "options": {
+          "queryReplacement": "={{ [$json.research_run_id, 'No domain found - skipped enrichment'] }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [496, -176],
+      "id": "mark-run-skipped",
+      "name": "🗄️ Mark Run Skipped",
+      "credentials": {
+        "postgres": {
+          "id": "xogKD739Qe4gqWBU",
+          "name": "Postgres account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    }
+  ],
+  "connections": {
+    "When Executed by Another Workflow": {
+      "main": [[{"node": "🧱 Normalize Airtable Record", "type": "main", "index": 0}]]
+    },
+    "When clicking 'Execute workflow'": {
+      "main": [[{"node": "🔍 Search Airtable Records", "type": "main", "index": 0}]]
+    },
+    "🔍 Search Airtable Records": {
+      "main": [[{"node": "🧱 Normalize Airtable Record", "type": "main", "index": 0}]]
+    },
+    "🧱 Normalize Airtable Record": {
+      "main": [[{"node": "🧾 Init Run Context (GLOBAL)", "type": "main", "index": 0}]]
+    },
+    "🧾 Init Run Context (GLOBAL)": {
+      "main": [[
+        {"node": "🗄️ DB — Register Run", "type": "main", "index": 0},
+        {"node": "🤝 Merge — Run Registered", "type": "main", "index": 0}
+      ]]
+    },
+    "🗄️ DB — Register Run": {
+      "main": [[{"node": "🤝 Merge — Run Registered", "type": "main", "index": 1}]]
+    },
+    "🤝 Merge — Run Registered": {
+      "main": [[{"node": "📋 Input Validation & Prep", "type": "main", "index": 0}]]
+    },
+    "📋 Input Validation & Prep": {
+      "main": [[{"node": "🚦 Stage 0: Smart Entry Router", "type": "main", "index": 0}]]
+    },
+    "🚦 Stage 0: Smart Entry Router": {
+      "main": [[{"node": "⚙️ Process Router Output", "type": "main", "index": 0}]]
+    },
+    "⚙️ Process Router Output": {
+      "main": [[{"node": "🔀 Has Valid Domain?", "type": "main", "index": 0}]]
+    },
+    "🔀 Has Valid Domain?": {
+      "main": [
+        [{"node": "🔥 Stage 1: Firecrawl Website Enrichment", "type": "main", "index": 0}],
+        [{"node": "⚠️ No Domain - Skip Enrichment", "type": "main", "index": 0}]
+      ]
+    },
+    "🔥 Stage 1: Firecrawl Website Enrichment": {
+      "main": [[
+        {"node": "📧 Stage 2a: Contact Form & Email Hunter", "type": "main", "index": 0},
+        {"node": "📧 Stage 2b: Hunter.io (Universal)", "type": "main", "index": 0}
+      ]]
+    },
+    "📧 Stage 2a: Contact Form & Email Hunter": {
+      "main": [[{"node": "🤝 Merge Stage 2", "type": "main", "index": 0}]]
+    },
+    "📧 Stage 2b: Hunter.io (Universal)": {
+      "main": [[{"node": "🤝 Merge Stage 2", "type": "main", "index": 1}]]
+    },
+    "🤝 Merge Stage 2": {
+      "main": [[{"node": "📊 Stage 3: Firmographics (Apollo)", "type": "main", "index": 0}]]
+    },
+    "📊 Stage 3: Firmographics (Apollo)": {
+      "main": [[
+        {"node": "👤 Stage 4a: Headhunter Agent", "type": "main", "index": 0},
+        {"node": "👤 Stage 4b: Owner Research Agent", "type": "main", "index": 0}
+      ]]
+    },
+    "👤 Stage 4a: Headhunter Agent": {
+      "main": [[{"node": "🤝 Merge Stage 4", "type": "main", "index": 0}]]
+    },
+    "👤 Stage 4b: Owner Research Agent": {
+      "main": [[{"node": "🤝 Merge Stage 4", "type": "main", "index": 1}]]
+    },
+    "🤝 Merge Stage 4": {
+      "main": [[
+        {"node": "🕵️ Stage 5a: Intel Analyst Agent", "type": "main", "index": 0},
+        {"node": "💼 Stage 5b: Job Board Hunter", "type": "main", "index": 0},
+        {"node": "📄 Stage 5c: Career Page Analyzer", "type": "main", "index": 0}
+      ]]
+    },
+    "🕵️ Stage 5a: Intel Analyst Agent": {
+      "main": [[{"node": "🤝 Merge Stage 5", "type": "main", "index": 0}]]
+    },
+    "💼 Stage 5b: Job Board Hunter": {
+      "main": [[{"node": "🤝 Merge Stage 5", "type": "main", "index": 1}]]
+    },
+    "📄 Stage 5c: Career Page Analyzer": {
+      "main": [[{"node": "🤝 Merge Stage 5", "type": "main", "index": 2}]]
+    },
+    "🤝 Merge Stage 5": {
+      "main": [[{"node": "⭐ Stage 6: Apify Review Scraper", "type": "main", "index": 0}]]
+    },
+    "⭐ Stage 6: Apify Review Scraper": {
+      "main": [[{"node": "🧠 Stage 7: Final Context Update", "type": "main", "index": 0}]]
+    },
+    "🧠 Stage 7: Final Context Update": {
+      "main": [[{"node": "🗄️ Mark Run Complete", "type": "main", "index": 0}]]
+    },
+    "🗄️ Mark Run Complete": {
+      "main": [[{"node": "📤 Build Final Summary", "type": "main", "index": 0}]]
+    },
+    "⚠️ No Domain - Skip Enrichment": {
+      "main": [[{"node": "🗄️ Mark Run Skipped", "type": "main", "index": 0}]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "meta": {
+    "description": "Lead Enrichment Orchestrator v3 - Full multi-stage enrichment pipeline with 13 sub-workflows",
+    "category": "lead_enrichment",
+    "version": "3.0"
+  }
+}

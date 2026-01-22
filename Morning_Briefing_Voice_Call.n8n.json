@@ -1,0 +1,216 @@
+{
+  "name": "☀️ Morning Briefing Voice Call",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 6 * * 1-5"
+            }
+          ]
+        }
+      },
+      "id": "schedule-trigger",
+      "name": "⏰ 6 AM Weekdays",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [-800, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT jsonb_build_object(\n  -- Overnight execution summary (6pm yesterday to 6am today)\n  'overnight_summary', jsonb_build_object(\n    'total_executions', (SELECT COUNT(*) FROM workflow_executions WHERE started_at BETWEEN NOW() - INTERVAL '12 hours' AND NOW()),\n    'successful', (SELECT COUNT(*) FROM workflow_executions WHERE started_at BETWEEN NOW() - INTERVAL '12 hours' AND NOW() AND status = 'success'),\n    'failed', (SELECT COUNT(*) FROM workflow_executions WHERE started_at BETWEEN NOW() - INTERVAL '12 hours' AND NOW() AND status = 'error'),\n    'success_rate', ROUND((\n      SELECT COUNT(*) FILTER (WHERE status = 'success')::numeric / NULLIF(COUNT(*)::numeric, 0) * 100\n      FROM workflow_executions WHERE started_at BETWEEN NOW() - INTERVAL '12 hours' AND NOW()\n    ), 1)\n  ),\n  \n  -- Lead generation stats\n  'lead_stats', jsonb_build_object(\n    'new_leads', (SELECT COUNT(*) FROM companies WHERE created_at BETWEEN NOW() - INTERVAL '12 hours' AND NOW()),\n    'enriched', (SELECT COUNT(*) FROM enrichment_results WHERE completed_at BETWEEN NOW() - INTERVAL '12 hours' AND NOW() AND status = 'success')\n  ),\n  \n  -- HubSpot activity\n  'hubspot_stats', jsonb_build_object(\n    'contacts_synced', (SELECT COUNT(*) FROM hubspot_syncs WHERE synced_at BETWEEN NOW() - INTERVAL '12 hours' AND NOW()),\n    'sync_errors', (SELECT COUNT(*) FROM hubspot_syncs WHERE synced_at BETWEEN NOW() - INTERVAL '12 hours' AND NOW() AND sync_status = 'error')\n  ),\n  \n  -- Top errors overnight\n  'top_errors', COALESCE((\n    SELECT json_agg(sub) FROM (\n      SELECT \n        error_category,\n        COUNT(*) as count,\n        (array_agg(workflow_id))[1] as example_workflow\n      FROM workflow_execution_errors\n      WHERE created_at BETWEEN NOW() - INTERVAL '12 hours' AND NOW()\n      GROUP BY error_category\n      ORDER BY count DESC\n      LIMIT 3\n    ) sub\n  ), '[]'::json),\n  \n  -- Pending approvals\n  'pending_approvals', (SELECT COUNT(*) FROM proposals WHERE status = 'pending'),\n  \n  -- System state\n  'system_state', (SELECT system_state FROM agent_controls LIMIT 1),\n  'kill_switch', (SELECT kill_switch FROM agent_controls LIMIT 1)\n) AS briefing_data;",
+        "options": {}
+      },
+      "id": "get-overnight-stats",
+      "name": "🔍 Get Overnight Stats",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [-560, 300],
+      "credentials": {
+        "postgres": {
+          "id": "BwXy2JHETe47vH1I",
+          "name": "Postgres account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// ═══════════════════════════════════════════════════════════════════\n// 🎙️ Build Voice Script for Morning Briefing\n// ═══════════════════════════════════════════════════════════════════\n\nconst data = $json.briefing_data;\nconst overnight = data.overnight_summary;\nconst leads = data.lead_stats;\nconst hubspot = data.hubspot_stats;\nconst topErrors = data.top_errors || [];\n\n// Build natural conversational script\nlet script = `Good morning! Here's your overnight automation briefing. `;\n\n// Execution summary\nif (overnight.total_executions > 0) {\n  script += `Your workflows ran ${overnight.total_executions} times overnight with a ${overnight.success_rate || 0} percent success rate. `;\n  \n  if (overnight.failed > 0) {\n    script += `There were ${overnight.failed} failed executions. `;\n  } else {\n    script += `All executions completed successfully! `;\n  }\n} else {\n  script += `No workflow executions ran overnight. `;\n}\n\n// Lead stats\nif (leads.new_leads > 0 || leads.enriched > 0) {\n  script += `On the lead front, `;\n  if (leads.new_leads > 0) script += `${leads.new_leads} new leads were discovered. `;\n  if (leads.enriched > 0) script += `${leads.enriched} leads were enriched with additional data. `;\n}\n\n// HubSpot sync\nif (hubspot.contacts_synced > 0) {\n  script += `HubSpot synced ${hubspot.contacts_synced} contacts`;\n  if (hubspot.sync_errors > 0) {\n    script += `, but ${hubspot.sync_errors} had sync errors. `;\n  } else {\n    script += ` without issues. `;\n  }\n}\n\n// Top errors\nif (topErrors.length > 0) {\n  script += `The most common error category was ${topErrors[0].error_category} with ${topErrors[0].count} occurrences. `;\n}\n\n// Pending approvals\nif (data.pending_approvals > 0) {\n  script += `You have ${data.pending_approvals} pending approval requests in the queue. `;\n}\n\n// Kill switch warning\nif (data.kill_switch) {\n  script += `Warning: The kill switch is currently active. Agent operations are paused. `;\n}\n\n// Closing\nscript += `That's your briefing. Have a productive day!`;\n\nreturn [{\n  json: {\n    script: script,\n    briefing_data: data,\n    call_priority: overnight.failed > 5 ? 'urgent' : 'normal'\n  }\n}];"
+      },
+      "id": "build-voice-script",
+      "name": "🎙️ Build Voice Script",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-320, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "has-activity",
+              "leftValue": "={{ $json.briefing_data.overnight_summary.total_executions }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "or"
+        },
+        "options": {}
+      },
+      "id": "check-activity",
+      "name": "🔀 Has Activity?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.1,
+      "position": [-80, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.retellai.com/v2/create-phone-call",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"from_number\": \"REPLACE_WITH_RETELL_FROM_NUMBER\",\n  \"to_number\": \"+13204064600\",\n  \"agent_id\": \"REPLACE_WITH_RETELL_AGENT_ID\",\n  \"metadata\": {\n    \"type\": \"morning_briefing\",\n    \"priority\": \"{{ $json.call_priority }}\",\n    \"execution_id\": \"{{ $execution.id }}\"\n  },\n  \"retell_llm_dynamic_variables\": {\n    \"briefing_script\": \"{{ $json.script.replace(/\"/g, '\\\\\"') }}\"\n  }\n}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "initiate-retell-call",
+      "name": "📞 Initiate Retell Call",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [160, 200],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_WITH_RETELL_CREDENTIAL_ID",
+          "name": "Retell API"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "chatId": "5408798342",
+        "text": "☀️ **Morning Briefing**\n\n📊 Overnight: {{ $('🎙️ Build Voice Script').first().json.briefing_data.overnight_summary.total_executions }} executions ({{ $('🎙️ Build Voice Script').first().json.briefing_data.overnight_summary.success_rate || 0 }}% success)\n\n🎯 Leads: {{ $('🎙️ Build Voice Script').first().json.briefing_data.lead_stats.new_leads }} new, {{ $('🎙️ Build Voice Script').first().json.briefing_data.lead_stats.enriched }} enriched\n\n🔗 HubSpot: {{ $('🎙️ Build Voice Script').first().json.briefing_data.hubspot_stats.contacts_synced }} synced\n\n⚠️ Errors: {{ $('🎙️ Build Voice Script').first().json.briefing_data.overnight_summary.failed }}\n\n_Voice call {{ $json.call_id ? 'initiated' : 'skipped' }}_",
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      },
+      "id": "send-telegram-backup",
+      "name": "💬 Telegram Backup",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [400, 200],
+      "credentials": {
+        "telegramApi": {
+          "id": "lnK3x3CBHsSqVAaT",
+          "name": "GodModeJan2026"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "5408798342",
+        "text": "☀️ **Morning Briefing**\n\n_No overnight activity to report. Your systems were quiet._",
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      },
+      "id": "send-no-activity",
+      "name": "💬 No Activity",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [160, 440],
+      "credentials": {
+        "telegramApi": {
+          "id": "lnK3x3CBHsSqVAaT",
+          "name": "GodModeJan2026"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO agent_audit_log (action, action_type, success, output_data, source) VALUES ('morning_briefing', 'notification', true, $1::jsonb, 'morning_briefing_workflow')",
+        "options": {
+          "queryReplacement": "={{ [JSON.stringify($('🎙️ Build Voice Script').first().json.briefing_data)] }}"
+        }
+      },
+      "id": "log-briefing",
+      "name": "🗄️ Log Briefing",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [640, 300],
+      "credentials": {
+        "postgres": {
+          "id": "BwXy2JHETe47vH1I",
+          "name": "Postgres account 2"
+        }
+      },
+      "onError": "continueRegularOutput"
+    }
+  ],
+  "connections": {
+    "⏰ 6 AM Weekdays": {
+      "main": [[{ "node": "🔍 Get Overnight Stats", "type": "main", "index": 0 }]]
+    },
+    "🔍 Get Overnight Stats": {
+      "main": [[{ "node": "🎙️ Build Voice Script", "type": "main", "index": 0 }]]
+    },
+    "🎙️ Build Voice Script": {
+      "main": [[{ "node": "🔀 Has Activity?", "type": "main", "index": 0 }]]
+    },
+    "🔀 Has Activity?": {
+      "main": [
+        [{ "node": "📞 Initiate Retell Call", "type": "main", "index": 0 }],
+        [{ "node": "💬 No Activity", "type": "main", "index": 0 }]
+      ]
+    },
+    "📞 Initiate Retell Call": {
+      "main": [[{ "node": "💬 Telegram Backup", "type": "main", "index": 0 }]]
+    },
+    "💬 Telegram Backup": {
+      "main": [[{ "node": "🗄️ Log Briefing", "type": "main", "index": 0 }]]
+    },
+    "💬 No Activity": {
+      "main": [[{ "node": "🗄️ Log Briefing", "type": "main", "index": 0 }]]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "saveManualExecutions": true,
+    "timezone": "America/Chicago"
+  },
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "description": "6 AM weekday voice call briefing with overnight stats. Calls via Retell AI with backup Telegram message. Reports on: executions, lead generation, HubSpot syncs, errors, pending approvals.",
+    "category": "notifications",
+    "version": "1.0",
+    "requires": ["Retell API credential", "Retell Agent ID", "Retell From Number"]
+  }
+}

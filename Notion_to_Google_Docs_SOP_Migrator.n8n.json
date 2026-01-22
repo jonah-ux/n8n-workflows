@@ -1,0 +1,366 @@
+{
+  "name": "Notion to Google Docs SOP Migrator",
+  "nodes": [
+    {
+      "id": "trigger-001",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [240, 300]
+    },
+    {
+      "id": "config-001",
+      "name": "Configuration",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [460, 300],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "notionDatabaseId",
+              "name": "notionDatabaseId",
+              "type": "string",
+              "value": "5daa56637e0043f0a86f64bc1ed34dfb"
+            },
+            {
+              "id": "batchSize",
+              "name": "batchSize",
+              "type": "number",
+              "value": 100
+            },
+            {
+              "id": "googleFolderId",
+              "name": "googleFolderId",
+              "type": "string",
+              "value": "={{ $env.GOOGLE_DRIVE_SOP_FOLDER_ID || '' }}"
+            },
+            {
+              "id": "processAll",
+              "name": "processAll",
+              "type": "boolean",
+              "value": true
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "query-notion-001",
+      "name": "Query All Notion Pages",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [680, 300],
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.notion.com/v1/databases/{{ $json.notionDatabaseId }}/query",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "notionApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Notion-Version",
+              "value": "2022-06-28"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ page_size: $json.batchSize }) }}"
+      },
+      "credentials": {
+        "notionApi": {
+          "id": "NOTION_CREDENTIAL_ID",
+          "name": "Notion API"
+        }
+      }
+    },
+    {
+      "id": "loop-pages-001",
+      "name": "Loop: Handle Pagination",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 300],
+      "parameters": {
+        "jsCode": "// Collect all pages, handling pagination\nconst config = $('Configuration').item.json;\nconst firstResponse = $json;\n\nlet allPages = firstResponse.results || [];\nlet hasMore = firstResponse.has_more;\nlet nextCursor = firstResponse.next_cursor;\n\n// We'll return the first batch and pagination info\n// The actual pagination loop will be handled in a sub-workflow or via looping\nreturn [{\n  json: {\n    pages: allPages,\n    totalInBatch: allPages.length,\n    hasMore,\n    nextCursor,\n    config\n  }\n}];"
+      }
+    },
+    {
+      "id": "extract-pages-001",
+      "name": "Extract Page Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1120, 300],
+      "parameters": {
+        "jsCode": "// Extract and transform Notion pages into SOP format\nconst input = $json;\nconst pages = input.pages;\n\nconst extractedPages = pages.map(page => {\n  const props = page.properties || {};\n  \n  // Helper to extract Notion property values\n  const getText = (prop) => {\n    if (!prop) return '';\n    if (prop.title) return prop.title.map(t => t.plain_text).join('');\n    if (prop.rich_text) return prop.rich_text.map(t => t.plain_text).join('');\n    if (prop.select) return prop.select?.name || '';\n    if (prop.status) return prop.status?.name || '';\n    if (prop.multi_select) return prop.multi_select.map(s => s.name).join(', ');\n    if (prop.number) return String(prop.number || '');\n    if (prop.date) return prop.date?.start || '';\n    if (prop.url) return prop.url || '';\n    if (prop.email) return prop.email || '';\n    if (prop.phone_number) return prop.phone_number || '';\n    if (prop.checkbox) return prop.checkbox ? 'Yes' : 'No';\n    return '';\n  };\n  \n  // Map common SOP database fields\n  // Adjust these based on your actual Notion database schema\n  return {\n    notionPageId: page.id,\n    notionUrl: page.url,\n    sopName: getText(props['SOP Name'] || props['Name'] || props['Title']),\n    sopId: getText(props['SOP ID'] || props['ID']) || `SOP-${page.id.slice(0, 8)}`,\n    category: getText(props['Category'] || props['Type']),\n    status: getText(props['Status']),\n    priority: getText(props['Priority']),\n    quickSummary: getText(props['Quick Summary'] || props['Summary'] || props['Description']),\n    tags: getText(props['Tags']),\n    version: getText(props['Version']) || '1.0',\n    owner: getText(props['Owner'] || props['Assignee']),\n    source: getText(props['Source']),\n    createdAt: page.created_time,\n    updatedAt: page.last_edited_time\n  };\n}).filter(p => p.sopName); // Only pages with a name\n\nreturn [{\n  json: {\n    ...input,\n    extractedPages,\n    extractedCount: extractedPages.length\n  }\n}];"
+      }
+    },
+    {
+      "id": "split-pages-001",
+      "name": "Split Into Individual Pages",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1340, 300],
+      "parameters": {
+        "jsCode": "// Split pages into individual items for processing\nconst input = $json;\nconst pages = input.extractedPages;\n\nreturn pages.map(page => ({\n  json: {\n    ...page,\n    config: input.config,\n    totalPages: input.extractedCount\n  }\n}));"
+      }
+    },
+    {
+      "id": "get-page-content-001",
+      "name": "Get Page Content",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1560, 300],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.notion.com/v1/blocks/{{ $json.notionPageId }}/children?page_size=100",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "notionApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Notion-Version",
+              "value": "2022-06-28"
+            }
+          ]
+        }
+      },
+      "credentials": {
+        "notionApi": {
+          "id": "NOTION_CREDENTIAL_ID",
+          "name": "Notion API"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "parse-content-001",
+      "name": "Parse Page Content",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1780, 300],
+      "parameters": {
+        "jsCode": "// Parse Notion blocks into readable content\nconst pageData = $('Split Into Individual Pages').item.json;\nconst blocks = $json.results || [];\n\n// Helper to extract text from blocks\nconst extractBlockText = (block) => {\n  const type = block.type;\n  const content = block[type];\n  \n  if (!content) return '';\n  \n  // Handle different block types\n  if (content.rich_text) {\n    return content.rich_text.map(t => t.plain_text).join('');\n  }\n  if (content.text) {\n    return content.text.map(t => t.plain_text).join('');\n  }\n  \n  return '';\n};\n\n// Group blocks by section (using headers as delimiters)\nlet sections = {\n  purpose: '',\n  scope: '',\n  prerequisites: '',\n  steps: '',\n  expectedOutcome: '',\n  troubleshooting: '',\n  relatedWorkflows: '',\n  fullContent: ''\n};\n\nlet currentSection = 'fullContent';\nlet fullContent = [];\n\nblocks.forEach(block => {\n  const text = extractBlockText(block);\n  const lowerText = text.toLowerCase();\n  \n  // Detect section headers\n  if (block.type === 'heading_1' || block.type === 'heading_2' || block.type === 'heading_3') {\n    if (lowerText.includes('purpose')) currentSection = 'purpose';\n    else if (lowerText.includes('scope')) currentSection = 'scope';\n    else if (lowerText.includes('prerequisite')) currentSection = 'prerequisites';\n    else if (lowerText.includes('step') || lowerText.includes('procedure')) currentSection = 'steps';\n    else if (lowerText.includes('outcome') || lowerText.includes('result')) currentSection = 'expectedOutcome';\n    else if (lowerText.includes('troubleshoot') || lowerText.includes('issue')) currentSection = 'troubleshooting';\n    else if (lowerText.includes('related') || lowerText.includes('workflow')) currentSection = 'relatedWorkflows';\n    fullContent.push(`\\n### ${text}\\n`);\n  } else if (text) {\n    // Add to current section\n    if (block.type === 'bulleted_list_item' || block.type === 'numbered_list_item') {\n      sections[currentSection] += `• ${text}\\n`;\n      fullContent.push(`• ${text}`);\n    } else if (block.type === 'to_do') {\n      const checked = block.to_do?.checked ? '✓' : '☐';\n      sections[currentSection] += `${checked} ${text}\\n`;\n      fullContent.push(`${checked} ${text}`);\n    } else if (block.type === 'code') {\n      sections[currentSection] += `\\`\\`\\`\\n${text}\\n\\`\\`\\`\\n`;\n      fullContent.push(`\\`\\`\\`\\n${text}\\n\\`\\`\\``);\n    } else {\n      sections[currentSection] += `${text}\\n`;\n      fullContent.push(text);\n    }\n  }\n});\n\nsections.fullContent = fullContent.join('\\n');\n\nreturn [{\n  json: {\n    ...pageData,\n    ...sections,\n    hasContent: fullContent.length > 0\n  }\n}];"
+      }
+    },
+    {
+      "id": "build-sop-001",
+      "name": "Build SOP Document",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2000, 300],
+      "parameters": {
+        "jsCode": "// Build the Google Docs SOP content\nconst sop = $json;\n\nconst docTitle = `[${sop.category || 'General'}] ${sop.sopName} - v${sop.version}`;\n\nconst content = `\n================================================================================\n                    AUTO SHOP MEDIA - STANDARD OPERATING PROCEDURE\n================================================================================\n\nSOP ID: ${sop.sopId}\nSOP Name: ${sop.sopName}\nCategory: ${sop.category || 'General'}\nStatus: ${sop.status || 'Migrated'}\nPriority: ${sop.priority || 'Medium'}\nVersion: ${sop.version}\nOwner: ${sop.owner || 'Auto Shop Media'}\nMigrated From: Notion\nNotion URL: ${sop.notionUrl}\nOriginal Created: ${sop.createdAt}\nMigrated: ${new Date().toISOString().split('T')[0]}\nTags: ${sop.tags}\n\n--------------------------------------------------------------------------------\n                                QUICK SUMMARY\n--------------------------------------------------------------------------------\n${sop.quickSummary || 'No summary provided.'}\n\n--------------------------------------------------------------------------------\n                                  PURPOSE\n--------------------------------------------------------------------------------\n${sop.purpose || 'See full content below.'}\n\n--------------------------------------------------------------------------------\n                                   SCOPE\n--------------------------------------------------------------------------------\n${sop.scope || 'See full content below.'}\n\n--------------------------------------------------------------------------------\n                              PREREQUISITES\n--------------------------------------------------------------------------------\n${sop.prerequisites || 'No prerequisites specified.'}\n\n--------------------------------------------------------------------------------\n                             PROCEDURE STEPS\n--------------------------------------------------------------------------------\n${sop.steps || 'See full content below.'}\n\n--------------------------------------------------------------------------------\n                            EXPECTED OUTCOME\n--------------------------------------------------------------------------------\n${sop.expectedOutcome || 'See full content below.'}\n\n--------------------------------------------------------------------------------\n                             TROUBLESHOOTING\n--------------------------------------------------------------------------------\n${sop.troubleshooting || 'No troubleshooting information.'}\n\n--------------------------------------------------------------------------------\n                           RELATED WORKFLOWS\n--------------------------------------------------------------------------------\n${sop.relatedWorkflows || 'No related workflows specified.'}\n\n--------------------------------------------------------------------------------\n                         FULL ORIGINAL CONTENT\n--------------------------------------------------------------------------------\n${sop.fullContent || 'No additional content.'}\n\n================================================================================\n                          END OF DOCUMENT\n================================================================================\n\nThis SOP was migrated from Notion by the Auto Shop Media automation system.\nMigration date: ${new Date().toISOString()}\n`;\n\nreturn [{\n  json: {\n    ...sop,\n    docTitle,\n    docContent: content\n  }\n}];"
+      }
+    },
+    {
+      "id": "create-google-doc-001",
+      "name": "Create Google Doc",
+      "type": "n8n-nodes-base.googleDocs",
+      "typeVersion": 2,
+      "position": [2220, 300],
+      "parameters": {
+        "operation": "create",
+        "title": "={{ $json.docTitle }}",
+        "folderId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $json.config.googleFolderId }}"
+        }
+      },
+      "credentials": {
+        "googleDocsOAuth2Api": {
+          "id": "GOOGLE_DOCS_CREDENTIAL_ID",
+          "name": "Google Docs OAuth2"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "append-content-001",
+      "name": "Append Content",
+      "type": "n8n-nodes-base.googleDocs",
+      "typeVersion": 2,
+      "position": [2440, 300],
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $json.documentId }}"
+        },
+        "actionsUi": {
+          "actionFields": [
+            {
+              "action": "insert",
+              "insertText": {
+                "text": "={{ $('Build SOP Document').item.json.docContent }}",
+                "locationChoice": "endOfDocument"
+              }
+            }
+          ]
+        }
+      },
+      "credentials": {
+        "googleDocsOAuth2Api": {
+          "id": "GOOGLE_DOCS_CREDENTIAL_ID",
+          "name": "Google Docs OAuth2"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "log-migration-001",
+      "name": "Log to Database",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [2660, 300],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO sops (sop_id, sop_name, category, status, priority, version, owner, google_doc_id, google_doc_url, tags, quick_summary, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), NOW()) ON CONFLICT (sop_id) DO UPDATE SET google_doc_id = $8, google_doc_url = $9, updated_at = NOW() RETURNING *",
+        "options": {
+          "queryParameters": "={{ $('Build SOP Document').item.json.sopId }},={{ $('Build SOP Document').item.json.sopName }},={{ $('Build SOP Document').item.json.category || 'General' }},={{ $('Build SOP Document').item.json.status || 'Migrated' }},={{ $('Build SOP Document').item.json.priority || 'Medium' }},={{ $('Build SOP Document').item.json.version }},={{ $('Build SOP Document').item.json.owner || 'Auto Shop Media' }},={{ $json.documentId }},={{ `https://docs.google.com/document/d/${$json.documentId}/edit` }},={{ $('Build SOP Document').item.json.tags }},={{ $('Build SOP Document').item.json.quickSummary }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CREDENTIAL_ID",
+          "name": "Supabase Postgres"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "collect-results-001",
+      "name": "Collect Results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2880, 300],
+      "parameters": {
+        "jsCode": "// Collect all migration results\nconst items = $input.all();\n\nconst results = items.map(item => ({\n  sopName: item.json?.sop_name || $('Build SOP Document').item?.json?.sopName,\n  sopId: item.json?.sop_id || $('Build SOP Document').item?.json?.sopId,\n  googleDocUrl: item.json?.google_doc_url,\n  success: !!item.json?.google_doc_id\n}));\n\nconst successful = results.filter(r => r.success).length;\nconst failed = results.filter(r => !r.success).length;\n\nreturn [{\n  json: {\n    summary: {\n      totalProcessed: results.length,\n      successful,\n      failed,\n      timestamp: new Date().toISOString()\n    },\n    results\n  }\n}];"
+      }
+    },
+    {
+      "id": "check-more-001",
+      "name": "IF More Pages",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [1120, 500],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "has-more",
+              "leftValue": "={{ $('Loop: Handle Pagination').item.json.hasMore }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "next-page-001",
+      "name": "Get Next Page",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1340, 500],
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.notion.com/v1/databases/{{ $('Configuration').item.json.notionDatabaseId }}/query",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "notionApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Notion-Version",
+              "value": "2022-06-28"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ page_size: $('Configuration').item.json.batchSize, start_cursor: $('Loop: Handle Pagination').item.json.nextCursor }) }}"
+      },
+      "credentials": {
+        "notionApi": {
+          "id": "NOTION_CREDENTIAL_ID",
+          "name": "Notion API"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [[{ "node": "Configuration", "type": "main", "index": 0 }]]
+    },
+    "Configuration": {
+      "main": [[{ "node": "Query All Notion Pages", "type": "main", "index": 0 }]]
+    },
+    "Query All Notion Pages": {
+      "main": [[{ "node": "Loop: Handle Pagination", "type": "main", "index": 0 }]]
+    },
+    "Loop: Handle Pagination": {
+      "main": [
+        [
+          { "node": "Extract Page Data", "type": "main", "index": 0 },
+          { "node": "IF More Pages", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Extract Page Data": {
+      "main": [[{ "node": "Split Into Individual Pages", "type": "main", "index": 0 }]]
+    },
+    "Split Into Individual Pages": {
+      "main": [[{ "node": "Get Page Content", "type": "main", "index": 0 }]]
+    },
+    "Get Page Content": {
+      "main": [[{ "node": "Parse Page Content", "type": "main", "index": 0 }]]
+    },
+    "Parse Page Content": {
+      "main": [[{ "node": "Build SOP Document", "type": "main", "index": 0 }]]
+    },
+    "Build SOP Document": {
+      "main": [[{ "node": "Create Google Doc", "type": "main", "index": 0 }]]
+    },
+    "Create Google Doc": {
+      "main": [[{ "node": "Append Content", "type": "main", "index": 0 }]]
+    },
+    "Append Content": {
+      "main": [[{ "node": "Log to Database", "type": "main", "index": 0 }]]
+    },
+    "Log to Database": {
+      "main": [[{ "node": "Collect Results", "type": "main", "index": 0 }]]
+    },
+    "IF More Pages": {
+      "main": [
+        [{ "node": "Get Next Page", "type": "main", "index": 0 }],
+        []
+      ]
+    },
+    "Get Next Page": {
+      "main": [[{ "node": "Loop: Handle Pagination", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "saveManualExecutions": true,
+    "executionTimeout": 3600
+  }
+}

@@ -1,0 +1,555 @@
+{
+  "name": "🎯 Lead Generation Pipeline - Google Maps to Companies",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "lead-gen/google-maps",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "🌐 Trigger Lead Gen",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -600,
+        300
+      ],
+      "webhookId": "lead-gen-google-maps-webhook"
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "days",
+              "triggerAtHour": 6
+            }
+          ]
+        }
+      },
+      "id": "daily-trigger",
+      "name": "⏰ Daily 6AM",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -600,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ═══════════════════════════════════════════════════════════════════\n// 📋 Parse Lead Gen Request or Use Default Search\n// ═══════════════════════════════════════════════════════════════════\n\nconst raw = $input.first().json;\nconst body = raw.body || raw;\n\n// Default search parameters for auto repair shops\nconst defaultSearches = [\n  { query: 'auto repair shop', location: 'Minneapolis, MN', radius: 25 },\n  { query: 'auto body shop', location: 'St Paul, MN', radius: 25 },\n  { query: 'tire shop', location: 'Minneapolis, MN', radius: 25 },\n  { query: 'oil change', location: 'Minneapolis, MN', radius: 25 },\n  { query: 'car mechanic', location: 'Minneapolis, MN', radius: 25 }\n];\n\n// Use provided params or cycle through defaults based on day of week\nconst dayOfWeek = new Date().getDay();\nconst defaultSearch = defaultSearches[dayOfWeek % defaultSearches.length];\n\nconst searchParams = {\n  query: body.query || defaultSearch.query,\n  location: body.location || defaultSearch.location,\n  radius: body.radius || defaultSearch.radius || 25,\n  limit: body.limit || 20,\n  industry: body.industry || 'automotive',\n  run_id: `lead_gen_${Date.now()}`\n};\n\nreturn [{ json: searchParams }];"
+      },
+      "id": "parse-params",
+      "name": "📋 Parse Search Params",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -360,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://serpapi.com/search.json",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpQueryAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "engine",
+              "value": "google_maps"
+            },
+            {
+              "name": "q",
+              "value": "={{ $json.query }}"
+            },
+            {
+              "name": "ll",
+              "value": "={{ '@' + $json.location }}"
+            },
+            {
+              "name": "type",
+              "value": "search"
+            },
+            {
+              "name": "num",
+              "value": "={{ $json.limit }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "serpapi-search",
+      "name": "🔍 SerpAPI Google Maps",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -120,
+        400
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "HTTP_AUTH_CRED_ID",
+          "name": "HubSpot Private App - Full Access"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ═══════════════════════════════════════════════════════════════════\n// ⚙️ Extract & Normalize Google Maps Results\n// ═══════════════════════════════════════════════════════════════════\n\nconst response = $input.first().json;\nconst params = $('📋 Parse Search Params').first().json;\nconst localResults = response.local_results || [];\n\nif (localResults.length === 0) {\n  return [{\n    json: {\n      error: 'No results found',\n      search_params: params,\n      timestamp: new Date().toISOString()\n    }\n  }];\n}\n\nconst companies = localResults.map((result, index) => {\n  // Extract place_id (critical for deduplication)\n  const placeId = result.place_id || result.data_id || `serpapi_${Date.now()}_${index}`;\n  \n  // Parse address components\n  const address = result.address || '';\n  const addressParts = address.split(', ');\n  \n  // Extract phone (clean format)\n  let phone = result.phone || '';\n  if (phone) {\n    phone = phone.replace(/[^0-9+]/g, '');\n    if (!phone.startsWith('+') && phone.length === 10) {\n      phone = '+1' + phone;\n    }\n  }\n  \n  // Extract domain from website\n  let domain = '';\n  let websiteUrl = result.website || '';\n  if (websiteUrl) {\n    try {\n      const url = new URL(websiteUrl.startsWith('http') ? websiteUrl : 'https://' + websiteUrl);\n      domain = url.hostname.replace('www.', '');\n    } catch (e) {\n      domain = '';\n    }\n  }\n  \n  // Calculate initial DCS score based on data completeness\n  let dcsScore = 0;\n  if (result.title) dcsScore += 20;\n  if (phone) dcsScore += 25;\n  if (websiteUrl) dcsScore += 25;\n  if (result.rating) dcsScore += 15;\n  if (address) dcsScore += 15;\n  \n  // Determine DCS tier\n  let dcsTier = 'bronze';\n  if (dcsScore >= 80) dcsTier = 'platinum';\n  else if (dcsScore >= 60) dcsTier = 'gold';\n  \n  return {\n    json: {\n      // Core fields for companies table\n      place_id: placeId,\n      business_name: result.title || '',\n      domain: domain,\n      website_url: websiteUrl,\n      phone: phone,\n      address: address,\n      \n      // Additional enrichment data\n      latitude: result.gps_coordinates?.latitude || null,\n      longitude: result.gps_coordinates?.longitude || null,\n      rating: result.rating || null,\n      reviews_count: result.reviews || 0,\n      price_level: result.price || null,\n      business_type: result.type || 'auto_repair',\n      thumbnail: result.thumbnail || null,\n      \n      // DCS scoring\n      dcs_score: dcsScore,\n      dcs_tier: dcsTier,\n      \n      // Metadata\n      source: 'google_maps_serpapi',\n      search_query: params.query,\n      search_location: params.location,\n      run_id: params.run_id,\n      discovered_at: new Date().toISOString()\n    }\n  };\n});\n\nreturn companies;"
+      },
+      "id": "extract-results",
+      "name": "⚙️ Extract Companies",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        120,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Check if company already exists by place_id\nSELECT id, place_id, business_name, domain \nFROM companies \nWHERE place_id = $1\nLIMIT 1;",
+        "options": {
+          "queryReplacement": "={{ [$json.place_id] }}"
+        }
+      },
+      "id": "check-existing",
+      "name": "🔍 Check Existing",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        360,
+        400
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CRED_ID",
+          "name": "Postgres account"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// ═══════════════════════════════════════════════════════════════════\n// 🔀 Determine if New or Existing Company\n// ═══════════════════════════════════════════════════════════════════\n\nconst checkResult = $input.first().json;\nconst companyData = $('⚙️ Extract Companies').item.json;\n\n// Check if we got a result (existing company)\nconst isNew = !checkResult.id;\n\nreturn [{\n  json: {\n    ...companyData,\n    is_new: isNew,\n    existing_id: checkResult.id || null\n  }\n}];"
+      },
+      "id": "merge-check",
+      "name": "🤝 Merge Check Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        600,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "is-new",
+              "leftValue": "={{ $json.is_new }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-new",
+      "name": "🔀 Is New?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.1,
+      "position": [
+        840,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Insert new company\nINSERT INTO companies (\n  place_id, business_name, domain, website_url, phone, address,\n  latitude, longitude, rating, reviews_count, price_level,\n  business_type, thumbnail, dcs_score, dcs_tier,\n  source, search_query, search_location, discovered_at\n) VALUES (\n  $1, $2, $3, $4, $5, $6,\n  $7, $8, $9, $10, $11,\n  $12, $13, $14, $15,\n  $16, $17, $18, $19\n)\nON CONFLICT (place_id) DO UPDATE SET\n  business_name = COALESCE(EXCLUDED.business_name, companies.business_name),\n  domain = COALESCE(EXCLUDED.domain, companies.domain),\n  website_url = COALESCE(EXCLUDED.website_url, companies.website_url),\n  phone = COALESCE(EXCLUDED.phone, companies.phone),\n  rating = COALESCE(EXCLUDED.rating, companies.rating),\n  reviews_count = COALESCE(EXCLUDED.reviews_count, companies.reviews_count),\n  updated_at = NOW()\nRETURNING *;",
+        "options": {
+          "queryReplacement": "={{ [$json.place_id, $json.business_name, $json.domain, $json.website_url, $json.phone, $json.address, $json.latitude, $json.longitude, $json.rating, $json.reviews_count, $json.price_level, $json.business_type, $json.thumbnail, $json.dcs_score, $json.dcs_tier, $json.source, $json.search_query, $json.search_location, $json.discovered_at] }}"
+        }
+      },
+      "id": "insert-company",
+      "name": "🗄️ Insert Company",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1080,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CRED_ID",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Create research run for new company\nINSERT INTO research_runs (\n  id, company_id, status, context_jsonb, context_summary\n) VALUES (\n  $1,\n  $2,\n  'pending',\n  $3::jsonb,\n  $4\n)\nRETURNING *;",
+        "options": {
+          "queryReplacement": "={{ [$json.run_id + '_' + $json.place_id, $json.place_id, JSON.stringify({source: 'lead_gen_pipeline', dcs_tier: $json.dcs_tier, dcs_score: $json.dcs_score, search_query: $json.search_query}), 'New lead from ' + $json.search_query + ' search - ' + $json.dcs_tier + ' tier'] }}"
+        }
+      },
+      "id": "create-research-run",
+      "name": "🗄️ Create Research Run",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1320,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CRED_ID",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// ═══════════════════════════════════════════════════════════════════\n// 📊 Compile Lead Gen Summary\n// ═══════════════════════════════════════════════════════════════════\n\nconst searchParams = $('📋 Parse Search Params').first().json;\nconst extracted = $('⚙️ Extract Companies').all();\nconst inserted = $('🗄️ Insert Company').all();\nconst researchRuns = $('🗄️ Create Research Run').all();\n\n// Count by DCS tier\nconst tierCounts = { platinum: 0, gold: 0, bronze: 0 };\nextracted.forEach(item => {\n  const tier = item.json.dcs_tier || 'bronze';\n  tierCounts[tier]++;\n});\n\nconst summary = {\n  timestamp: new Date().toISOString(),\n  run_id: searchParams.run_id,\n  search: {\n    query: searchParams.query,\n    location: searchParams.location,\n    radius: searchParams.radius\n  },\n  results: {\n    total_found: extracted.length,\n    new_companies: inserted.length,\n    research_runs_created: researchRuns.length,\n    by_tier: tierCounts\n  }\n};\n\nreturn [{ json: summary }];"
+      },
+      "id": "compile-summary",
+      "name": "📊 Compile Summary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1560,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Log lead gen run\nINSERT INTO workflow_step_logs (\n  log_id, node_name, node_type, stage, status,\n  input_data, output_data, duration_ms\n) VALUES (\n  $1,\n  'Lead Generation Pipeline',\n  'lead_gen_workflow',\n  'discovery',\n  'completed',\n  $2::jsonb,\n  $3::jsonb,\n  0\n);",
+        "options": {
+          "queryReplacement": "={{ [($json.run_id || 'lead_gen_' + Date.now()), JSON.stringify($json.search), JSON.stringify($json.results)] }}"
+        }
+      },
+      "id": "log-run",
+      "name": "🗄️ Log Run",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1800,
+        400
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CRED_ID",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "has-new",
+              "leftValue": "={{ $json.results.new_companies }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-new-leads",
+      "name": "🔀 New Leads?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.1,
+      "position": [
+        2040,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.salesmessage.com/pub/v2.2/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"to\": \"+13204064600\",\n  \"message\": \"🎯 Lead Gen Complete!\\n\\nSearch: {{ $json.search.query }}\\nLocation: {{ $json.search.location }}\\n\\n📊 Results:\\n• Found: {{ $json.results.total_found }}\\n• New: {{ $json.results.new_companies }}\\n• Research Runs: {{ $json.results.research_runs_created }}\\n\\n🏆 By Tier:\\n• Platinum: {{ $json.results.by_tier.platinum }}\\n• Gold: {{ $json.results.by_tier.gold }}\\n• Bronze: {{ $json.results.by_tier.bronze }}\"\n}",
+        "options": {}
+      },
+      "id": "notify-leads",
+      "name": "📱 Notify New Leads",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2280,
+        300
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "HTTP_AUTH_CRED_ID",
+          "name": "HubSpot Private App - Full Access"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "options": {},
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}"
+      },
+      "id": "respond-webhook",
+      "name": "📤 Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        2280,
+        500
+      ]
+    }
+  ],
+  "connections": {
+    "🌐 Trigger Lead Gen": {
+      "main": [
+        [
+          {
+            "node": "📋 Parse Search Params",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "⏰ Daily 6AM": {
+      "main": [
+        [
+          {
+            "node": "📋 Parse Search Params",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📋 Parse Search Params": {
+      "main": [
+        [
+          {
+            "node": "🔍 SerpAPI Google Maps",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔍 SerpAPI Google Maps": {
+      "main": [
+        [
+          {
+            "node": "⚙️ Extract Companies",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "⚙️ Extract Companies": {
+      "main": [
+        [
+          {
+            "node": "🔍 Check Existing",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔍 Check Existing": {
+      "main": [
+        [
+          {
+            "node": "🤝 Merge Check Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🤝 Merge Check Result": {
+      "main": [
+        [
+          {
+            "node": "🔀 Is New?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔀 Is New?": {
+      "main": [
+        [
+          {
+            "node": "🗄️ Insert Company",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "📊 Compile Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🗄️ Insert Company": {
+      "main": [
+        [
+          {
+            "node": "🗄️ Create Research Run",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🗄️ Create Research Run": {
+      "main": [
+        [
+          {
+            "node": "📊 Compile Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📊 Compile Summary": {
+      "main": [
+        [
+          {
+            "node": "🗄️ Log Run",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🗄️ Log Run": {
+      "main": [
+        [
+          {
+            "node": "🔀 New Leads?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔀 New Leads?": {
+      "main": [
+        [
+          {
+            "node": "📱 Notify New Leads",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "📤 Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📱 Notify New Leads": {
+      "main": [
+        [
+          {
+            "node": "📤 Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "name": "lead-gen"
+    },
+    {
+      "name": "google-maps"
+    },
+    {
+      "name": "serpapi"
+    },
+    {
+      "name": "companies"
+    },
+    {
+      "name": "discovery"
+    }
+  ],
+  "triggerCount": 2,
+  "pinData": {},
+  "versionId": "1",
+  "meta": {
+    "description": "Automated lead generation pipeline that searches Google Maps for auto repair businesses, deduplicates against existing companies, inserts new leads into the database, and creates research runs for enrichment. Runs daily at 6AM and can be triggered via webhook.",
+    "category": "lead-generation",
+    "triggers": [
+      "webhook",
+      "schedule"
+    ],
+    "outputs": [
+      "companies",
+      "research_runs",
+      "workflow_step_logs",
+      "sms_notification"
+    ],
+    "requiredCredentials": [
+      "Supabase Postgres",
+      "SerpAPI",
+      "Salesmessage API"
+    ]
+  }
+}

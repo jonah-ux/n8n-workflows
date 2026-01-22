@@ -1,0 +1,397 @@
+{
+  "id": "4J19cZdd4aLVDxOZCwmKB",
+  "name": "AI Agent - HubSpot Deals",
+  "nodes": [
+    {
+      "id": "3647ab6b-cf2c-4658-b8ca-5714d715653b",
+      "name": "AI Agent - Deals",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "position": [1032, -192],
+      "parameters": {
+        "text": "You are a specialized HubSpot Deals Agent. You can list all deals, get deal details, create new deals, update deals, delete deals, search deals, list deal properties, get pipelines, associate deals to contacts/companies, and manage deal associations. Always use the available tools to perform these operations.",
+        "options": {},
+        "promptType": "define"
+      },
+      "typeVersion": 3.1
+    },
+    {
+      "id": "337c4e7e-8f36-4c8f-971c-2444b81480f2",
+      "name": "OpenAI Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "position": [400, 32],
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "list",
+          "value": "gpt-4o",
+          "cachedResultName": "gpt-4o"
+        },
+        "options": {},
+        "builtInTools": {}
+      },
+      "typeVersion": 1.3
+    },
+    {
+      "id": "ddd8513a-02e7-4f1c-92b3-927eb4c534b4",
+      "name": "Memory",
+      "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
+      "position": [528, 32],
+      "parameters": {
+        "sessionKey": "sessionId",
+        "sessionIdType": "customKey"
+      },
+      "typeVersion": 1.3
+    },
+    {
+      "id": "14db2de5-b528-4e1b-b790-ebbcb484a13a",
+      "name": "List All Deals",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "position": [656, 32],
+      "parameters": {
+        "url": "https://api.hubapi.com/crm/v3/objects/deals",
+        "options": {},
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "specifyQuery": "json"
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      },
+      "typeVersion": 4.3
+    },
+    {
+      "id": "c7652d65-89b5-4d76-a072-9c8865b38aa1",
+      "name": "List Deal Properties",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "position": [784, 32],
+      "parameters": {
+        "url": "https://api.hubapi.com/crm/v3/properties/deals",
+        "options": {},
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth"
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      },
+      "typeVersion": 4.3
+    },
+    {
+      "id": "44e62ab2-6a2f-409f-920f-994c7b3ed551",
+      "name": "Create Deal",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "position": [912, 32],
+      "parameters": {
+        "url": "https://api.hubapi.com/crm/v3/objects/deals",
+        "method": "POST",
+        "options": {},
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "contentType": "json"
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      },
+      "typeVersion": 4.3
+    },
+    {
+      "id": "f02db20b-4fc2-4248-a9cd-1cd940bbfece",
+      "name": "Get Deal by ID",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "position": [1040, 32],
+      "parameters": {
+        "url": "=https://api.hubapi.com/crm/v3/objects/deals/{{ $json.dealId || $json.id }}",
+        "options": {},
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "specifyQuery": "json"
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      },
+      "typeVersion": 4.3
+    },
+    {
+      "id": "354d79ee-9796-48da-8ea8-93b60b81c09e",
+      "name": "Update Deal",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "position": [1168, 32],
+      "parameters": {
+        "url": "=https://api.hubapi.com/crm/v3/objects/deals/{{ $json.dealId || $json.id }}",
+        "method": "PATCH",
+        "options": {},
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "contentType": "json"
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      },
+      "typeVersion": 4.3
+    },
+    {
+      "id": "05f8ccb0-b188-41bf-b206-080fe81f89d7",
+      "name": "Delete Deal",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "position": [1296, 32],
+      "parameters": {
+        "url": "=https://api.hubapi.com/crm/v3/objects/deals/{{ $json.dealId || $json.id }}",
+        "method": "DELETE",
+        "options": {},
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth"
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      },
+      "typeVersion": 4.3
+    },
+    {
+      "id": "1ebbb94c-fae8-4359-bbc4-4513c7367ebc",
+      "name": "Search Deals",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "position": [1424, 32],
+      "parameters": {
+        "url": "https://api.hubapi.com/crm/v3/objects/deals/search",
+        "method": "POST",
+        "options": {},
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "contentType": "json"
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      },
+      "typeVersion": 4.3
+    },
+    {
+      "id": "8c808a83-7a85-42f3-a012-05153977dfd5",
+      "name": "Get Deal Pipelines",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "position": [1552, 32],
+      "parameters": {
+        "url": "https://api.hubapi.com/crm/v3/pipelines/deals",
+        "options": {},
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth"
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      },
+      "typeVersion": 4.3
+    },
+    {
+      "id": "913c16f8-6466-4498-ab89-a727648342b7",
+      "name": "Associate Deal to Contact/Company",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "position": [1680, 32],
+      "parameters": {
+        "url": "=https://api.hubapi.com/crm/v4/objects/deals/{{ $json.dealId }}/associations/{{ $json.toObjectType || 'contacts' }}/{{ $json.toObjectId }}",
+        "method": "PUT",
+        "options": {},
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "contentType": "json"
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      },
+      "typeVersion": 4.3
+    },
+    {
+      "id": "6652d82d-0432-4b08-bf79-87b3c2ded181",
+      "name": "Get Deal Associations",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "position": [1808, 32],
+      "parameters": {
+        "url": "=https://api.hubapi.com/crm/v4/objects/deals/{{ $json.dealId }}/associations/{{ $json.toObjectType || 'contacts' }}",
+        "options": {},
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "specifyQuery": "json"
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      },
+      "typeVersion": 4.3
+    }
+  ],
+  "settings": {
+    "availableInMCP": false,
+    "executionOrder": "v1"
+  },
+  "connections": {
+    "Memory": {
+      "ai_memory": [
+        [
+          {
+            "node": "AI Agent - Deals",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Deal": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Deals",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Delete Deal": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Deals",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Deal": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Deals",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Search Deals": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Deals",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Deal by ID": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Deals",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "List All Deals": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Deals",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent - Deals",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Deal Pipelines": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Deals",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "List Deal Properties": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Deals",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Deal Associations": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Deals",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Associate Deal to Contact/Company": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Deals",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}

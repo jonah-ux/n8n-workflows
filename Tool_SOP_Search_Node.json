@@ -1,0 +1,44 @@
+{
+  "_instructions": "Add this node to your Main Agent's tools. Connect the 'ai_tool' output to the Main Agent's tool input alongside your other tools.",
+
+  "node": {
+    "parameters": {
+      "name": "search_sops",
+      "description": "Search the SOP (Standard Operating Procedure) database for documented processes, procedures, and business knowledge. Use this to find how things should be done, what processes exist, and reference official documentation.\n\nParameters:\n- query (required): Search term to find SOPs by name, summary, tags, or category\n- category (optional): Filter by category - HubSpot_CRM, Analytics_Reports, AI_Agents, Integrations, Services_Products, Enrichment_Pipeline, Business_Operations, Knowledge_Base, Target_Market, Infrastructure, Voice_AI, Outreach, Standards_Guidelines\n- limit (optional): Max results to return (default: 5)\n\nReturns: List of matching SOPs with names, summaries, categories, and Google Doc URLs for full documentation.\n\nExample queries:\n- 'HubSpot contacts' to find CRM contact procedures\n- 'enrichment' to find data enrichment processes\n- 'AI agent' to find agent-related SOPs\n- 'outreach' to find communication sequences",
+      "workflowId": {
+        "__rl": true,
+        "mode": "list",
+        "value": "YOUR_WORKFLOW_ID_HERE"
+      },
+      "fields": {
+        "values": [
+          {
+            "name": "query",
+            "description": "Search term to find SOPs by name, summary, tags, or category",
+            "type": "string",
+            "required": true
+          },
+          {
+            "name": "category",
+            "description": "Optional category filter: HubSpot_CRM, Analytics_Reports, AI_Agents, Integrations, Services_Products, Enrichment_Pipeline, Business_Operations, Knowledge_Base, Target_Market, Infrastructure, Voice_AI, Outreach, Standards_Guidelines",
+            "type": "string",
+            "required": false
+          },
+          {
+            "name": "limit",
+            "description": "Maximum number of results to return (default: 5)",
+            "type": "number",
+            "required": false
+          }
+        ]
+      }
+    },
+    "id": "tool-sop-search",
+    "name": "Tool: SOP Search",
+    "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+    "typeVersion": 2,
+    "position": [1040, 720]
+  },
+
+  "_system_prompt_addition": "\n\n### SOP Search Tool (`search_sops`)\nUse this tool to find official Standard Operating Procedures from the SOPs database. The database contains 45+ documented procedures covering:\n- HubSpot CRM operations (contacts, companies, deals, engagements)\n- Analytics and reporting procedures\n- AI agent configurations and behaviors\n- Integration guides (Salesmsg, Retell, Monday, Zoho)\n- Enrichment pipeline processes\n- Outreach and communication sequences\n- Knowledge base management\n\nWhen answering questions about 'how to do X' or 'what's the process for Y', search the SOPs first to provide accurate, documented answers. Each SOP includes a Google Doc URL for the full detailed documentation."
+}

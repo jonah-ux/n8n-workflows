@@ -1,0 +1,441 @@
+{
+  "name": "Tool: Smart Memory Recall",
+  "nodes": [
+    {
+      "id": "trigger-001",
+      "name": "When Executed by Another Workflow",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        240,
+        300
+      ],
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "query",
+              "type": "string"
+            },
+            {
+              "name": "category_filter",
+              "type": "string"
+            },
+            {
+              "name": "limit",
+              "type": "number"
+            },
+            {
+              "name": "include_failures",
+              "type": "boolean"
+            },
+            {
+              "name": "session_id",
+              "type": "string"
+            },
+            {
+              "name": "task_type",
+              "type": "string"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "defaults-001",
+      "name": "Set Defaults",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        460,
+        300
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "query",
+              "name": "query",
+              "type": "string",
+              "value": "={{ $json.query }}"
+            },
+            {
+              "id": "category_filter",
+              "name": "category_filter",
+              "type": "string",
+              "value": "={{ $json.category_filter || '' }}"
+            },
+            {
+              "id": "limit",
+              "name": "limit",
+              "type": "number",
+              "value": "={{ $json.limit || 5 }}"
+            },
+            {
+              "id": "include_failures",
+              "name": "include_failures",
+              "type": "boolean",
+              "value": "={{ $json.include_failures !== false }}"
+            },
+            {
+              "id": "session_id",
+              "name": "session_id",
+              "type": "string",
+              "value": "={{ $json.session_id || $execution.id }}"
+            },
+            {
+              "id": "task_type",
+              "name": "task_type",
+              "type": "string",
+              "value": "={{ $json.task_type || 'unknown' }}"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "embed-001",
+      "name": "Create Query Embedding",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        680,
+        300
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/embeddings",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "openAiApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: 'text-embedding-3-small', input: $json.query }) }}"
+      },
+      "credentials": {
+        "openAiApi": {
+          "id": "OPENAI_CRED_ID",
+          "name": "OpenAI API"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "id": "vector-search-001",
+      "name": "Vector Search Lessons",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        900,
+        300
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "=SELECT \n  id,\n  user_input,\n  lesson_summary,\n  expected_behavior AS pattern,\n  actual_behavior AS details,\n  example_type,\n  category,\n  times_referenced,\n  created_at,\n  1 - (embedding <=> '{{ JSON.stringify($json.data[0].embedding) }}'::vector) AS similarity\nFROM learning_examples\nWHERE \n  lesson_summary IS NOT NULL \n  AND lesson_summary != 'No lesson generated'\n  AND LENGTH(lesson_summary) > 10\n  {{ $('Set Defaults').first().json.category_filter ? \"AND category = '\" + $('Set Defaults').first().json.category_filter + \"'\" : '' }}\n  {{ $('Set Defaults').first().json.include_failures ? '' : \"AND example_type = 'success'\" }}\nORDER BY \n  similarity DESC,\n  times_referenced DESC,\n  created_at DESC\nLIMIT {{ $('Set Defaults').first().json.limit }};",
+        "options": {}
+      },
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CRED_ID",
+          "name": "Postgres account"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "id": "keyword-search-001",
+      "name": "Keyword Search Fallback",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        900,
+        480
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "=SELECT \n  id,\n  user_input,\n  lesson_summary,\n  expected_behavior AS pattern,\n  actual_behavior AS details,\n  example_type,\n  category,\n  times_referenced,\n  created_at,\n  0.5 AS similarity\nFROM learning_examples\nWHERE \n  lesson_summary IS NOT NULL \n  AND lesson_summary != 'No lesson generated'\n  AND (\n    lesson_summary ILIKE '%{{ $('Set Defaults').first().json.query.split(' ').slice(0,3).join('%') }}%'\n    OR user_input ILIKE '%{{ $('Set Defaults').first().json.query.split(' ').slice(0,3).join('%') }}%'\n    OR expected_behavior ILIKE '%{{ $('Set Defaults').first().json.query.split(' ').slice(0,3).join('%') }}%'\n  )\n  {{ $('Set Defaults').first().json.category_filter ? \"AND category = '\" + $('Set Defaults').first().json.category_filter + \"'\" : '' }}\nORDER BY times_referenced DESC, created_at DESC\nLIMIT 3;",
+        "options": {}
+      },
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CRED_ID",
+          "name": "Postgres account"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "id": "memory-items-001",
+      "name": "Check Memory Items",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        900,
+        140
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "=SELECT \n  id,\n  key,\n  value,\n  value_type,\n  confidence,\n  tags,\n  created_at\nFROM memory_items\nWHERE \n  status = 'active'\n  AND (\n    key ILIKE '%{{ $('Set Defaults').first().json.query.split(' ').slice(0,2).join('%') }}%'\n    OR value ILIKE '%{{ $('Set Defaults').first().json.query.split(' ').slice(0,2).join('%') }}%'\n    OR '{{ $('Set Defaults').first().json.query }}' = ANY(tags)\n  )\nORDER BY confidence DESC, created_at DESC\nLIMIT 3;",
+        "options": {}
+      },
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CRED_ID",
+          "name": "Postgres account"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "id": "merge-001",
+      "name": "Merge Results",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [
+        1120,
+        300
+      ],
+      "parameters": {
+        "mode": "combine",
+        "combinationMode": "multiplex",
+        "options": {}
+      }
+    },
+    {
+      "id": "format-001",
+      "name": "Format Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1340,
+        300
+      ],
+      "parameters": {
+        "jsCode": "const vectorResults = $('Vector Search Lessons').all().map(i => i.json);\nconst keywordResults = $('Keyword Search Fallback').all().map(i => i.json);\nconst memoryItems = $('Check Memory Items').all().map(i => i.json);\nconst defaults = $('Set Defaults').first().json;\n\n// Dedupe by id (vector search is primary)\nconst seenIds = new Set();\nconst lessons = [];\n\n// Add vector results first (highest quality)\nfor (const r of vectorResults) {\n  if (r.id && !seenIds.has(r.id)) {\n    seenIds.add(r.id);\n    lessons.push({\n      id: r.id,\n      source: 'vector_search',\n      similarity: parseFloat(r.similarity) || 0,\n      lesson: r.lesson_summary,\n      pattern: r.pattern,\n      details: r.details,\n      category: r.category,\n      type: r.example_type,\n      times_used: r.times_referenced || 0\n    });\n  }\n}\n\n// Add keyword results if we don't have enough\nfor (const r of keywordResults) {\n  if (r.id && !seenIds.has(r.id) && lessons.length < 5) {\n    seenIds.add(r.id);\n    lessons.push({\n      id: r.id,\n      source: 'keyword_search',\n      similarity: 0.5,\n      lesson: r.lesson_summary,\n      pattern: r.pattern,\n      details: r.details,\n      category: r.category,\n      type: r.example_type,\n      times_used: r.times_referenced || 0\n    });\n  }\n}\n\n// Format memory items (with ids for usage tracking)\nconst persistent_knowledge = memoryItems.filter(m => m.id).map(m => ({\n  id: m.id,\n  key: m.key,\n  value: m.value,\n  confidence: m.confidence,\n  tags: m.tags\n}));\n\n// Build summary for agent context\nlet contextSummary = '';\n\nif (persistent_knowledge.length > 0) {\n  contextSummary += '## Persistent Knowledge:\\n';\n  for (const k of persistent_knowledge) {\n    contextSummary += `- **${k.key}:** ${k.value}\\n`;\n  }\n  contextSummary += '\\n';\n}\n\nif (lessons.length > 0) {\n  contextSummary += '## Relevant Lessons from Past Interactions:\\n';\n  for (const l of lessons) {\n    contextSummary += `- [${l.type}] ${l.lesson}`;\n    if (l.pattern) contextSummary += `\\n  Pattern: ${l.pattern}`;\n    contextSummary += '\\n';\n  }\n}\n\nif (contextSummary === '') {\n  contextSummary = 'No relevant memories found for this query.';\n}\n\n// Collect memory item IDs for usage tracking\nconst memory_item_ids = persistent_knowledge.map(k => k.id).filter(Boolean);\n\nreturn [{\n  json: {\n    query: defaults.query,\n    session_id: defaults.session_id,\n    task_type: defaults.task_type,\n    found_lessons: lessons.length,\n    found_knowledge: persistent_knowledge.length,\n    context_summary: contextSummary,\n    lessons: lessons,\n    persistent_knowledge: persistent_knowledge,\n    memory_item_ids: memory_item_ids,\n    lesson_ids: lessons.map(l => l.id).filter(Boolean)\n  }\n}];"
+      }
+    },
+    {
+      "id": "update-refs-001",
+      "name": "Update Reference Counts",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1560,
+        200
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "=UPDATE learning_examples\nSET times_referenced = times_referenced + 1, updated_at = NOW()\nWHERE id IN ({{ $json.lesson_ids.length > 0 ? $json.lesson_ids.map(id => \"'\" + id + \"'\").join(',') : \"'00000000-0000-0000-0000-000000000000'\" }});",
+        "options": {}
+      },
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CRED_ID",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "id": "log-memory-usage-001",
+      "name": "🗄️ Log Memory Usage",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1560,
+        400
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Log memory item usage for feedback loop (only if memory items were found)\nINSERT INTO memory_item_usage (\n  memory_item_id,\n  session_id,\n  workflow_execution_id,\n  task_type,\n  user_input_summary\n)\nSELECT \n  unnest($1::uuid[]),\n  $2,\n  $3,\n  $4,\n  $5\nWHERE array_length($1::uuid[], 1) > 0\nON CONFLICT DO NOTHING;",
+        "options": {
+          "queryReplacement": "={{ [$json.memory_item_ids.length > 0 ? '{' + $json.memory_item_ids.join(',') + '}' : '{}', $json.session_id, $execution.id, $json.task_type, $json.query.substring(0, 200)] }}"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CRED_ID",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "id": "return-001",
+      "name": "Return Memory Context",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1780,
+        300
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "result",
+              "name": "result",
+              "type": "object",
+              "value": "={{ $('Format Response').first().json }}"
+            }
+          ]
+        },
+        "options": {}
+      }
+    }
+  ],
+  "connections": {
+    "When Executed by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "Set Defaults",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Defaults": {
+      "main": [
+        [
+          {
+            "node": "Create Query Embedding",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Query Embedding": {
+      "main": [
+        [
+          {
+            "node": "Vector Search Lessons",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Keyword Search Fallback",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Check Memory Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Vector Search Lessons": {
+      "main": [
+        [
+          {
+            "node": "Merge Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Keyword Search Fallback": {
+      "main": [
+        [
+          {
+            "node": "Merge Results",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Check Memory Items": {
+      "main": [
+        [
+          {
+            "node": "Merge Results",
+            "type": "main",
+            "index": 2
+          }
+        ]
+      ]
+    },
+    "Merge Results": {
+      "main": [
+        [
+          {
+            "node": "Format Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Response": {
+      "main": [
+        [
+          {
+            "node": "Update Reference Counts",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "🗄️ Log Memory Usage",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Reference Counts": {
+      "main": [
+        [
+          {
+            "node": "Return Memory Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🗄️ Log Memory Usage": {
+      "main": [
+        [
+          {
+            "node": "Return Memory Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "saveManualExecutions": true,
+    "saveExecutionProgress": true,
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "meta": {
+    "description": "RAG-based memory retrieval with usage tracking for feedback loop. Searches learning_examples and memory_items using vector similarity and keyword fallback. Logs memory usage to enable effectiveness tracking and automatic deprecation of low-quality patterns.",
+    "category": "memory",
+    "features": [
+      "vector_search",
+      "keyword_fallback",
+      "usage_tracking",
+      "feedback_loop"
+    ]
+  }
+}

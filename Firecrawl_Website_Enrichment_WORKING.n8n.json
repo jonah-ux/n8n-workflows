@@ -1,0 +1,560 @@
+{
+  "name": "Firecrawl - Website Enrichment (WORKING)",
+  "nodes": [
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            { "name": "airtable_id" },
+            { "name": "company_id" },
+            { "name": "company_name" },
+            { "name": "location" },
+            { "name": "city" },
+            { "name": "state" },
+            { "name": "domain" },
+            { "name": "search_domain" },
+            { "name": "phone" },
+            { "name": "timestamp" },
+            { "name": "enrichment_id" },
+            { "name": "research_run_id" },
+            { "name": "meta" }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [-64, -1008],
+      "id": "9d98e72c-3f15-4352-9a4e-f2d75c22e366",
+      "name": "When Executed by Another Workflow"
+    },
+    {
+      "parameters": {
+        "resource": "MapSearch",
+        "operation": "map",
+        "url": "={{ $json.website_seed_url }}",
+        "limit": 20,
+        "requestOptions": {}
+      },
+      "type": "@mendable/n8n-nodes-firecrawl.firecrawl",
+      "typeVersion": 1,
+      "position": [736, -992],
+      "id": "523158e3-1047-44dd-97e2-107937ceda43",
+      "name": "🧭 Firecrawl — MAP Site Links",
+      "credentials": {
+        "firecrawlApi": {
+          "id": "h7HuUbKWgCMkuZK8",
+          "name": "Firecrawl account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT COALESCE(context_jsonb, '{}'::jsonb) AS context_jsonb\nFROM company_contexts\nWHERE company_id = $1",
+        "options": {
+          "queryReplacement": "={{ [$json.company_id] }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [112, -896],
+      "id": "24bbbd8b-1aba-4e74-8d90-2223f833f5a0",
+      "name": "📥 DB — Read Context (Master)",
+      "credentials": {
+        "postgres": {
+          "id": "xogKD739Qe4gqWBU",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [320, -992],
+      "id": "97117c8b-ed8f-41d2-828d-92678070fced",
+      "name": "🤝 Merge Context"
+    },
+    {
+      "parameters": {
+        "jsCode": "const merged = $json;\n\nlet ctx = merged.context_jsonb ?? {};\nif (typeof ctx === \"string\") {\n  try { ctx = JSON.parse(ctx); } catch { ctx = {}; }\n}\n\nconst derived = ctx?.derived ?? {};\n\nlet url =\n  merged.domain ||\n  derived.website ||\n  ctx.website ||\n  merged.search_domain ||\n  \"\";\n\nif (url && !url.startsWith(\"http\")) url = \"https://\" + url.replace(/^\\/+/, \"\");\nurl = url ? url.replace(/\\/$/, \"\") : null;\n\nreturn [{\n  json: {\n    ...merged,\n    context_jsonb: ctx,\n    website_seed_url: url,\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [512, -992],
+      "id": "f20ac05d-217f-4f43-ae6f-fb7cbc939288",
+      "name": "⚙️ Normalize Website Seed URL"
+    },
+    {
+      "parameters": {
+        "jsCode": "const MAX_TOTAL = 15;\nconst MAX_PER_BUCKET = 5;\n\nconst baseNodeName = \"⚙️ Normalize Website Seed URL\";\nconst baseItem = $items(baseNodeName, 0, 0)?.[0]?.json ?? {};\nconst base = { ...baseItem };\n\nconst rawLinks = $json.links || $json.data?.links || [];\n\nconst excludeSubstrings = [\n  \"privacy\", \"terms\", \"cookie\", \"login\", \"signup\", \"cart\", \n  \"wp-json\", \"cdn-cgi\", \"mailto:\", \"tel:\", \".pdf\", \".jpg\"\n];\n\nconst isExcluded = (u) => {\n  const s = (u || \"\").toLowerCase();\n  return excludeSubstrings.some(x => s.includes(x));\n};\n\nconst BUCKETS = [\n  { action: \"contact\",  keywords: [\"contact\", \"location\", \"hours\", \"directions\"] },\n  { action: \"services\", keywords: [\"services\", \"repair\", \"maintenance\", \"tires\", \"brakes\", \"oil\", \"engine\", \"suspension\", \"transmission\", \"cooling\", \"alignment\", \"filtration\", \"batteries\"] },\n  { action: \"pricing\",  keywords: [\"pricing\", \"cost\", \"coupon\", \"special\", \"offer\", \"finance\"] },\n  { action: \"about\",    keywords: [\"about\", \"team\", \"story\", \"testimonials\", \"reviews\"] },\n  { action: \"careers\",  keywords: [\"careers\", \"jobs\", \"join\"] },\n];\n\nconst getBucket = (url) => {\n  const u = url.toLowerCase();\n  for (const b of BUCKETS) {\n    if (b.keywords.some(k => u.includes(k))) return b.action;\n  }\n  return null;\n};\n\nconst candidates = [];\n\nfor (const linkObj of rawLinks) {\n  const u = linkObj.url;\n  if (!u || isExcluded(u)) continue;\n\n  const bucket = getBucket(u);\n  if (bucket) {\n    const depth = u.split('/').length; \n    candidates.push({\n      ...base,\n      action: bucket,\n      target_url: u,\n      page_title: linkObj.title,\n      score: 10 + depth, \n      reason: \"keyword_match\"\n    });\n  }\n}\n\nconst byBucket = {};\nBUCKETS.forEach(b => byBucket[b.action] = []);\n\ncandidates.sort((a, b) => b.score - a.score);\nfor (const c of candidates) {\n  if (byBucket[c.action].length < MAX_PER_BUCKET) {\n    byBucket[c.action].push(c);\n  }\n}\n\nconst output = [];\nfor (const b of BUCKETS) {\n  output.push(...byBucket[b.action]);\n  if (output.length >= MAX_TOTAL) break;\n}\n\nif (output.length === 0) {\n  return [{\n    json: {\n      ...base,\n      action: \"homepage\",\n      target_url: base.website_seed_url || base.domain,\n      score: 1,\n      reason: \"fallback_no_matches\"\n    }\n  }];\n}\n\nreturn output.map(i => ({ json: i }));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [928, -992],
+      "id": "f2d76efe-4ce1-4490-a131-fc42f2296d84",
+      "name": "⚙️ Filter + Prioritize URLs"
+    },
+    {
+      "parameters": {
+        "operation": "batchScrape",
+        "urls": "={{ $items(\"⚙️ Filter + Prioritize URLs\").map(i => i.json.target_url) }}",
+        "parsers": ["pdf"],
+        "scrapeOptions": {
+          "options": {
+            "formats": {
+              "format": [{}]
+            },
+            "headers": {},
+            "waitFor": 10000
+          }
+        },
+        "requestOptions": {}
+      },
+      "type": "@mendable/n8n-nodes-firecrawl.firecrawl",
+      "typeVersion": 1,
+      "position": [1120, -992],
+      "id": "fb310abf-c956-4897-8ff5-2fd0f4a562ce",
+      "name": "🔥 Firecrawl — SCRAPE Page",
+      "retryOnFail": true,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "firecrawlApi": {
+          "id": "h7HuUbKWgCMkuZK8",
+          "name": "Firecrawl account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const j = $json;\n\nconst research_run_id = j.research_run_id || null;\nconst company_id = j.company_id || null;\nconst enrichment_id = j.enrichment_id || null;\n\nconst action = j.action || \"unknown\";\nconst target_url = j.target_url || null;\n\nconst md = j.scrape?.markdown || \"\";\nconst md_len = typeof md === \"string\" ? md.length : 0;\n\nconst md_preview =\n  typeof j.scrape?.markdown_preview === \"string\"\n    ? j.scrape.markdown_preview\n    : (typeof md === \"string\"\n        ? md.slice(0, 5000) + (md_len > 5000 ? \"...[TRUNCATED]\" : \"\")\n        : null);\n\nreturn [{\n  json: {\n    research_run_id,\n    company_id,\n    enrichment_id,\n\n    node_name: `website_scrape_${action}`,\n    node_id: \"firecrawl_deep_scrape_page\",\n    node_type: \"tool_log\",\n    stage: \"Stage 2\",\n    status: j.scrape?.ok ? \"completed\" : \"error\",\n\n    output_data: {\n      action,\n      target_url,\n      title: j.scrape?.title || j.page_title || null,\n      markdown_preview: md_preview,\n    },\n\n    metadata: {\n      action,\n      target_url,\n      ok: !!j.scrape?.ok,\n      content_length: md_len,\n      page_title: j.scrape?.title || j.page_title || \"Unknown\",\n      scrape_id: j.scrape?.scrapeId || null,\n      api_calls: 1,\n      estimated_cost_usd: 0.003\n    }\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2432, -1008],
+      "id": "25de2692-efbf-4fdd-851c-abd026d49fb6",
+      "name": "🧾 Build Page Log"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO workflow_step_logs (\n  research_run_id,\n  company_id,\n  node_name,\n  node_id,\n  node_type,\n  stage,\n  status,\n  output_data,\n  metadata\n)\nVALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)\nRETURNING log_id, company_id, research_run_id;",
+        "options": {
+          "queryReplacement": "={{ [\n  $json.research_run_id,\n  $json.company_id,\n  $json.node_name,\n  $json.node_id,\n  $json.node_type,\n  $json.stage,\n  $json.status,\n  JSON.stringify($json.output_data),\n  JSON.stringify($json.metadata)\n] }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [2624, -1008],
+      "id": "6d28c65c-24ee-4d90-bdc1-e0cac14f8535",
+      "name": "🗄️ Log Page (RETURNING log_id)",
+      "credentials": {
+        "postgres": {
+          "id": "xogKD739Qe4gqWBU",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Collect ALL log_id outputs from the Postgres node across the entire run.\nconst rows = $items(\"🗄️ Log Page (RETURNING log_id)\").map(i => i.json);\n\nconst log_ids = rows\n  .map(r => r.log_id)\n  .filter(Boolean);\n\n// Grab the IDs from the first row\nconst company_id = rows[0]?.company_id ?? null;\nconst research_run_id = rows[0]?.research_run_id ?? null;\nconst enrichment_id = rows[0]?.enrichment_id ?? null;\n\nreturn [{\n  json: {\n    company_id,\n    research_run_id,\n    enrichment_id,\n    log_ids\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2816, -1008],
+      "id": "4b42d194-e186-4ba5-b8f4-11eeff8bb622",
+      "name": "📋 Collect Log ID"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Aggregate all scraped content + collected log IDs\nconst allLogs = $items(\"📋 Collect Log ID\");\nconst allScrapes = $items(\"⚙️ Normalize Status → Pages\");\n\nconst log_ids = allLogs.map(i => i.json.log_id).filter(Boolean);\n\nconst firstLog = allLogs[0]?.json || {};\nconst company_id = firstLog.company_id || null;\nconst research_run_id = firstLog.research_run_id || null;\nconst enrichment_id = firstLog.enrichment_id || null; \n\nconst MAX_PAGES = 15;        \nconst PER_PAGE_CAP = 12000;  \nconst TOTAL_CAP = 120000;    \n\nlet combined = \"\";\nlet total = 0;\nlet page_count = 0;\nconst urls_scraped = [];\nconst raw_pages = [];\n\nfor (const item of allScrapes) {\n  const j = item.json;\n\n  const md = j.scrape?.markdown;\n  if (!md || typeof md !== \"string\" || !md.trim()) continue;\n  if (j.scrape?.ok === false) continue;\n\n  const url = j.target_url || null;\n  const action = j.action || \"unknown\";\n  const title = j.scrape?.title || j.page_title || \"Unknown\";\n\n  const chunk = md.slice(0, PER_PAGE_CAP);\n  if (total + chunk.length > TOTAL_CAP) break;\n\n  page_count++;\n  urls_scraped.push(url);\n\n  raw_pages.push({\n    action,\n    url,\n    title,\n    content: chunk\n  });\n\n  combined += `\\n### SOURCE (${action}): ${url}\\n`;\n  combined += `TITLE: ${title}\\n`;\n  combined += `CONTENT:\\n${chunk}\\n`;\n  combined += `\\n----------------\\n`;\n\n  total += chunk.length;\n  if (page_count >= MAX_PAGES) break;\n}\n\nif (page_count === 0) {\n  return [{\n    json: {\n      prompt: \"No content found.\",\n      skip_ai: true,\n      company_id,\n      research_run_id,\n      enrichment_id,\n      log_ids,\n      stats: { pages: 0, urls: [] },\n      raw_pages: [],\n      combined_markdown: \"\"\n    }\n  }];\n}\n\nconst prompt = `You are a Lead Intelligence Analyst. I scraped ${page_count} pages from the target company's website.\n\nYOUR GOAL: Analyze the RAW CONTENT below and extract a structured business dossier.\n\nGUIDELINES:\n- Pricing: Find specific numbers, tiers, or \"Request Quote\".\n- Services: List specific services.\n- Tech stack: \"Powered by\", portal/login, scheduling tools.\n- About: history, owner mentions, mission.\n- Contact: phone, emails, addresses, contact form URLs.\n\nRAW CONTENT:\n${combined}`;\n\nreturn [{\n  json: {\n    prompt,\n    stats: {\n      pages: page_count,\n      urls: urls_scraped,\n      char_total: total\n    },\n    company_id,\n    research_run_id,\n    enrichment_id,\n    log_ids,\n    raw_pages,\n    combined_markdown: combined\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3024, -1008],
+      "id": "515dbe0b-b78a-407b-9604-6481a8306b6b",
+      "name": "🏁 Aggregate All Content"
+    },
+    {
+      "parameters": {
+        "options": {
+          "responseFormat": "json_object",
+          "temperature": 0.2
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1,
+      "position": [3232, -816],
+      "id": "2bd9557f-50cc-4055-9c22-0bf2976c9b86",
+      "name": "OpenAI Chat Model (Mini)",
+      "credentials": {
+        "openAiApi": {
+          "id": "Lb7LQd5GQa1bZ9yX",
+          "name": "OpenAi account 4"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.prompt }}",
+        "messages": {
+          "messageValues": [
+            {
+              "message": "You are an expert research analyst. Output ONLY valid JSON.\n\nExtract:\n- services (array)\n- pricing (object or string or null)\n- about (string or null)\n- contact_info (object with phone, email, address, form_url)\n- tech_stack (array)\n- owner_mentions (array)\n\nRules:\n- phone must contain at least 10 digits (ignore words like \"Call us\") or be null\n- email must contain \"@\" or be null\n- form_url must start with http(s) or be null\n- do not include markdown formatting\n"
+            }
+          ]
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.4,
+      "position": [3232, -1008],
+      "id": "2c0896e4-bdf8-44d1-917c-61b79a61061a",
+      "name": "🤖 Summarize (GPT-4o-mini)"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $items(\"🏁 Aggregate All Content\")[0].json;\n\nlet aiRaw = $json.output ?? $json ?? {};\nlet ai = aiRaw;\n\nif (typeof aiRaw?.text === \"string\") {\n  try { ai = JSON.parse(aiRaw.text); } catch { ai = {}; }\n}\n\nreturn [{\n  json: {\n    success: true,\n\n    services: ai.services || [],\n    pricing: ai.pricing || null,\n    about: ai.about || null,\n    contact_info: ai.contact_info || {},\n    tech_stack: ai.tech_stack || [],\n    owner_mentions: ai.owner_mentions || [],\n\n    raw_pages: input.raw_pages || [],\n    combined_markdown: input.combined_markdown || \"\",\n\n    scrape_stats: input.stats,\n\n    company_id: input.company_id,\n    research_run_id: input.research_run_id,\n    enrichment_id: input.enrichment_id,\n    log_ids: input.log_ids\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3568, -1008],
+      "id": "c7fa323b-c0fc-4897-88c0-92abce1ee8fe",
+      "name": "🏁 Format Final Output"
+    },
+    {
+      "parameters": {
+        "jsCode": "const j = $json;\n\nreturn [{\n  json: {\n    research_run_id: j.research_run_id,\n    company_id: j.company_id,\n    enrichment_id: j.enrichment_id || null,\n\n    node_name: \"website_enrichment_summary\",\n    node_id: \"firecrawl_website_enrichment_final\",\n    node_type: \"tool_log\",\n    stage: \"Stage 2\",\n    status: \"completed\",\n\n    output_data: {\n      services: j.services,\n      pricing: j.pricing,\n      about: j.about,\n      contact_info: j.contact_info,\n      tech_stack: j.tech_stack,\n      owner_mentions: j.owner_mentions,\n      pages_scraped: j.scrape_stats?.pages || 0,\n      urls_scraped: j.scrape_stats?.urls || [],\n      raw_pages_count: Array.isArray(j.raw_pages) ? j.raw_pages.length : 0\n    },\n\n    metadata: {\n      source: \"firecrawl_website_enrichment\",\n      pages_scraped: j.scrape_stats?.pages || 0,\n      ai_model: \"gpt-4o-mini\",\n      is_summary: true,\n      char_total: j.scrape_stats?.char_total || null\n    }\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3776, -1008],
+      "id": "0fc2b691-abb6-4ec2-8b56-86dfcc1885ee",
+      "name": "🧾 Build Final Summary Log"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO workflow_step_logs (\n  research_run_id,\n  company_id,\n  node_name,\n  node_id,\n  node_type,\n  stage,\n  status,\n  output_data,\n  metadata\n)\nVALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)\nRETURNING log_id, company_id, research_run_id;",
+        "options": {
+          "queryReplacement": "={{ [\n  $json.research_run_id,\n  $json.company_id,\n  $json.node_name,\n  $json.node_id,\n  $json.node_type,\n  $json.stage,\n  $json.status,\n  JSON.stringify($json.output_data),\n  JSON.stringify($json.metadata)\n] }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [4000, -1008],
+      "id": "8691a704-df1d-42fd-a66a-a9acdd539fe3",
+      "name": "🗄️ Log Final Summary",
+      "credentials": {
+        "postgres": {
+          "id": "xogKD739Qe4gqWBU",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "A4-U5nCoP9WMSikDE3qdi",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "log_id": "={{ $json.log_id }}",
+            "company_id": "={{ $json.company_id }}",
+            "research_run_id": "={{ $json.research_run_id }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "company_id",
+              "displayName": "company_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            },
+            {
+              "id": "log_id",
+              "displayName": "log_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            },
+            {
+              "id": "research_run_id",
+              "displayName": "research_run_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [4224, -1008],
+      "id": "8e980ca3-5219-4786-941f-aee059e9a1b4",
+      "name": "📤 Call Context Updater (ONCE)",
+      "notes": "Called ONCE at the end with the final summary log_id"
+    },
+    {
+      "parameters": {
+        "jsCode": "const finalOutput = $items(\"🏁 Format Final Output\")[0].json;\nconst contextResult = $json;\n\nreturn [{\n  json: {\n    success: true,\n    ...finalOutput,\n    context_updated: true\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [4448, -1008],
+      "id": "12247aec-b153-4e85-b722-b0f9a6d2ff90",
+      "name": "📤 Return Result"
+    },
+    {
+      "parameters": {
+        "operation": "batchScrapeStatus",
+        "batchId": "={{ $json.batch_id }}",
+        "requestOptions": {}
+      },
+      "type": "@mendable/n8n-nodes-firecrawl.firecrawl",
+      "typeVersion": 1,
+      "position": [1808, -992],
+      "id": "4b203d1a-8e22-436c-aa89-4cf5485e0599",
+      "name": "Get batch scrape status",
+      "credentials": {
+        "firecrawlApi": {
+          "id": "h7HuUbKWgCMkuZK8",
+          "name": "Firecrawl account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all().map(i => i.json);\n\nreturn items.map(x => ({\n  json: {\n    batch_id: x.id || x.batchId || (x.data ? x.data.id : null),\n    status: \"pending\",\n    poll_try: 0\n  }\n}));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1344, -992],
+      "id": "f9ef3144-f9d6-4877-847e-6082bf45d717",
+      "name": "⚙️ Explode Batch IDs"
+    },
+    {
+      "parameters": {
+        "jsCode": "const statusItems = $input.all().map(i => i.json);\n\nconst unwrap = (s) => {\n  const core = (s && typeof s === \"object\" && s.data && typeof s.data === \"object\" && !Array.isArray(s.data))\n    ? s.data\n    : s;\n\n  const success = core?.success === true;\n  const status = core?.status || core?.state || null;\n\n  const pages =\n    Array.isArray(core?.data) ? core.data :\n    Array.isArray(core?.results) ? core.results :\n    Array.isArray(core?.pages) ? core.pages :\n    [];\n\n  return { success, status, pages, core };\n};\n\nconst completed = statusItems\n  .map(unwrap)\n  .filter(x => x.success && (x.status === \"completed\") && Array.isArray(x.pages) && x.pages.length > 0);\n\nif (completed.length === 0) {\n  const sample = statusItems[0] ?? null;\n  return [{\n    json: {\n      ok: false,\n      reason: \"No completed payloads with page arrays found\",\n      got_status_items: statusItems.length,\n      sample_keys: sample ? Object.keys(sample) : [],\n      sample: sample\n    }\n  }];\n}\n\nconst prioritized = $items(\"⚙️ Filter + Prioritize URLs\").map(i => i.json);\nconst byUrl = new Map();\nfor (const p of prioritized) {\n  const u = (p.target_url || \"\").replace(/\\/$/, \"\");\n  if (u) byUrl.set(u, p);\n}\n\nconst seen = new Set();\nconst out = [];\n\nfor (const pack of completed) {\n  for (const r of pack.pages) {\n    const meta = r?.metadata ?? {};\n    const urlRaw = meta?.sourceURL || meta?.url || r?.url || r?.sourceUrl || null;\n    const url = (urlRaw || \"\").replace(/\\/$/, \"\") || null;\n\n    const md =\n      r?.markdown ??\n      r?.data?.markdown ??\n      r?.content ??\n      null;\n\n    if (!url) continue;\n    if (seen.has(url)) continue;\n    seen.add(url);\n\n    const orig = byUrl.get(url) || prioritized[0] || {};\n\n    out.push({\n      ...orig,\n      target_url: url,\n      page_title: meta?.title || r?.title || orig.page_title || null,\n      scrape: {\n        ok: typeof md === \"string\" && md.trim().length > 0,\n        title: meta?.title || r?.title || null,\n        markdown: md,\n        scrapeId: meta?.scrapeId ?? null,\n        metadata: meta\n      }\n    });\n  }\n}\n\nif (out.length === 0) {\n  return [{\n    json: {\n      ok: false,\n      reason: \"Completed payloads found but no usable pages extracted\",\n      completed_count: completed.length,\n      completed_sample_core: completed[0]?.core ?? null\n    }\n  }];\n}\n\nreturn out.map(j => ({ json: j }));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2240, -1008],
+      "id": "72733c6f-8a14-4960-b5e1-9413aaa48883",
+      "name": "⚙️ Normalize Status → Pages"
+    },
+    {
+      "parameters": {
+        "jsCode": "return $input.all().map(i => ({\n  json: {\n    ...i.json,\n    poll_try: 0\n  }\n}));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1584, -992],
+      "id": "b854ab43-88bb-447d-8514-62ec6986bfd9",
+      "name": "⚙️ Init Poll Counter"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "afc8996f-d860-4c78-a006-62bc3b9e9184",
+              "leftValue": "={{ $json.status }}",
+              "rightValue": "completed",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [2016, -992],
+      "id": "a349bcdf-42ee-4485-8ce4-4c8fe769a678",
+      "name": "IF — completed?"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [2016, -848],
+      "id": "42b4585a-34a0-4484-9ae0-cd1b5f93b00f",
+      "name": "Wait - 5-Seconds",
+      "webhookId": "48a93c96-182c-4cdd-8758-4aca0bf50b5c"
+    },
+    {
+      "parameters": {
+        "jsCode": "const originalItem = $items(\"⚙️ Explode Batch IDs\")[0].json;\nconst currentTry = $json.poll_try || 0;\n\nreturn [{\n  json: {\n    batch_id: originalItem.batch_id,\n    poll_try: currentTry + 1,\n    last_status: $json.status\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2016, -704],
+      "id": "c644c988-f433-4fcc-a5ab-2f21ab20918a",
+      "name": "⚙️ Increment Poll Counter"
+    }
+  ],
+  "connections": {
+    "When Executed by Another Workflow": {
+      "main": [
+        [
+          { "node": "📥 DB — Read Context (Master)", "type": "main", "index": 0 },
+          { "node": "🤝 Merge Context", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "🧭 Firecrawl — MAP Site Links": {
+      "main": [
+        [{ "node": "⚙️ Filter + Prioritize URLs", "type": "main", "index": 0 }]
+      ]
+    },
+    "📥 DB — Read Context (Master)": {
+      "main": [
+        [{ "node": "🤝 Merge Context", "type": "main", "index": 1 }]
+      ]
+    },
+    "🤝 Merge Context": {
+      "main": [
+        [{ "node": "⚙️ Normalize Website Seed URL", "type": "main", "index": 0 }]
+      ]
+    },
+    "⚙️ Normalize Website Seed URL": {
+      "main": [
+        [{ "node": "🧭 Firecrawl — MAP Site Links", "type": "main", "index": 0 }]
+      ]
+    },
+    "⚙️ Filter + Prioritize URLs": {
+      "main": [
+        [{ "node": "🔥 Firecrawl — SCRAPE Page", "type": "main", "index": 0 }]
+      ]
+    },
+    "🔥 Firecrawl — SCRAPE Page": {
+      "main": [
+        [{ "node": "⚙️ Explode Batch IDs", "type": "main", "index": 0 }]
+      ]
+    },
+    "🧾 Build Page Log": {
+      "main": [
+        [{ "node": "🗄️ Log Page (RETURNING log_id)", "type": "main", "index": 0 }]
+      ]
+    },
+    "🗄️ Log Page (RETURNING log_id)": {
+      "main": [
+        [{ "node": "📋 Collect Log ID", "type": "main", "index": 0 }]
+      ]
+    },
+    "📋 Collect Log ID": {
+      "main": [
+        [{ "node": "🏁 Aggregate All Content", "type": "main", "index": 0 }]
+      ]
+    },
+    "🏁 Aggregate All Content": {
+      "main": [
+        [{ "node": "🤖 Summarize (GPT-4o-mini)", "type": "main", "index": 0 }]
+      ]
+    },
+    "OpenAI Chat Model (Mini)": {
+      "ai_languageModel": [
+        [{ "node": "🤖 Summarize (GPT-4o-mini)", "type": "ai_languageModel", "index": 0 }]
+      ]
+    },
+    "🤖 Summarize (GPT-4o-mini)": {
+      "main": [
+        [{ "node": "🏁 Format Final Output", "type": "main", "index": 0 }]
+      ]
+    },
+    "🏁 Format Final Output": {
+      "main": [
+        [{ "node": "🧾 Build Final Summary Log", "type": "main", "index": 0 }]
+      ]
+    },
+    "🧾 Build Final Summary Log": {
+      "main": [
+        [{ "node": "🗄️ Log Final Summary", "type": "main", "index": 0 }]
+      ]
+    },
+    "🗄️ Log Final Summary": {
+      "main": [
+        [{ "node": "📤 Call Context Updater (ONCE)", "type": "main", "index": 0 }]
+      ]
+    },
+    "📤 Call Context Updater (ONCE)": {
+      "main": [
+        [{ "node": "📤 Return Result", "type": "main", "index": 0 }]
+      ]
+    },
+    "Get batch scrape status": {
+      "main": [
+        [{ "node": "IF — completed?", "type": "main", "index": 0 }]
+      ]
+    },
+    "⚙️ Explode Batch IDs": {
+      "main": [
+        [{ "node": "⚙️ Init Poll Counter", "type": "main", "index": 0 }]
+      ]
+    },
+    "⚙️ Normalize Status → Pages": {
+      "main": [
+        [{ "node": "🧾 Build Page Log", "type": "main", "index": 0 }]
+      ]
+    },
+    "⚙️ Init Poll Counter": {
+      "main": [
+        [{ "node": "Get batch scrape status", "type": "main", "index": 0 }]
+      ]
+    },
+    "IF — completed?": {
+      "main": [
+        [{ "node": "⚙️ Normalize Status → Pages", "type": "main", "index": 0 }],
+        [{ "node": "Wait - 5-Seconds", "type": "main", "index": 0 }]
+      ]
+    },
+    "Wait - 5-Seconds": {
+      "main": [
+        [{ "node": "⚙️ Increment Poll Counter", "type": "main", "index": 0 }]
+      ]
+    },
+    "⚙️ Increment Poll Counter": {
+      "main": [
+        [{ "node": "⚙️ Init Poll Counter", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "meta": {
+    "instanceId": "2d82e0d27c2a88970c7ba9693b6bad225f1d31f9cf0d392d33dd9cabf99f185f"
+  }
+}

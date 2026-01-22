@@ -1,0 +1,321 @@
+{
+  "name": "Tool: Google Docs SOP Publisher",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "trigger-001",
+      "name": "When Executed by Another Workflow",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "sopId",
+              "name": "sopId",
+              "type": "string",
+              "value": "={{ $json.sopId || `SOP-${Date.now()}` }}"
+            },
+            {
+              "id": "sopName",
+              "name": "sopName",
+              "type": "string",
+              "value": "={{ $json.sopName || 'Untitled SOP' }}"
+            },
+            {
+              "id": "category",
+              "name": "category",
+              "type": "string",
+              "value": "={{ $json.category || 'General' }}"
+            },
+            {
+              "id": "status",
+              "name": "status",
+              "type": "string",
+              "value": "={{ $json.status || 'Draft' }}"
+            },
+            {
+              "id": "priority",
+              "name": "priority",
+              "type": "string",
+              "value": "={{ $json.priority || 'Medium' }}"
+            },
+            {
+              "id": "quickSummary",
+              "name": "quickSummary",
+              "type": "string",
+              "value": "={{ $json.quickSummary || '' }}"
+            },
+            {
+              "id": "purpose",
+              "name": "purpose",
+              "type": "string",
+              "value": "={{ $json.purpose || '' }}"
+            },
+            {
+              "id": "scope",
+              "name": "scope",
+              "type": "string",
+              "value": "={{ $json.scope || '' }}"
+            },
+            {
+              "id": "prerequisites",
+              "name": "prerequisites",
+              "type": "string",
+              "value": "={{ $json.prerequisites || '' }}"
+            },
+            {
+              "id": "steps",
+              "name": "steps",
+              "type": "string",
+              "value": "={{ $json.steps || '' }}"
+            },
+            {
+              "id": "expectedOutcome",
+              "name": "expectedOutcome",
+              "type": "string",
+              "value": "={{ $json.expectedOutcome || '' }}"
+            },
+            {
+              "id": "troubleshooting",
+              "name": "troubleshooting",
+              "type": "string",
+              "value": "={{ $json.troubleshooting || '' }}"
+            },
+            {
+              "id": "relatedWorkflows",
+              "name": "relatedWorkflows",
+              "type": "string",
+              "value": "={{ $json.relatedWorkflows || '' }}"
+            },
+            {
+              "id": "owner",
+              "name": "owner",
+              "type": "string",
+              "value": "={{ $json.owner || 'Auto Shop Media' }}"
+            },
+            {
+              "id": "version",
+              "name": "version",
+              "type": "string",
+              "value": "={{ $json.version || '1.0' }}"
+            },
+            {
+              "id": "tags",
+              "name": "tags",
+              "type": "string",
+              "value": "={{ $json.tags || '' }}"
+            },
+            {
+              "id": "createdAt",
+              "name": "createdAt",
+              "type": "string",
+              "value": "={{ new Date().toISOString().split('T')[0] }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "normalize-001",
+      "name": "Normalize Input",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "check-name",
+              "leftValue": "={{ $json.sopName }}",
+              "rightValue": "Untitled SOP",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "validate-001",
+      "name": "IF Missing sopName",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "result",
+              "name": "result",
+              "type": "object",
+              "value": "={{ { success: false, error: 'sopName is required', hint: 'Provide a clear, descriptive name for the SOP' } }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "error-001",
+      "name": "Return Error",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [900, 420]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build Google Docs SOP Template with Category Folder Routing\nconst input = $json;\n\n// Category to folder mapping (matches Google_Drive_SOP_Folder_Setup)\nconst categoryFolderMap = {\n  'Master': '01_MASTER_DOCUMENTS',\n  'Business': '02_Business_Operations',\n  'Business Operations': '02_Business_Operations',\n  'Target Market': '03_Target_Market',\n  'ICP': '03_Target_Market',\n  'Services': '04_Services_Products',\n  'Products': '04_Services_Products',\n  'Enrichment': '05_Enrichment_Pipeline',\n  'HubSpot': '06_HubSpot_CRM',\n  'CRM': '06_HubSpot_CRM',\n  'Outreach': '07_Outreach_Sequences',\n  'Voice': '08_Voice_AI',\n  'Voice AI': '08_Voice_AI',\n  'Retell': '08_Voice_AI',\n  'Infrastructure': '09_Infrastructure',\n  'Integration': '10_Integrations',\n  'Agent': '11_AI_Agents',\n  'Knowledge': '12_Knowledge_Base',\n  'Standards': '13_Standards_Guidelines',\n  'Guidelines': '13_Standards_Guidelines',\n  'Template': '14_Templates',\n  'Analytics': '15_Analytics_Reports',\n  'Archive': '16_Archive',\n  'General': '09_Infrastructure'  // Default\n};\n\n// Format the document title\nconst docTitle = `[${input.category}] ${input.sopName} - v${input.version}`;\nconst targetFolder = categoryFolderMap[input.category] || '09_Infrastructure';\n\n// Build the document content as plain text (Google Docs will format)\nconst content = `\n================================================================================\n                        AUTO SHOP MEDIA - STANDARD OPERATING PROCEDURE\n================================================================================\n\nSOP ID: ${input.sopId}\nSOP Name: ${input.sopName}\nCategory: ${input.category}\nStatus: ${input.status}\nPriority: ${input.priority}\nVersion: ${input.version}\nOwner: ${input.owner}\nCreated: ${input.createdAt}\nTags: ${input.tags}\n\n--------------------------------------------------------------------------------\n                                    QUICK SUMMARY\n--------------------------------------------------------------------------------\n${input.quickSummary || 'No summary provided.'}\n\n--------------------------------------------------------------------------------\n                                      PURPOSE\n--------------------------------------------------------------------------------\n${input.purpose || 'Purpose not defined.'}\n\n--------------------------------------------------------------------------------\n                                       SCOPE\n--------------------------------------------------------------------------------\n${input.scope || 'Scope not defined.'}\n\n--------------------------------------------------------------------------------\n                                  PREREQUISITES\n--------------------------------------------------------------------------------\n${input.prerequisites || 'No prerequisites.'}\n\n--------------------------------------------------------------------------------\n                                 PROCEDURE STEPS\n--------------------------------------------------------------------------------\n${input.steps || 'Steps not defined.'}\n\n--------------------------------------------------------------------------------\n                                EXPECTED OUTCOME\n--------------------------------------------------------------------------------\n${input.expectedOutcome || 'Expected outcome not defined.'}\n\n--------------------------------------------------------------------------------\n                                 TROUBLESHOOTING\n--------------------------------------------------------------------------------\n${input.troubleshooting || 'No troubleshooting information.'}\n\n--------------------------------------------------------------------------------\n                               RELATED WORKFLOWS\n--------------------------------------------------------------------------------\n${input.relatedWorkflows || 'No related workflows.'}\n\n================================================================================\n                              END OF DOCUMENT\n================================================================================\n\nThis SOP was auto-generated by the Auto Shop Media automation system.\nLast updated: ${input.createdAt}\n`;\n\nreturn [{\n  json: {\n    ...input,\n    docTitle,\n    docContent: content,\n    targetFolder\n  }\n}];"
+      },
+      "id": "build-doc-001",
+      "name": "Build Document Content",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 180]
+    },
+    {
+      "parameters": {
+        "operation": "create",
+        "title": "={{ $json.docTitle }}",
+        "folderId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "1envSCfKUb7g5K2aXJ2CqpJlHH6bzporK"
+        }
+      },
+      "id": "create-doc-001",
+      "name": "Create Google Doc",
+      "type": "n8n-nodes-base.googleDocs",
+      "typeVersion": 2,
+      "position": [1120, 180],
+      "credentials": {
+        "googleDocsOAuth2Api": {
+          "id": "YOUR_GOOGLE_DOCS_CREDENTIAL_ID",
+          "name": "Google Docs account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $json.documentId }}"
+        },
+        "actionsUi": {
+          "actionFields": [
+            {
+              "action": "insert",
+              "insertText": {
+                "text": "={{ $('Build Document Content').item.json.docContent }}",
+                "locationChoice": "endOfDocument"
+              }
+            }
+          ]
+        }
+      },
+      "id": "append-content-001",
+      "name": "Add Content to Doc",
+      "type": "n8n-nodes-base.googleDocs",
+      "typeVersion": 2,
+      "position": [1340, 180],
+      "credentials": {
+        "googleDocsOAuth2Api": {
+          "id": "YOUR_GOOGLE_DOCS_CREDENTIAL_ID",
+          "name": "Google Docs account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO sops (sop_id, sop_name, category, status, priority, version, owner, google_doc_id, google_doc_url, tags, quick_summary, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), NOW()) ON CONFLICT (sop_id) DO UPDATE SET sop_name = $2, category = $3, status = $4, priority = $5, version = $6, owner = $7, google_doc_id = $8, google_doc_url = $9, tags = $10, quick_summary = $11, updated_at = NOW() RETURNING *",
+        "options": {
+          "queryParameters": "={{ $('Normalize Input').item.json.sopId }},={{ $('Normalize Input').item.json.sopName }},={{ $('Normalize Input').item.json.category }},={{ $('Normalize Input').item.json.status }},={{ $('Normalize Input').item.json.priority }},={{ $('Normalize Input').item.json.version }},={{ $('Normalize Input').item.json.owner }},={{ $json.documentId }},={{ `https://docs.google.com/document/d/${$json.documentId}/edit` }},={{ $('Normalize Input').item.json.tags }},={{ $('Normalize Input').item.json.quickSummary }}"
+        }
+      },
+      "id": "log-to-db-001",
+      "name": "Log SOP to Database",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1560, 180],
+      "credentials": {
+        "postgres": {
+          "id": "BwXy2JHETe47vH1I",
+          "name": "Postgres account 2"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "result",
+              "name": "result",
+              "type": "object",
+              "value": "={{ {\n  success: true,\n  action: 'create',\n  sopId: $('Normalize Input').item.json.sopId,\n  sopName: $('Normalize Input').item.json.sopName,\n  category: $('Normalize Input').item.json.category,\n  version: $('Normalize Input').item.json.version,\n  googleDocId: $('Add Content to Doc').item.json.documentId,\n  googleDocUrl: `https://docs.google.com/document/d/${$('Add Content to Doc').item.json.documentId}/edit`,\n  message: 'SOP created successfully'\n} }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "format-result-001",
+      "name": "Format Result",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [1780, 180]
+    }
+  ],
+  "connections": {
+    "When Executed by Another Workflow": {
+      "main": [[{ "node": "Normalize Input", "type": "main", "index": 0 }]]
+    },
+    "Normalize Input": {
+      "main": [[{ "node": "IF Missing sopName", "type": "main", "index": 0 }]]
+    },
+    "IF Missing sopName": {
+      "main": [
+        [{ "node": "Return Error", "type": "main", "index": 0 }],
+        [{ "node": "Build Document Content", "type": "main", "index": 0 }]
+      ]
+    },
+    "Build Document Content": {
+      "main": [[{ "node": "Create Google Doc", "type": "main", "index": 0 }]]
+    },
+    "Create Google Doc": {
+      "main": [[{ "node": "Add Content to Doc", "type": "main", "index": 0 }]]
+    },
+    "Add Content to Doc": {
+      "main": [[{ "node": "Log SOP to Database", "type": "main", "index": 0 }]]
+    },
+    "Log SOP to Database": {
+      "main": [[{ "node": "Format Result", "type": "main", "index": 0 }]]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "saveManualExecutions": true,
+    "saveExecutionProgress": true,
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "meta": {
+    "templateCredsSetupCompleted": true
+  }
+}

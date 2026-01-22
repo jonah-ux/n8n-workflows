@@ -1,0 +1,492 @@
+{
+  "name": "Notion SOP Publisher Sub-Workflow",
+  "nodes": [
+    {
+      "id": "934c4a8a-3f29-462d-94b7-48e03ff1408c",
+      "name": "When Executed by Another Workflow",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        320,
+        304
+      ],
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "sopId"
+            },
+            {
+              "name": "sopName"
+            },
+            {
+              "name": "status"
+            },
+            {
+              "name": "category"
+            },
+            {
+              "name": "priority"
+            },
+            {
+              "name": "tags"
+            },
+            {
+              "name": "quickSummary"
+            },
+            {
+              "name": "source"
+            },
+            {
+              "name": "version"
+            },
+            {
+              "name": "content"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "da50c04d-bd61-46c5-90cd-1f1591f2b9df",
+      "name": "Normalize Input",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        528,
+        304
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "sopId",
+              "name": "sopId",
+              "type": "string",
+              "value": "={{ ($json.sopId ?? $json['SOP ID'] ?? $json.sop_id ?? '').toString().trim() }}"
+            },
+            {
+              "id": "sopName",
+              "name": "sopName",
+              "type": "string",
+              "value": "={{ ($json.sopName ?? $json['SOP Name'] ?? $json.title ?? $json.name ?? '').toString().trim() }}"
+            },
+            {
+              "id": "status",
+              "name": "status",
+              "type": "string",
+              "value": "={{ ($json.status ?? $json.Status ?? '').toString().trim() }}"
+            },
+            {
+              "id": "tags",
+              "name": "tags",
+              "type": "json",
+              "value": "={{ Array.isArray($json.tags) ? $json.tags : (typeof $json.tags === 'string' ? $json.tags.split(',').map(t => t.trim()).filter(Boolean) : []) }}"
+            },
+            {
+              "id": "content",
+              "name": "content",
+              "type": "string",
+              "value": "={{ ($json.content ?? $json.markdown ?? $json.body ?? '').toString() }}"
+            },
+            {
+              "id": "quickSummary",
+              "name": "quickSummary",
+              "type": "string",
+              "value": "={{ ($json.quickSummary ?? $json['Quick Summary'] ?? '').toString() }}"
+            },
+            {
+              "id": "source",
+              "name": "source",
+              "type": "string",
+              "value": "={{ ($json.source ?? $json.Source ?? '').toString() }}"
+            },
+            {
+              "id": "version",
+              "name": "version",
+              "type": "string",
+              "value": "={{ ($json.version ?? $json.Version ?? '').toString() }}"
+            },
+            {
+              "id": "category",
+              "name": "category",
+              "type": "string",
+              "value": "={{ ($json.category ?? $json.Category ?? '').toString() }}"
+            },
+            {
+              "id": "priority",
+              "name": "priority",
+              "type": "string",
+              "value": "={{ ($json.priority ?? $json.Priority ?? '').toString() }}"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "f115dd0c-b94f-4b4a-8f7c-0b992aefdc78",
+      "name": "IF Missing Required Fields",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        768,
+        304
+      ],
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "condition1",
+              "leftValue": "={{ $json.sopName }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "empty"
+              }
+            },
+            {
+              "id": "condition2",
+              "leftValue": "={{ $json.sopId }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "empty"
+              }
+            }
+          ],
+          "combinator": "or"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "d3f9fb23-0c28-4d5b-8fda-6397d5d7050e",
+      "name": "Build Error Response",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        992,
+        448
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "error",
+              "name": "error",
+              "type": "object",
+              "value": "={{ { ok:false, error:\"Missing required fields\", required:[\"sopId\",\"sopName\"], received:{ sopId:$json.sopId, sopName:$json.sopName } } }}"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "8aeefc1c-07c9-4c10-b0e2-c43d5c73aab8",
+      "name": "Search Existing SOP by Name",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        992,
+        224
+      ],
+      "onError": "continueRegularOutput",
+      "credentials": {},
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.notion.com/v1/databases/5daa56637e0043f0a86f64bc1ed34dfb/query",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "notionApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Notion-Version",
+              "value": "2022-06-28"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ filter: { property: 'SOP Name', title: { contains: $json.sopName } }, page_size: 1 }) }}"
+      }
+    },
+    {
+      "id": "0f5cde1d-f5e6-46aa-acde-0f3629105c71",
+      "name": "IF Found Existing Page",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1200,
+        224
+      ],
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "found_check",
+              "leftValue": "={{ $json.results?.length }}",
+              "rightValue": "0",
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "0798c3f9-0e62-4df5-8d8d-055cc114d2b8",
+      "name": "Prepare Update Payload",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1424,
+        160
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "pageId",
+              "name": "pageId",
+              "type": "string",
+              "value": "={{ $json.results[0].id }}"
+            },
+            {
+              "id": "properties",
+              "name": "properties",
+              "type": "object",
+              "value": "={{ {\n  \"SOP Name\": { \"title\": [{ \"text\": { \"content\": $('Normalize Input').item.json.sopName } }] },\n  \"SOP ID\": { \"rich_text\": [{ \"text\": { \"content\": $('Normalize Input').item.json.sopId } }] },\n  \"Status\": { \"status\": { \"name\": $('Normalize Input').item.json.status || 'Draft' } },\n  \"Category\": { \"select\": { \"name\": $('Normalize Input').item.json.category || 'General' } },\n  \"Priority\": { \"select\": { \"name\": $('Normalize Input').item.json.priority || 'Medium' } },\n  \"Quick Summary\": { \"rich_text\": [{ \"text\": { \"content\": $('Normalize Input').item.json.quickSummary || '' } }] },\n  \"Source\": { \"rich_text\": [{ \"text\": { \"content\": $('Normalize Input').item.json.source || '' } }] },\n  \"Version\": { \"rich_text\": [{ \"text\": { \"content\": $('Normalize Input').item.json.version || '' } }] },\n  \"Tags\": { \"multi_select\": ($('Normalize Input').item.json.tags || []).map(t => ({ \"name\": t })) }\n} }}"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "aef6bb1b-c6dc-487f-878a-48d2e1c965de",
+      "name": "Update Notion Page",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1648,
+        160
+      ],
+      "onError": "continueRegularOutput",
+      "credentials": {},
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://api.notion.com/v1/pages/{{ $json.pageId }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "notionApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Notion-Version",
+              "value": "2022-06-28"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ properties: $json.properties }) }}"
+      }
+    },
+    {
+      "id": "b76d1f92-2dd6-4b84-9a5e-b55b1c2fd8b2",
+      "name": "Prepare Create Payload",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1424,
+        288
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "properties",
+              "name": "properties",
+              "type": "object",
+              "value": "={{ {\n  \"SOP Name\": { \"title\": [{ \"text\": { \"content\": $('Normalize Input').item.json.sopName } }] },\n  \"SOP ID\": { \"rich_text\": [{ \"text\": { \"content\": $('Normalize Input').item.json.sopId } }] },\n  \"Status\": { \"status\": { \"name\": $('Normalize Input').item.json.status || 'Draft' } },\n  \"Category\": { \"select\": { \"name\": $('Normalize Input').item.json.category || 'General' } },\n  \"Priority\": { \"select\": { \"name\": $('Normalize Input').item.json.priority || 'Medium' } },\n  \"Quick Summary\": { \"rich_text\": [{ \"text\": { \"content\": $('Normalize Input').item.json.quickSummary || '' } }] },\n  \"Source\": { \"rich_text\": [{ \"text\": { \"content\": $('Normalize Input').item.json.source || '' } }] },\n  \"Version\": { \"rich_text\": [{ \"text\": { \"content\": $('Normalize Input').item.json.version || '' } }] },\n  \"Tags\": { \"multi_select\": ($('Normalize Input').item.json.tags || []).map(t => ({ \"name\": t })) }\n} }}"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "e164d8f1-cd8e-4f6e-bb2f-97f79cfd98fe",
+      "name": "Create Notion Page",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1648,
+        288
+      ],
+      "onError": "continueRegularOutput",
+      "credentials": {},
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.notion.com/v1/pages",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "notionApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Notion-Version",
+              "value": "2022-06-28"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ parent: { database_id: '5daa56637e0043f0a86f64bc1ed34dfb' }, properties: $json.properties }) }}"
+      }
+    }
+  ],
+  "connections": {
+    "When Executed by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "Normalize Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Input": {
+      "main": [
+        [
+          {
+            "node": "IF Missing Required Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF Missing Required Fields": {
+      "main": [
+        [
+          {
+            "node": "Search Existing SOP by Name",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Error Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Error Response": {
+      "main": [
+        []
+      ]
+    },
+    "Search Existing SOP by Name": {
+      "main": [
+        [
+          {
+            "node": "IF Found Existing Page",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF Found Existing Page": {
+      "main": [
+        [
+          {
+            "node": "Prepare Update Payload",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare Create Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Update Payload": {
+      "main": [
+        [
+          {
+            "node": "Update Notion Page",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Notion Page": {
+      "main": [
+        []
+      ]
+    },
+    "Prepare Create Payload": {
+      "main": [
+        [
+          {
+            "node": "Create Notion Page",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Notion Page": {
+      "main": [
+        []
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "saveManualExecutions": true,
+    "saveExecutionProgress": true,
+    "callerPolicy": "workflowsFromSameOwner"
+  }
+}

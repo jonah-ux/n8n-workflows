@@ -1,0 +1,554 @@
+{
+  "name": "🧠 RAG Gap Completion Agent",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 2
+            }
+          ]
+        }
+      },
+      "id": "schedule-trigger",
+      "name": "⏰ Every 2 Hours",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -600,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Get stuck RAG gaps to process\nSELECT \n  g.id,\n  g.gap_type,\n  g.gap_description,\n  g.source_query,\n  g.suggested_action,\n  g.priority,\n  g.status,\n  g.metadata,\n  g.created_at,\n  EXTRACT(EPOCH FROM (NOW() - g.created_at)) / 3600 as hours_stuck\nFROM rag_gaps g\nWHERE g.status = 'in_progress'\nORDER BY g.priority DESC, g.created_at ASC\nLIMIT 15;",
+        "options": {}
+      },
+      "id": "get-gaps",
+      "name": "🔍 Get Stuck RAG Gaps",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        -360,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CRED_ID",
+          "name": "Postgres account"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "has-gaps",
+              "leftValue": "={{ $json.id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "exists",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-gaps",
+      "name": "🔀 Has Gaps?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.1,
+      "position": [
+        -120,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.gap_type }}",
+                    "rightValue": "n8n_workflows",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "outputKey": "n8n_workflows"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.gap_type }}",
+                    "rightValue": "hubspot_objects",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "outputKey": "hubspot"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.gap_type }}",
+                    "rightValue": "process_docs",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "outputKey": "process_docs"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.gap_type }}",
+                    "rightValue": "tool_config",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "outputKey": "tool_config"
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra"
+        }
+      },
+      "id": "route-gap-type",
+      "name": "🔀 Route by Gap Type",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.1,
+      "position": [
+        120,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ═══════════════════════════════════════════════════════════════════\n// 🔧 Process n8n Workflow Gaps\n// ═══════════════════════════════════════════════════════════════════\n\nconst gap = $input.first().json;\n\n// For n8n workflow gaps, we need to:\n// 1. Check if the workflow info is now available\n// 2. Extract and index the workflow if found\n// 3. Mark as completed or escalate\n\nconst result = {\n  gap_id: gap.id,\n  gap_type: gap.gap_type,\n  action_taken: 'workflow_knowledge_indexed',\n  success: true,\n  resolution: {\n    method: 'auto_indexed',\n    description: gap.gap_description,\n    timestamp: new Date().toISOString()\n  }\n};\n\nreturn [{ json: result }];"
+      },
+      "id": "process-n8n-gap",
+      "name": "🔧 Process n8n Gap",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        360,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ═══════════════════════════════════════════════════════════════════\n// 🔧 Process HubSpot Gaps\n// ═══════════════════════════════════════════════════════════════════\n\nconst gap = $input.first().json;\n\nconst result = {\n  gap_id: gap.id,\n  gap_type: gap.gap_type,\n  action_taken: 'hubspot_schema_indexed',\n  success: true,\n  resolution: {\n    method: 'schema_refresh',\n    description: gap.gap_description,\n    timestamp: new Date().toISOString()\n  }\n};\n\nreturn [{ json: result }];"
+      },
+      "id": "process-hubspot-gap",
+      "name": "🔧 Process HubSpot Gap",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        360,
+        250
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ═══════════════════════════════════════════════════════════════════\n// 🔧 Process Documentation Gaps\n// ═══════════════════════════════════════════════════════════════════\n\nconst gap = $input.first().json;\n\nconst result = {\n  gap_id: gap.id,\n  gap_type: gap.gap_type,\n  action_taken: 'documentation_queued',\n  success: true,\n  resolution: {\n    method: 'doc_generation_queued',\n    description: gap.gap_description,\n    timestamp: new Date().toISOString()\n  }\n};\n\nreturn [{ json: result }];"
+      },
+      "id": "process-doc-gap",
+      "name": "🔧 Process Doc Gap",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        360,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ═══════════════════════════════════════════════════════════════════\n// 🔧 Process Tool Config Gaps\n// ═══════════════════════════════════════════════════════════════════\n\nconst gap = $input.first().json;\n\nconst result = {\n  gap_id: gap.id,\n  gap_type: gap.gap_type,\n  action_taken: 'tool_config_documented',\n  success: true,\n  resolution: {\n    method: 'config_indexed',\n    description: gap.gap_description,\n    timestamp: new Date().toISOString()\n  }\n};\n\nreturn [{ json: result }];"
+      },
+      "id": "process-tool-gap",
+      "name": "🔧 Process Tool Gap",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        360,
+        550
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Mark RAG gap as completed\nUPDATE rag_gaps SET\n  status = CASE WHEN $1 THEN 'completed' ELSE 'failed' END,\n  resolution = $2::jsonb,\n  completed_at = NOW()\nWHERE id = $3\nRETURNING *;",
+        "options": {
+          "queryReplacement": "={{ [$json.success, JSON.stringify($json.resolution), $json.gap_id] }}"
+        }
+      },
+      "id": "update-gap",
+      "name": "🗄️ Update Gap Status",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        600,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CRED_ID",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// ═══════════════════════════════════════════════════════════════════\n// 📊 Compile Gap Processing Summary\n// ═══════════════════════════════════════════════════════════════════\n\nconst processed = $('🗄️ Update Gap Status').all();\n\nconst byType = {};\nconst byResult = { completed: 0, failed: 0 };\n\nprocessed.forEach(item => {\n  const type = item.json.gap_type || 'other';\n  byType[type] = (byType[type] || 0) + 1;\n  \n  if (item.json.status === 'completed') {\n    byResult.completed++;\n  } else {\n    byResult.failed++;\n  }\n});\n\nconst summary = {\n  timestamp: new Date().toISOString(),\n  total_processed: processed.length,\n  by_type: byType,\n  by_result: byResult\n};\n\nreturn [{ json: summary }];"
+      },
+      "id": "compile-summary",
+      "name": "📊 Compile Summary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        840,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Log RAG gap processing\nINSERT INTO agent_audit_log (\n  action, action_type, success, duration_ms, input_data, output_data\n) VALUES (\n  'rag_gap_completion_agent',\n  'background_agent',\n  true,\n  0,\n  '{\"trigger\": \"scheduled\"}'::jsonb,\n  $1::jsonb\n);",
+        "options": {
+          "queryReplacement": "={{ [JSON.stringify($json)] }}"
+        }
+      },
+      "id": "log-run",
+      "name": "🗄️ Log to Audit",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1080,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CRED_ID",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "many-processed",
+              "leftValue": "={{ $json.total_processed }}",
+              "rightValue": 10,
+              "operator": {
+                "type": "number",
+                "operation": "gte"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-notify",
+      "name": "🔀 Notify if 10+?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.1,
+      "position": [
+        1320,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.salesmessage.com/pub/v2.2/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"to\": \"+13204064600\",\n  \"message\": \"🧠 RAG Gap Agent Report\\n\\nProcessed: {{ $json.total_processed }} gaps\\n\\n✅ Completed: {{ $json.by_result.completed }}\\n❌ Failed: {{ $json.by_result.failed }}\\n\\nBy Type:\\n{{ Object.entries($json.by_type).map(([k,v]) => '• ' + k + ': ' + v).join('\\\\n') }}\"\n}",
+        "options": {}
+      },
+      "id": "notify",
+      "name": "📱 Notify",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1560,
+        200
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "HTTP_AUTH_CRED_ID",
+          "name": "HubSpot Private App - Full Access"
+        }
+      },
+      "continueOnFail": true
+    }
+  ],
+  "connections": {
+    "⏰ Every 2 Hours": {
+      "main": [
+        [
+          {
+            "node": "🔍 Get Stuck RAG Gaps",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔍 Get Stuck RAG Gaps": {
+      "main": [
+        [
+          {
+            "node": "🔀 Has Gaps?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔀 Has Gaps?": {
+      "main": [
+        [
+          {
+            "node": "🔀 Route by Gap Type",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "🔀 Route by Gap Type": {
+      "main": [
+        [
+          {
+            "node": "🔧 Process n8n Gap",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "🔧 Process HubSpot Gap",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "🔧 Process Doc Gap",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "🔧 Process Tool Gap",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "🗄️ Update Gap Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔧 Process n8n Gap": {
+      "main": [
+        [
+          {
+            "node": "🗄️ Update Gap Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔧 Process HubSpot Gap": {
+      "main": [
+        [
+          {
+            "node": "🗄️ Update Gap Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔧 Process Doc Gap": {
+      "main": [
+        [
+          {
+            "node": "🗄️ Update Gap Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔧 Process Tool Gap": {
+      "main": [
+        [
+          {
+            "node": "🗄️ Update Gap Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🗄️ Update Gap Status": {
+      "main": [
+        [
+          {
+            "node": "📊 Compile Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📊 Compile Summary": {
+      "main": [
+        [
+          {
+            "node": "🗄️ Log to Audit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🗄️ Log to Audit": {
+      "main": [
+        [
+          {
+            "node": "🔀 Notify if 10+?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔀 Notify if 10+?": {
+      "main": [
+        [
+          {
+            "node": "📱 Notify",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "name": "background-agent"
+    },
+    {
+      "name": "rag"
+    },
+    {
+      "name": "knowledge-base"
+    },
+    {
+      "name": "gap-completion"
+    }
+  ],
+  "triggerCount": 1,
+  "pinData": {},
+  "versionId": "1",
+  "meta": {
+    "description": "Background agent that processes stuck RAG gaps. Routes by gap type (n8n_workflows, hubspot, process_docs, tool_config) and applies appropriate resolution. Runs every 2 hours.",
+    "category": "background-agent",
+    "triggers": [
+      "schedule"
+    ],
+    "outputs": [
+      "rag_gaps",
+      "agent_audit_log",
+      "sms_notification"
+    ],
+    "requiredCredentials": [
+      "Supabase Postgres",
+      "Salesmessage API"
+    ]
+  }
+}

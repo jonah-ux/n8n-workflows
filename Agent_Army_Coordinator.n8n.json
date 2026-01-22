@@ -1,0 +1,508 @@
+{
+  "name": "🤖 Agent Army Coordinator",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 10
+            }
+          ]
+        }
+      },
+      "id": "schedule-trigger",
+      "name": "⏰ Every 10 Minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -1200,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "agents/coordinate",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "🌐 Manual Coordinate",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -1200,
+        600
+      ],
+      "webhookId": "agent-coordinate"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Check agent controls kill switch\nSELECT \n  kill_switch,\n  comms_enabled,\n  write_enabled,\n  jobs_enabled,\n  external_comms_enabled,\n  system_state,\n  updated_at\nFROM agent_controls\nLIMIT 1;",
+        "options": {}
+      },
+      "id": "check-controls",
+      "name": "🛡️ Check Controls",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        -960,
+        500
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CRED_ID",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "not-killed",
+              "leftValue": "={{ $json.kill_switch }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "notEquals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-active",
+      "name": "🔀 System Active?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.1,
+      "position": [
+        -720,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Get comprehensive system status for all agents\nWITH workflow_health AS (\n  SELECT\n    COUNT(*) as total_executions,\n    COUNT(*) FILTER (WHERE status = 'success') as successful,\n    COUNT(*) FILTER (WHERE status = 'error') as failed,\n    MAX(started_at) as last_execution\n  FROM workflow_executions\n  WHERE started_at > NOW() - INTERVAL '1 hour'\n),\npending_work AS (\n  SELECT\n    (SELECT COUNT(*) FROM research_runs WHERE status = 'pending') as pending_research,\n    (SELECT COUNT(*) FROM research_runs WHERE status = 'processing' AND updated_at < NOW() - INTERVAL '30 minutes') as stuck_research,\n    (SELECT COUNT(*) FROM outreach_sequences WHERE status = 'active' AND next_step_date <= NOW()) as pending_outreach_steps,\n    (SELECT COUNT(*) FROM outreach_messages WHERE status = 'pending' AND channel = 'ai_call') as pending_calls,\n    (SELECT COUNT(*) FROM proposals WHERE status = 'pending' AND confidence_score >= 0.7) as actionable_proposals,\n    (SELECT COUNT(*) FROM rag_gaps WHERE status = 'in_progress' AND updated_at < NOW() - INTERVAL '1 hour') as stuck_rag_gaps,\n    (SELECT COUNT(*) FROM communication_queue WHERE status = 'pending') as pending_communications,\n    (SELECT COUNT(*) FROM companies WHERE raw_data->>'last_intelligence_aggregate' IS NULL OR (raw_data->>'last_intelligence_aggregate')::timestamptz < NOW() - INTERVAL '24 hours') as stale_intelligence\n),\nrecent_activity AS (\n  SELECT\n    action,\n    COUNT(*) as count,\n    COUNT(*) FILTER (WHERE success) as success_count,\n    MAX(ts) as last_activity\n  FROM agent_audit_log\n  WHERE ts > NOW() - INTERVAL '1 hour'\n  GROUP BY action\n  ORDER BY count DESC\n  LIMIT 10\n),\nhot_leads AS (\n  SELECT COUNT(*) as hot_lead_count\n  FROM retell_calls\n  WHERE is_hot_lead = true\n  AND created_at > NOW() - INTERVAL '24 hours'\n)\nSELECT \n  json_build_object(\n    'workflow_health', (SELECT row_to_json(workflow_health) FROM workflow_health),\n    'pending_work', (SELECT row_to_json(pending_work) FROM pending_work),\n    'recent_activity', (SELECT json_agg(recent_activity) FROM recent_activity),\n    'hot_leads', (SELECT row_to_json(hot_leads) FROM hot_leads)\n  ) as system_status;",
+        "options": {}
+      },
+      "id": "get-system-status",
+      "name": "🔍 Get System Status",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        -480,
+        400
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CRED_ID",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// ═══════════════════════════════════════════════════════════════════\n// 🧠 Intelligent Agent Coordination Logic\n// ═══════════════════════════════════════════════════════════════════\n\nconst controls = $('🛡️ Check Controls').first().json;\nconst systemStatus = $input.first().json.system_status;\nconst pending = systemStatus.pending_work || {};\nconst workflowHealth = systemStatus.workflow_health || {};\n\nconst now = new Date();\nconst hour = now.getHours();\n\n// Define available agents and their trigger URLs\nconst agents = {\n  research_recovery: {\n    name: 'Research Run Recovery',\n    webhook: '={{$env.N8N_API_URL}}/webhook/research/recovery',\n    priority: 1,\n    condition: () => pending.stuck_research > 5,\n    enabled: controls.jobs_enabled\n  },\n  lead_generation: {\n    name: 'Lead Generation Pipeline',\n    webhook: '={{$env.N8N_API_URL}}/webhook/leads/generate',\n    priority: 2,\n    condition: () => hour >= 6 && hour <= 9 && pending.pending_research < 20,\n    enabled: controls.jobs_enabled && controls.external_comms_enabled\n  },\n  auto_enrichment: {\n    name: 'Auto-Enrichment Processor',\n    webhook: '={{$env.N8N_API_URL}}/webhook/enrichment/process',\n    priority: 3,\n    condition: () => pending.pending_research > 10,\n    enabled: controls.jobs_enabled && controls.external_comms_enabled\n  },\n  outreach_initiator: {\n    name: 'Outreach Sequence Initiator',\n    webhook: '={{$env.N8N_API_URL}}/webhook/outreach/initiate',\n    priority: 4,\n    condition: () => hour >= 9 && hour <= 17,\n    enabled: controls.comms_enabled && controls.external_comms_enabled\n  },\n  outreach_executor: {\n    name: 'Outreach Step Executor',\n    webhook: '={{$env.N8N_API_URL}}/webhook/outreach/execute',\n    priority: 5,\n    condition: () => pending.pending_outreach_steps > 0 && hour >= 9 && hour <= 18,\n    enabled: controls.comms_enabled && controls.external_comms_enabled\n  },\n  retell_initiator: {\n    name: 'Retell AI Call Initiator',\n    webhook: '={{$env.N8N_API_URL}}/webhook/retell/initiate-call',\n    priority: 6,\n    condition: () => pending.pending_calls > 0 && hour >= 10 && hour <= 16,\n    enabled: controls.comms_enabled && controls.external_comms_enabled\n  },\n  proposal_processor: {\n    name: 'Proposal Auto-Processor',\n    webhook: '={{$env.N8N_API_URL}}/webhook/proposals/process',\n    priority: 7,\n    condition: () => pending.actionable_proposals > 5,\n    enabled: controls.write_enabled\n  },\n  rag_completion: {\n    name: 'RAG Gap Completion',\n    webhook: '={{$env.N8N_API_URL}}/webhook/rag/complete',\n    priority: 8,\n    condition: () => pending.stuck_rag_gaps > 10,\n    enabled: controls.write_enabled\n  },\n  intelligence_aggregator: {\n    name: 'Company Intelligence Aggregator',\n    webhook: '={{$env.N8N_API_URL}}/webhook/intelligence/aggregate',\n    priority: 9,\n    condition: () => pending.stale_intelligence > 5,\n    enabled: controls.jobs_enabled\n  },\n  hubspot_connector: {\n    name: 'HubSpot Lead Connector',\n    webhook: '={{$env.N8N_API_URL}}/webhook/hubspot/lead-to-outreach',\n    priority: 10,\n    condition: () => hour >= 8 && hour <= 18,\n    enabled: controls.comms_enabled && controls.external_comms_enabled\n  },\n  learning_loop: {\n    name: 'Learning System Feedback Loop',\n    webhook: '={{$env.N8N_API_URL}}/webhook/learning/feedback',\n    priority: 11,\n    condition: () => hour === 6 || hour === 12 || hour === 18,\n    enabled: controls.jobs_enabled\n  },\n  crm_sync: {\n    name: 'Multi-CRM Sync Engine',\n    webhook: '={{$env.N8N_API_URL}}/webhook/crm/sync',\n    priority: 12,\n    condition: () => hour % 4 === 0,\n    enabled: controls.external_comms_enabled\n  }\n};\n\n// Determine which agents to trigger\nconst agentsToTrigger = [];\nconst agentStatuses = [];\n\nfor (const [key, agent] of Object.entries(agents)) {\n  const shouldTrigger = agent.enabled && agent.condition();\n  \n  agentStatuses.push({\n    agent: key,\n    name: agent.name,\n    enabled: agent.enabled,\n    condition_met: agent.condition(),\n    will_trigger: shouldTrigger,\n    priority: agent.priority\n  });\n  \n  if (shouldTrigger) {\n    agentsToTrigger.push({\n      key,\n      ...agent\n    });\n  }\n}\n\n// Sort by priority and limit concurrent triggers\nagentsToTrigger.sort((a, b) => a.priority - b.priority);\nconst triggeredAgents = agentsToTrigger.slice(0, 5); // Max 5 concurrent\n\n// Calculate system health score\nlet healthScore = 100;\nif (workflowHealth.failed > workflowHealth.successful * 0.1) healthScore -= 20;\nif (pending.stuck_research > 10) healthScore -= 15;\nif (pending.stuck_rag_gaps > 20) healthScore -= 10;\nif (pending.pending_communications > 50) healthScore -= 10;\n\nreturn [{\n  json: {\n    coordination_time: now.toISOString(),\n    hour,\n    controls,\n    system_status: systemStatus,\n    health_score: Math.max(0, healthScore),\n    agent_statuses: agentStatuses,\n    triggered_agents: triggeredAgents,\n    trigger_count: triggeredAgents.length,\n    pending_work_summary: pending\n  }\n}];"
+      },
+      "id": "coordinate-agents",
+      "name": "🧠 Coordinate Agents",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -240,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "has-triggers",
+              "leftValue": "={{ $json.trigger_count }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "has-triggers",
+      "name": "🔀 Has Triggers?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ═══════════════════════════════════════════════════════════════════\n// 🚀 Prepare Agent Trigger Requests\n// ═══════════════════════════════════════════════════════════════════\n\nconst coordination = $input.first().json;\nconst triggers = [];\n\nfor (const agent of coordination.triggered_agents) {\n  triggers.push({\n    json: {\n      agent_key: agent.key,\n      agent_name: agent.name,\n      webhook_url: agent.webhook,\n      priority: agent.priority,\n      triggered_at: coordination.coordination_time,\n      context: {\n        hour: coordination.hour,\n        health_score: coordination.health_score,\n        pending_work: coordination.pending_work_summary\n      }\n    }\n  });\n}\n\nreturn triggers;"
+      },
+      "id": "prepare-triggers",
+      "name": "🚀 Prepare Triggers",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.webhook_url }}",
+        "authentication": "none",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"triggered_by\": \"agent_army_coordinator\",\n  \"context\": {{ JSON.stringify($json.context) }}\n}",
+        "options": {
+          "timeout": 5000
+        }
+      },
+      "id": "trigger-agent",
+      "name": "🎯 Trigger Agent",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        480,
+        300
+      ],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Record agent trigger\nINSERT INTO agent_audit_log (\n  action, action_type, success, output_data\n) VALUES (\n  'agent_triggered',\n  'coordination',\n  $1,\n  $2::jsonb\n);",
+        "options": {
+          "queryReplacement": "={{ [$('🎯 Trigger Agent').first().json.error ? false : true ,  JSON.stringify({agent: $('🚀 Prepare Triggers').first().json.agent_name, webhook: $('🚀 Prepare Triggers').first().json.webhook_url, response_status: $('🎯 Trigger Agent').first().json.statusCode || 'unknown'})] }}"
+        }
+      },
+      "id": "log-trigger",
+      "name": "🗄️ Log Trigger",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        720,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CRED_ID",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Log coordination cycle\nINSERT INTO agent_audit_log (\n  action, action_type, success, output_data\n) VALUES (\n  'agent_army_coordination',\n  'coordination',\n  true,\n  $1::jsonb\n);",
+        "options": {
+          "queryReplacement": "={{ [JSON.stringify({health_score: $('🧠 Coordinate Agents').first().json.health_score, agents_triggered: $('🧠 Coordinate Agents').first().json.trigger_count, hour: $('🧠 Coordinate Agents').first().json.hour, pending_summary: $('🧠 Coordinate Agents').first().json.pending_work_summary})] }}"
+        }
+      },
+      "id": "log-coordination",
+      "name": "🗄️ Log Coordination",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        240,
+        500
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CRED_ID",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "critical",
+              "leftValue": "={{ $('🧠 Coordinate Agents').first().json.health_score }}",
+              "rightValue": 50,
+              "operator": {
+                "type": "number",
+                "operation": "lt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-critical",
+      "name": "🔀 Critical Health?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.1,
+      "position": [
+        480,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.salesmessage.com/pub/v2.2/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"to\": \"+13204064600\",\n  \"message\": \"🚨 AGENT ARMY CRITICAL\\n\\nHealth Score: {{ $('🧠 Coordinate Agents').first().json.health_score }}/100\\n\\nPending Work:\\n- Stuck Research: {{ $('🧠 Coordinate Agents').first().json.pending_work_summary.stuck_research }}\\n- Stuck RAG: {{ $('🧠 Coordinate Agents').first().json.pending_work_summary.stuck_rag_gaps }}\\n- Pending Calls: {{ $('🧠 Coordinate Agents').first().json.pending_work_summary.pending_calls }}\\n\\nAgents Triggered: {{ $('🧠 Coordinate Agents').first().json.trigger_count }}\\n\\nImmediate attention required!\"\n}",
+        "options": {}
+      },
+      "id": "alert-critical",
+      "name": "🚨 Alert Critical",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        720,
+        500
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "HTTP_AUTH_CRED_ID",
+          "name": "HubSpot Private App - Full Access"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Log kill switch hit\nINSERT INTO agent_audit_log (\n  action, action_type, success, output_data\n) VALUES (\n  'kill_switch_active',\n  'safety',\n  true,\n  '{\"message\": \"Agent coordination blocked by kill switch\"}'::jsonb\n);",
+        "options": {}
+      },
+      "id": "log-killed",
+      "name": "🗄️ Log Killed",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        -480,
+        700
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CRED_ID",
+          "name": "Postgres account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "⏰ Every 10 Minutes": {
+      "main": [
+        [
+          {
+            "node": "🛡️ Check Controls",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🌐 Manual Coordinate": {
+      "main": [
+        [
+          {
+            "node": "🛡️ Check Controls",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🛡️ Check Controls": {
+      "main": [
+        [
+          {
+            "node": "🔀 System Active?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔀 System Active?": {
+      "main": [
+        [
+          {
+            "node": "🔍 Get System Status",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "🗄️ Log Killed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔍 Get System Status": {
+      "main": [
+        [
+          {
+            "node": "🧠 Coordinate Agents",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🧠 Coordinate Agents": {
+      "main": [
+        [
+          {
+            "node": "🔀 Has Triggers?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔀 Has Triggers?": {
+      "main": [
+        [
+          {
+            "node": "🚀 Prepare Triggers",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "🗄️ Log Coordination",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🚀 Prepare Triggers": {
+      "main": [
+        [
+          {
+            "node": "🎯 Trigger Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🎯 Trigger Agent": {
+      "main": [
+        [
+          {
+            "node": "🗄️ Log Trigger",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🗄️ Log Trigger": {
+      "main": [
+        [
+          {
+            "node": "🗄️ Log Coordination",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🗄️ Log Coordination": {
+      "main": [
+        [
+          {
+            "node": "🔀 Critical Health?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔀 Critical Health?": {
+      "main": [
+        [
+          {
+            "node": "🚨 Alert Critical",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "name": "coordinator"
+    },
+    {
+      "name": "agent-army"
+    },
+    {
+      "name": "orchestration"
+    },
+    {
+      "name": "background-agent"
+    }
+  ],
+  "triggerCount": 2,
+  "pinData": {},
+  "versionId": "1",
+  "meta": {
+    "description": "The supreme coordinator that manages all background agents. Runs every 10 minutes, checks system status and pending work, then intelligently triggers appropriate agents based on conditions, time of day, and system health. Respects kill switches and feature flags.",
+    "category": "orchestration",
+    "triggers": [
+      "schedule",
+      "webhook"
+    ],
+    "outputs": [
+      "agent_audit_log",
+      "sms_alert"
+    ],
+    "requiredCredentials": [
+      "Supabase Postgres",
+      "Salesmessage API"
+    ],
+    "notes": "Replace YOUR_N8N_INSTANCE with your actual n8n instance URL"
+  }
+}

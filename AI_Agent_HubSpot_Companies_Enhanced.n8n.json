@@ -1,0 +1,1242 @@
+{
+  "name": "AI Agent - HubSpot Companies (Enhanced)",
+  "nodes": [
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "request_id",
+              "type": "string"
+            },
+            {
+              "name": "session_id",
+              "type": "string"
+            },
+            {
+              "name": "chat_id",
+              "type": "string"
+            },
+            {
+              "name": "user_id",
+              "type": "string"
+            },
+            {
+              "name": "user_message",
+              "type": "string"
+            },
+            {
+              "name": "object_type",
+              "type": "string"
+            },
+            {
+              "name": "object_id",
+              "type": "string"
+            },
+            {
+              "name": "company_id",
+              "type": "string"
+            },
+            {
+              "name": "contact_id",
+              "type": "string"
+            },
+            {
+              "name": "deal_id",
+              "type": "string"
+            },
+            {
+              "name": "caller_workflow_id",
+              "type": "string"
+            },
+            {
+              "name": "caller_execution_id",
+              "type": "string"
+            },
+            {
+              "name": "tool_name",
+              "type": "string"
+            },
+            {
+              "name": "dry_run",
+              "type": "boolean"
+            },
+            {
+              "name": "conversation_id",
+              "type": "string"
+            },
+            {
+              "name": "hs_portal_id",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "id": "trigger-1",
+      "name": "When Executed by Another Workflow",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        -800,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\n\nconst nowIso = new Date().toISOString();\nconst startedMs = Date.now();\n\nconst tool_name = input.tool_name || 'hubspot.companies';\nconst dry_run = (input.dry_run === undefined || input.dry_run === null) ? true : !!input.dry_run;\n\nconst q = (v) => (v === undefined || v === null || v === '') ? null : String(v);\n\nconst note_scope = 'hubspot';\nconst note_key = input.company_id \n  ? `company.${input.company_id}` \n  : (input.object_type && input.object_id ? `${input.object_type}.${input.object_id}` : 'companies.unknown');\n\nconst payload_for_log = {\n  ...input,\n  tool_name,\n  dry_run,\n  note_scope,\n  note_key,\n  started_at: nowIso,\n  _started_ms: startedMs\n};\n\n// Parameterized SQL for log_start\nconst log_start_sql = `\nINSERT INTO tool_execution_log (\n  tool_name,\n  input_data,\n  success,\n  conversation_id,\n  user_id,\n  required_approval\n)\nVALUES ($1, $2::jsonb, false, $3, $4, $5)\nRETURNING id;\n`;\n\nconst log_start_params = [\n  tool_name,\n  JSON.stringify(payload_for_log),\n  q(input.conversation_id),\n  q(input.user_id),\n  !dry_run\n];\n\n// Parameterized SQL for context loading\nconst ctx_sql = `\nSELECT jsonb_build_object(\n  'hubspot_company', (\n    SELECT to_jsonb(c)\n    FROM hubspot_companies c\n    WHERE c.id = $1\n    LIMIT 1\n  ),\n  'associated_contacts', (\n    SELECT COALESCE(jsonb_agg(ct), '[]'::jsonb)\n    FROM hubspot_contacts ct\n    WHERE ct.id = $2\n    LIMIT 5\n  ),\n  'agent_notes', (\n    SELECT COALESCE(jsonb_agg(n ORDER BY n.updated_at DESC), '[]'::jsonb)\n    FROM agent_notes n\n    WHERE n.scope = $3\n      AND n.note_key = $4\n    LIMIT 10\n  ),\n  'company_properties_sample', (\n    SELECT jsonb_agg(p.attrs->'properties')\n    FROM hubspot_companies p\n    LIMIT 3\n  )\n) AS context;\n`;\n\nconst ctx_params = [\n  q(input.company_id),\n  q(input.contact_id),\n  note_scope,\n  note_key\n];\n\nreturn [{\n  json: {\n    ...payload_for_log,\n    log_start_sql,\n    log_start_params,\n    ctx_sql,\n    ctx_params\n  }\n}];"
+      },
+      "id": "normalize-1",
+      "name": "Normalize + Build SQL",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -560,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{$json.log_start_sql}}",
+        "options": {
+          "queryReplacement": "={{ $json.log_start_params }}"
+        }
+      },
+      "id": "log-start-1",
+      "name": "Log Start (tool_execution_log)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        -320,
+        -80
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CRED_ID",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{$json.ctx_sql}}",
+        "options": {
+          "queryReplacement": "={{ $json.ctx_params }}"
+        }
+      },
+      "id": "load-context-1",
+      "name": "Load Context",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        -320,
+        80
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CRED_ID",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const base = $('Normalize + Build SQL').first().json;\n\nconst logStart = $('Log Start (tool_execution_log)').first().json;\nconst tool_execution_id = (logStart && logStart.id) ? logStart.id : null;\n\nconst ctxRows = $('Load Context').first().json;\nconst context_pack = (ctxRows && ctxRows.context) ? ctxRows.context : {};\n\nreturn [{\n  json: {\n    ...base,\n    tool_execution_id,\n    context_pack\n  }\n}];"
+      },
+      "id": "assemble-1",
+      "name": "Assemble Context Pack",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -80,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "text": "={{ \n[\n  \"USER_REQUEST:\",\n  ($json.user_message || \"\").toString(),\n  \"\",\n  \"RUNTIME:\",\n  JSON.stringify({\n    tool_name: $json.tool_name || \"hubspot.companies\",\n    dry_run: $json.dry_run ?? true,\n    session_id: $json.session_id,\n    request_id: $json.request_id,\n    conversation_id: $json.conversation_id,\n    company_id: $json.company_id,\n    contact_id: $json.contact_id,\n    deal_id: $json.deal_id,\n    user_id: $json.user_id,\n    caller_workflow_id: $json.caller_workflow_id,\n    caller_execution_id: $json.caller_execution_id\n  }, null, 2),\n  \"\",\n  \"CONTEXT_PACK (DB):\",\n  JSON.stringify($json.context_pack ?? {}, null, 2)\n].join(\"\\n\")\n}}\n",
+        "options": {
+          "maxIterations": 15,
+          "systemMessage": "You are the HubSpot COMPANIES Agent.\n\nYour job:\n- Manage HubSpot companies: list, search, create, update, delete, merge, associate.\n- Return ONLY valid JSON in the specified output schema.\n\nINPUTS YOU RECEIVE:\n- USER_REQUEST (plain text)\n- RUNTIME (json): includes tool_name, dry_run, ids\n- CONTEXT_PACK (json): database context if available\n\nHARD RULES:\n1) Always use tools for factual data. Do NOT guess.\n2) DRY RUN ENFORCEMENT:\n   - If runtime.dry_run is true: DO NOT call ANY write tools (Create, Update, Delete, Merge, Associate).\n   - If the user requests a write and dry_run=true: return a proposed plan + exact tool + payload, but do not execute.\n3) If a required argument is missing (ex: companyId, domain, name), ask for it in errors[] and do not call the tool.\n\nAVAILABLE TOOLS (USE THESE NAMES EXACTLY):\nREAD OPERATIONS:\n- List All Companies - Get paginated list of all companies\n- Get Company by ID - Get a specific company by record ID\n- Get Company by Domain - Get a company using domain as identifier\n- Search Companies - Search companies with filters and full-text query\n- List Company Properties - Get all company property definitions\n- Get Company Associations - Get contacts/deals/tickets associated with a company\n- Get Company Timeline - Get activity timeline for a company\n- Get Company Property History - Get historical values of properties over time (uses HubSpot's native propertiesWithHistory)\n\nBATCH READ OPERATIONS:\n- Batch Read Companies - Read multiple companies by ID in one call\n\nWRITE OPERATIONS (ONLY IF dry_run=false AND user explicitly requested):\n- Create Company - Create a new company (domain is primary unique identifier)\n- Update Company - Update company properties by ID\n- Delete Company - Delete a company (moves to recycle bin)\n- Merge Companies - Merge two companies into one\n- Associate Company - Link company to contact/deal/ticket\n- Remove Company Association - Unlink company from another object\n\nBATCH WRITE OPERATIONS:\n- Batch Create Companies - Create multiple companies at once\n- Batch Update Companies - Update multiple companies at once\n- Batch Archive Companies - Delete multiple companies at once\n\nINTER-AGENT TOOLS (Delegate to specialized agents):\n- Call Contacts Agent - Look up contacts associated with company\n- Call Deals Agent - Look up deals associated with company\n- Call Engagements Agent - Log notes, create tasks, view activity history on company\n\nCOMMON COMPANY PROPERTIES:\n- name (company name)\n- domain (primary unique identifier - prevents duplicates)\n- hs_additional_domains (additional company domains)\n- phone, address, city, state, zip, country\n- industry, type, numberofemployees, annualrevenue\n- hubspot_owner_id (assigned rep)\n- lifecyclestage\n- website, description\n- createdate, hs_lastmodifieddate\n\nSEARCH OPERATORS:\n- EQ, NEQ, LT, LTE, GT, GTE\n- CONTAINS_TOKEN, NOT_CONTAINS_TOKEN\n- HAS_PROPERTY, NOT_HAS_PROPERTY\n- BETWEEN, IN, NOT_IN\n\nIMPORTANT NOTES:\n- Domain is the PRIMARY unique identifier to avoid duplicate companies\n- Use hs_additional_domains field for companies with multiple domains\n- When creating, always check if company with that domain exists first\n\nOUTPUT FORMAT (RETURN JSON ONLY):\n{\n  \"summary\": \"short human summary\",\n  \"data\": { \"any\": \"tool results or extracted fields\" },\n  \"tool_calls\": [\n    { \"tool\": \"Tool Name\", \"arguments\": { } }\n  ],\n  \"errors\": [\n    { \"code\": \"MISSING_ARG|DRY_RUN_BLOCK|TOOL_ERROR\", \"message\": \"...\" }\n  ],\n  \"notes_to_save\": null\n}"
+        },
+        "promptType": "define"
+      },
+      "id": "agent-1",
+      "name": "AI Agent - Companies",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        160,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "list",
+          "value": "gpt-4o",
+          "cachedResultName": "gpt-4o"
+        },
+        "options": {}
+      },
+      "id": "llm-1",
+      "name": "OpenAI Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [
+        -80,
+        200
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "OPENAI_CRED_ID",
+          "name": "OpenAI API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sessionKey": "session_id",
+        "sessionIdType": "customKey"
+      },
+      "id": "memory-1",
+      "name": "Memory",
+      "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
+      "typeVersion": 1.3,
+      "position": [
+        40,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://api.hubapi.com/crm/v3/objects/companies",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "specifyQuery": "json",
+        "options": {},
+        "toolDescription": "List all companies from HubSpot. Returns paginated results. Use query params: limit (max 100), after (pagination cursor), properties (comma-separated list), associations."
+      },
+      "id": "tool-list-companies",
+      "name": "List All Companies",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        160,
+        200
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "=https://api.hubapi.com/crm/v3/objects/companies/{{ $json.companyId || $json.id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "specifyQuery": "json",
+        "options": {},
+        "toolDescription": "Get a specific company by record ID. Use query params: properties (comma-separated), propertiesWithHistory, associations."
+      },
+      "id": "tool-get-company",
+      "name": "Get Company by ID",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        280,
+        200
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.hubapi.com/crm/v3/objects/companies/search",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "contentType": "json",
+        "options": {},
+        "toolDescription": "Search companies using filters. Body: {query: 'text search', filterGroups: [{filters: [{propertyName, operator, value}]}], sorts: [{propertyName, direction}], properties: [], limit, after}. Use filterGroups with propertyName='domain' to find by domain."
+      },
+      "id": "tool-search-companies",
+      "name": "Search Companies",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        400,
+        200
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "https://api.hubapi.com/crm/v3/properties/companies",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {},
+        "toolDescription": "List all company property definitions including standard and custom properties. Returns name, label, type, fieldType, groupName, options for enumeration types."
+      },
+      "id": "tool-list-props",
+      "name": "List Company Properties",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        520,
+        200
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "=https://api.hubapi.com/crm/v4/objects/companies/{{ $json.companyId }}/associations/{{ $json.toObjectType || 'contacts' }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "specifyQuery": "json",
+        "options": {},
+        "toolDescription": "Get associations for a company. Specify companyId and toObjectType (contacts, deals, tickets, etc). Returns associated object IDs and association types."
+      },
+      "id": "tool-get-assoc",
+      "name": "Get Company Associations",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        640,
+        200
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "=https://api.hubapi.com/crm/v3/objects/companies/{{ $json.companyId }}/timeline",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "specifyQuery": "json",
+        "options": {},
+        "toolDescription": "Get timeline/activity history for a company. Shows engagement events, property changes, contact associations, deal activities."
+      },
+      "id": "tool-company-timeline",
+      "name": "Get Company Timeline",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        760,
+        200
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.hubapi.com/crm/v3/objects/companies/batch/read",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "contentType": "json",
+        "options": {},
+        "toolDescription": "Batch read multiple companies. Body: {inputs: [{id: 'companyId'}], properties: ['prop1', 'prop2']}. More efficient than multiple single reads. Max 100 per batch."
+      },
+      "id": "tool-batch-read",
+      "name": "Batch Read Companies",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        880,
+        200
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.hubapi.com/crm/v3/objects/companies",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "contentType": "json",
+        "options": {},
+        "toolDescription": "CREATE a new company. Body: {properties: {name, domain, phone, industry, ...}, associations: [{to: {id}, types: [{associationCategory, associationTypeId}]}]}. Domain is primary unique identifier - check for existing before creating. WRITE OPERATION - respect dry_run."
+      },
+      "id": "tool-create-company",
+      "name": "Create Company",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        160,
+        360
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://api.hubapi.com/crm/v3/objects/companies/{{ $json.companyId || $json.id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "contentType": "json",
+        "options": {},
+        "toolDescription": "UPDATE a company by ID. Body: {properties: {key: value, ...}}. Can update any writable property. WRITE OPERATION - respect dry_run."
+      },
+      "id": "tool-update-company",
+      "name": "Update Company",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        280,
+        360
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "DELETE",
+        "url": "=https://api.hubapi.com/crm/v3/objects/companies/{{ $json.companyId || $json.id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {},
+        "toolDescription": "DELETE a company by ID. Moves company to recycle bin (can be restored within 90 days). DESTRUCTIVE WRITE OPERATION - respect dry_run."
+      },
+      "id": "tool-delete-company",
+      "name": "Delete Company",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        400,
+        360
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.hubapi.com/crm/v3/objects/companies/merge",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "contentType": "json",
+        "options": {},
+        "toolDescription": "MERGE two companies. Body: {primaryObjectId: 'companyIdToKeep', objectIdToMerge: 'companyIdToArchive'}. Primary company is kept, secondary is merged into it and archived. All associations are transferred. DESTRUCTIVE WRITE OPERATION - respect dry_run."
+      },
+      "id": "tool-merge-companies",
+      "name": "Merge Companies",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        520,
+        360
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "=https://api.hubapi.com/crm/v4/objects/companies/{{ $json.companyId }}/associations/{{ $json.toObjectType }}/{{ $json.toObjectId }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "contentType": "json",
+        "options": {},
+        "toolDescription": "Associate a company with another object. Body: [{associationCategory: 'HUBSPOT_DEFINED', associationTypeId: number}]. Common types: company_to_contact (2), company_to_deal (5). WRITE OPERATION - respect dry_run."
+      },
+      "id": "tool-assoc-company",
+      "name": "Associate Company",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        640,
+        360
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "DELETE",
+        "url": "=https://api.hubapi.com/crm/v4/objects/companies/{{ $json.companyId }}/associations/{{ $json.toObjectType }}/{{ $json.toObjectId }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {},
+        "toolDescription": "Remove association between a company and another object. WRITE OPERATION - respect dry_run."
+      },
+      "id": "tool-remove-assoc",
+      "name": "Remove Company Association",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        760,
+        360
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.hubapi.com/crm/v3/objects/companies/batch/create",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "contentType": "json",
+        "options": {},
+        "toolDescription": "Batch create multiple companies. Body: {inputs: [{properties: {...}, associations: [...]}]}. Max 100 per batch. WRITE OPERATION - respect dry_run."
+      },
+      "id": "tool-batch-create",
+      "name": "Batch Create Companies",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        880,
+        360
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.hubapi.com/crm/v3/objects/companies/batch/update",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "contentType": "json",
+        "options": {},
+        "toolDescription": "Batch update multiple companies. Body: {inputs: [{id: 'companyId', properties: {...}}]}. Max 100 per batch. WRITE OPERATION - respect dry_run."
+      },
+      "id": "tool-batch-update",
+      "name": "Batch Update Companies",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        160,
+        520
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.hubapi.com/crm/v3/objects/companies/batch/archive",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "contentType": "json",
+        "options": {},
+        "toolDescription": "Batch delete multiple companies. Body: {inputs: [{id: 'companyId'}]}. Moves to recycle bin. Max 100 per batch. DESTRUCTIVE WRITE OPERATION - respect dry_run."
+      },
+      "id": "tool-batch-archive",
+      "name": "Batch Archive Companies",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        280,
+        520
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "https://api.hubapi.com/crm/v3/owners",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "specifyQuery": "json",
+        "options": {},
+        "toolDescription": "List all HubSpot owners (users) that can be assigned to companies. Returns id, email, firstName, lastName."
+      },
+      "id": "tool-list-owners",
+      "name": "List Owners",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        400,
+        520
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "https://api.hubapi.com/crm/v4/associations/companies/contacts/labels",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {},
+        "toolDescription": "Get available association types/labels between companies and contacts. Returns associationTypeId values needed for creating associations."
+      },
+      "id": "tool-assoc-labels",
+      "name": "Get Company-Contact Association Types",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        520,
+        520
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "=https://api.hubapi.com/crm/v3/properties/companies/{{ $json.propertyName }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {},
+        "toolDescription": "Get details about a specific company property including options for enumeration properties (like industry, type)."
+      },
+      "id": "tool-get-property",
+      "name": "Get Company Property",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        640,
+        520
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "=https://api.hubapi.com/crm/v3/objects/companies/{{ $json.companyId || $json.id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "specifyQuery": "json",
+        "jsonQuery": "={{ JSON.stringify({ propertiesWithHistory: $json.properties || 'name,domain,industry,numberofemployees,annualrevenue,lifecyclestage,hubspot_owner_id' }) }}",
+        "options": {},
+        "toolDescription": "Get PROPERTY HISTORY for a company. Returns the historical values of specified properties showing how they changed over time. Specify companyId and properties (comma-separated list of property names to get history for). Common properties to track: name, domain, industry, numberofemployees, annualrevenue, lifecyclestage, hubspot_owner_id. Returns each property's history with timestamp, value, sourceType, sourceId."
+      },
+      "id": "tool-get-property-history",
+      "name": "Get Company Property History",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        760,
+        520
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "name": "Call Contacts Agent",
+        "description": "Call the HubSpot Contacts Agent to look up contacts associated with a company or search for contacts.",
+        "workflowId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "bX-PPv4n2Utwj1Mj7JHYR",
+          "cachedResultName": "AI Agent - HubSpot Contacts"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "request_id": "={{ $execution.id }}",
+            "session_id": "={{ $json.session_id || '' }}",
+            "chat_id": "={{ $json.chat_id || '' }}",
+            "user_id": "={{ $json.user_id || '' }}",
+            "user_message": "={{ $fromAI('request', 'What to ask the Contacts Agent') }}",
+            "object_type": "contacts",
+            "contact_id": "={{ $json.contact_id || '' }}",
+            "company_id": "={{ $json.company_id || '' }}",
+            "deal_id": "={{ $json.deal_id || '' }}",
+            "conversation_id": "={{ $json.conversation_id || $execution.id }}",
+            "dry_run": "={{ $json.dry_run ?? true }}",
+            "caller_workflow_id": "={{ $workflow.id }}",
+            "caller_execution_id": "={{ $execution.id }}",
+            "tool_name": "hubspot.contacts"
+          }
+        }
+      },
+      "id": "tool-call-contacts",
+      "name": "Call Contacts Agent",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.1,
+      "position": [
+        160,
+        680
+      ]
+    },
+    {
+      "parameters": {
+        "name": "Call Deals Agent",
+        "description": "Call the HubSpot Deals Agent to look up deals associated with a company.",
+        "workflowId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "4J19cZdd4aLVDxOZCwmKB",
+          "cachedResultName": "AI Agent - HubSpot Deals"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "request_id": "={{ $execution.id }}",
+            "session_id": "={{ $json.session_id || '' }}",
+            "chat_id": "={{ $json.chat_id || '' }}",
+            "user_id": "={{ $json.user_id || '' }}",
+            "user_message": "={{ $fromAI('request', 'What to ask the Deals Agent') }}",
+            "object_type": "deals",
+            "contact_id": "={{ $json.contact_id || '' }}",
+            "company_id": "={{ $json.company_id || '' }}",
+            "deal_id": "={{ $json.deal_id || '' }}",
+            "conversation_id": "={{ $json.conversation_id || $execution.id }}",
+            "dry_run": "={{ $json.dry_run ?? true }}",
+            "caller_workflow_id": "={{ $workflow.id }}",
+            "caller_execution_id": "={{ $execution.id }}",
+            "tool_name": "hubspot.deals"
+          }
+        }
+      },
+      "id": "tool-call-deals",
+      "name": "Call Deals Agent",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.1,
+      "position": [
+        280,
+        680
+      ]
+    },
+    {
+      "parameters": {
+        "name": "Call Engagements Agent",
+        "description": "Call the HubSpot Engagements Agent to log notes, create tasks, view activity history, or manage communications on a company.",
+        "workflowId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "N10BUVD9S-4ZyIsEtnKfp",
+          "cachedResultName": "AI Agent - HubSpot Engagements"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "request_id": "={{ $execution.id }}",
+            "session_id": "={{ $json.session_id || '' }}",
+            "chat_id": "={{ $json.chat_id || '' }}",
+            "user_id": "={{ $json.user_id || '' }}",
+            "user_message": "={{ $fromAI('request', 'What to ask the Engagements Agent') }}",
+            "object_type": "engagements",
+            "contact_id": "={{ $json.contact_id || '' }}",
+            "company_id": "={{ $json.company_id || '' }}",
+            "deal_id": "={{ $json.deal_id || '' }}",
+            "conversation_id": "={{ $json.conversation_id || $execution.id }}",
+            "dry_run": "={{ $json.dry_run ?? true }}",
+            "caller_workflow_id": "={{ $workflow.id }}",
+            "caller_execution_id": "={{ $execution.id }}",
+            "tool_name": "hubspot.engagements"
+          }
+        }
+      },
+      "id": "tool-call-engagements",
+      "name": "Call Engagements Agent",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.1,
+      "position": [
+        400,
+        680
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const base = $('Assemble Context Pack').first().json;\n\nconst started = Number(base._started_ms || Date.now());\nconst duration_ms = Math.max(0, Date.now() - started);\n\nlet agentRaw = $('AI Agent - Companies').first().json;\n\nconst coerceJson = (val) => {\n  if (val === null || val === undefined) return null;\n  if (typeof val === 'object') return val;\n  if (typeof val !== 'string') return { value: val };\n  const s = val.trim().replace(/^```json\\s*/i, '').replace(/```$/,'').trim();\n  try { return JSON.parse(s); } catch { return { raw: val }; }\n};\n\nconst agentOut = coerceJson(agentRaw.output ?? agentRaw.text ?? agentRaw);\n\nconst ok = !(agentOut?.errors && agentOut.errors.length);\n\nconst final = {\n  ok,\n  tool_name: base.tool_name,\n  tool_execution_id: base.tool_execution_id,\n  session_id: base.session_id,\n  conversation_id: base.conversation_id,\n  dry_run: base.dry_run,\n  summary: agentOut?.summary ?? (ok ? 'ok' : 'error'),\n  data: agentOut?.data ?? null,\n  tool_calls: agentOut?.tool_calls ?? [],\n  errors: agentOut?.errors ?? [],\n  notes_to_save: agentOut?.notes_to_save ?? null,\n  context_used: base.context_pack ?? {},\n  duration_ms\n};\n\n// Parameterized SQL for log_end\nfinal.log_end_sql = `\nUPDATE tool_execution_log\nSET\n  output_data = $1::jsonb,\n  success = $2,\n  error = $3,\n  duration_ms = $4\nWHERE id = $5::uuid\nRETURNING *;\n`;\n\nfinal.log_end_params = [\n  JSON.stringify(final),\n  final.ok,\n  (final.errors && final.errors.length) ? JSON.stringify(final.errors) : null,\n  Number.isFinite(final.duration_ms) ? final.duration_ms : null,\n  base.tool_execution_id\n];\n\nreturn [{ json: final }];"
+      },
+      "id": "parse-output-1",
+      "name": "Parse + Finalize Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        400,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{$json.log_end_sql}}",
+        "options": {
+          "queryReplacement": "={{ $json.log_end_params }}"
+        }
+      },
+      "id": "log-end-1",
+      "name": "Log End (tool_execution_log)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        640,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CRED_ID",
+          "name": "Postgres account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "When Executed by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "Normalize + Build SQL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize + Build SQL": {
+      "main": [
+        [
+          {
+            "node": "Log Start (tool_execution_log)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Load Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Start (tool_execution_log)": {
+      "main": [
+        [
+          {
+            "node": "Assemble Context Pack",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Context": {
+      "main": [
+        [
+          {
+            "node": "Assemble Context Pack",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Assemble Context Pack": {
+      "main": [
+        [
+          {
+            "node": "AI Agent - Companies",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent - Companies": {
+      "main": [
+        [
+          {
+            "node": "Parse + Finalize Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse + Finalize Output": {
+      "main": [
+        [
+          {
+            "node": "Log End (tool_execution_log)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent - Companies",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Memory": {
+      "ai_memory": [
+        [
+          {
+            "node": "AI Agent - Companies",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "List All Companies": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Companies",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Company by ID": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Companies",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Search Companies": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Companies",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "List Company Properties": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Companies",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Company Associations": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Companies",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Company Timeline": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Companies",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Batch Read Companies": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Companies",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Company": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Companies",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Company": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Companies",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Delete Company": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Companies",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Companies": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Companies",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Associate Company": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Companies",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Remove Company Association": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Companies",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Batch Create Companies": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Companies",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Batch Update Companies": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Companies",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Batch Archive Companies": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Companies",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "List Owners": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Companies",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Company-Contact Association Types": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Companies",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Company Property": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Companies",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Company Property History": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Companies",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Contacts Agent": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Companies",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Deals Agent": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Companies",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Engagements Agent": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Companies",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": [],
+  "pinData": {}
+}

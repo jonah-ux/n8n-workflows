@@ -1,0 +1,339 @@
+{
+  "_meta": {
+    "workflowName": "Notion SOP Publisher Sub-Workflow",
+    "workflowId": "1BAUctVezBekO60x",
+    "purpose": "Publishes SOPs to Notion database - creates new pages or updates existing ones based on SOP Name lookup",
+    "category": "Knowledge Management",
+    "trigger": "Sub-workflow (called by other workflows)",
+    "lastFixedAt": "2026-01-17T04:10:17.245Z",
+    "fixedBy": "Claude Code",
+    "notionDatabase": "5daa56637e0043f0a86f64bc1ed34dfb",
+
+    "changelog": [
+      {
+        "date": "2026-01-17",
+        "version": 28,
+        "action": "Major Fix",
+        "summary": "Fixed 5 validation errors, upgraded node versions, added error handling",
+        "details": {
+          "errorsFixed": [
+            {
+              "node": "IF Missing Required Fields",
+              "problem": "isEmpty operator invalid for string type in IF node v2",
+              "fix": "Changed to 'empty' operator with proper structure, upgraded to v2.3, added onError handling"
+            },
+            {
+              "node": "Search Existing SOP by Name",
+              "problem": "Database ID passed as plain string, Notion node expects __rl object format",
+              "fix": "Converted to { __rl: true, mode: 'id', value: 'db-id' } format, added proper filter structure"
+            },
+            {
+              "node": "IF Found Existing Page",
+              "problem": "'greater' operator checking $json.results.length - but Notion getAll returns items directly, not wrapped in results array",
+              "fix": "Changed to 'exists' check on $json.id (the actual returned item), upgraded to v2.3"
+            },
+            {
+              "node": "Create Notion Page",
+              "problem": "Wrong operation set, empty pageId value",
+              "fix": "Set operation to 'create', added database ID as parent, added propertiesUi for SOP Name, Status, Category"
+            },
+            {
+              "node": "Update Notion Page",
+              "problem": "Missing pageId - node didn't know which page to update",
+              "fix": "Added pageId expression referencing Search node: $('Search Existing SOP by Name').item.json.id"
+            }
+          ],
+          "upgradesApplied": [
+            "IF nodes: v2 → v2.3 (better operator handling)",
+            "Notion nodes: v2 → v2.2 (improved resource locator)"
+          ],
+          "errorHandlingAdded": [
+            "All IF nodes: onError: 'continueErrorOutput'",
+            "All Notion nodes: onError: 'continueRegularOutput'"
+          ]
+        }
+      },
+      {
+        "date": "2026-01-16",
+        "version": 1,
+        "action": "Initial Creation",
+        "summary": "Created sub-workflow for Notion SOP publishing"
+      }
+    ],
+
+    "inputSchema": {
+      "required": ["sopId", "sopName"],
+      "optional": ["status", "category", "priority", "tags", "quickSummary", "source", "version", "content"],
+      "example": {
+        "sopId": "SOP-001",
+        "sopName": "Customer Onboarding Process",
+        "status": "Draft",
+        "category": "Operations",
+        "priority": "High",
+        "tags": ["onboarding", "customer"],
+        "quickSummary": "Step-by-step guide for new customer setup",
+        "source": "Internal",
+        "version": "1.0",
+        "content": "# Onboarding Steps\n\n1. Create account..."
+      }
+    },
+
+    "flowLogic": {
+      "description": "Upsert pattern - finds existing SOP by name, updates if found, creates if not",
+      "steps": [
+        "1. Receive input from parent workflow",
+        "2. Normalize Input - handles multiple field name formats (sopId, SOP ID, sop_id, etc.)",
+        "3. IF Missing Required Fields - validates sopId and sopName exist",
+        "4. If missing → Build Error Response → Return 400",
+        "5. If valid → Search Existing SOP by Name in Notion database",
+        "6. IF Found Existing Page → Prepare Update Payload → Update Notion Page",
+        "7. If not found → Prepare Create Payload → Create Notion Page"
+      ]
+    },
+
+    "knownIssues": [
+      {
+        "type": "warning",
+        "description": "6 expression style warnings in Normalize Input node about bracket notation",
+        "resolution": "Safe to ignore - bracket notation required for property names with spaces like 'SOP Name'"
+      }
+    ],
+
+    "relatedWorkflows": [],
+
+    "learnings": [
+      "Notion node v2+ requires __rl format for database/page IDs: { __rl: true, mode: 'id', value: 'uuid' }",
+      "IF node v2.3 uses 'empty' operator, not 'isEmpty' - operator names changed between versions",
+      "Notion getAll returns items directly, not wrapped in { results: [...] } like API might suggest",
+      "Always reference previous node output with $('NodeName').item.json.field for single-item flows"
+    ]
+  },
+
+  "workflow": {
+    "id": "1BAUctVezBekO60x",
+    "name": "Notion SOP Publisher Sub-Workflow",
+    "active": false,
+    "createdAt": "2026-01-16T02:16:43.827Z",
+    "updatedAt": "2026-01-17T04:10:17.245Z",
+    "versionId": "3d93d84e-b0db-4d5a-a27e-ea8ef4f926d3",
+    "versionCounter": 28,
+
+    "settings": {
+      "executionOrder": "v1",
+      "saveDataErrorExecution": "all",
+      "saveDataSuccessExecution": "all",
+      "saveManualExecutions": true,
+      "saveExecutionProgress": true,
+      "callerPolicy": "workflowsFromSameOwner",
+      "availableInMCP": true
+    },
+
+    "nodes": [
+      {
+        "id": "934c4a8a-3f29-462d-94b7-48e03ff1408c",
+        "name": "When Executed by Another Workflow",
+        "type": "n8n-nodes-base.executeWorkflowTrigger",
+        "typeVersion": 1.1,
+        "position": [320, 304],
+        "parameters": {
+          "workflowInputs": {
+            "values": [
+              {"name": "sopId"},
+              {"name": "sopName"},
+              {"name": "status"},
+              {"name": "category"},
+              {"name": "priority"},
+              {"name": "tags"},
+              {"name": "quickSummary"},
+              {"name": "source"},
+              {"name": "version"},
+              {"name": "content"}
+            ]
+          }
+        }
+      },
+      {
+        "id": "da50c04d-bd61-46c5-90cd-1f1591f2b9df",
+        "name": "Normalize Input",
+        "type": "n8n-nodes-base.set",
+        "typeVersion": 3.4,
+        "position": [528, 304],
+        "parameters": {
+          "assignments": {
+            "assignments": [
+              {"id": "sopId", "name": "sopId", "type": "string", "value": "={{ ($json.sopId ?? $json['SOP ID'] ?? $json.sop_id ?? '').toString().trim() }}"},
+              {"id": "sopName", "name": "sopName", "type": "string", "value": "={{ ($json.sopName ?? $json['SOP Name'] ?? $json.title ?? $json.name ?? '').toString().trim() }}"},
+              {"id": "status", "name": "status", "type": "string", "value": "={{ ($json.status ?? $json.Status ?? '').toString().trim() }}"},
+              {"id": "tags", "name": "tags", "type": "json", "value": "={{ Array.isArray($json.tags) ? $json.tags : (typeof $json.tags === 'string' ? $json.tags.split(',').map(t => t.trim()).filter(Boolean) : []) }}"},
+              {"id": "content", "name": "content", "type": "string", "value": "={{ ($json.content ?? $json.markdown ?? $json.body ?? '').toString() }}"},
+              {"id": "quickSummary", "name": "quickSummary", "type": "string", "value": "={{ ($json.quickSummary ?? $json['Quick Summary'] ?? '').toString() }}"},
+              {"id": "source", "name": "source", "type": "string", "value": "={{ ($json.source ?? $json.Source ?? '').toString() }}"},
+              {"id": "version", "name": "version", "type": "string", "value": "={{ ($json.version ?? $json.Version ?? '').toString() }}"},
+              {"id": "category", "name": "category", "type": "string", "value": "={{ ($json.category ?? $json.Category ?? '').toString() }}"},
+              {"id": "priority", "name": "priority", "type": "string", "value": "={{ ($json.priority ?? $json.Priority ?? '').toString() }}"}
+            ]
+          },
+          "options": {}
+        }
+      },
+      {
+        "id": "f115dd0c-b94f-4b4a-8f7c-0b992aefdc78",
+        "name": "IF Missing Required Fields",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.3,
+        "position": [768, 304],
+        "onError": "continueErrorOutput",
+        "parameters": {
+          "conditions": {
+            "options": {"caseSensitive": true, "leftValue": "", "typeValidation": "loose"},
+            "conditions": [
+              {"id": "condition1", "leftValue": "={{ $json.sopName }}", "rightValue": "", "operator": {"type": "string", "operation": "empty"}},
+              {"id": "condition2", "leftValue": "={{ $json.sopId }}", "rightValue": "", "operator": {"type": "string", "operation": "empty"}}
+            ],
+            "combinator": "or"
+          },
+          "options": {}
+        }
+      },
+      {
+        "id": "d3f9fb23-0c28-4d5b-8fda-6397d5d7050e",
+        "name": "Build Error Response",
+        "type": "n8n-nodes-base.set",
+        "typeVersion": 3.4,
+        "position": [992, 448],
+        "parameters": {
+          "assignments": {
+            "assignments": [
+              {"id": "error", "name": "error", "type": "object", "value": "={{ { ok:false, error:\"Missing required fields\", required:[\"sopId\",\"sopName\"], received:{ sopId:$json.sopId, sopName:$json.sopName } } }}"}
+            ]
+          },
+          "options": {}
+        }
+      },
+      {
+        "id": "8aeefc1c-07c9-4c10-b0e2-c43d5c73aab8",
+        "name": "Search Existing SOP by Name",
+        "type": "n8n-nodes-base.notion",
+        "typeVersion": 2.2,
+        "position": [992, 224],
+        "onError": "continueRegularOutput",
+        "credentials": {"notionApi": {"id": "FjpcGfmwV7qFtUY4", "name": "Notion account"}},
+        "parameters": {
+          "resource": "databasePage",
+          "operation": "getAll",
+          "databaseId": {"__rl": true, "mode": "id", "value": "5daa56637e0043f0a86f64bc1ed34dfb"},
+          "returnAll": false,
+          "limit": 1,
+          "filterType": "manual",
+          "filters": {
+            "conditions": [
+              {"key": "SOP Name|title", "condition": "contains", "value": "={{ $json.sopName }}"}
+            ]
+          }
+        }
+      },
+      {
+        "id": "0f5cde1d-f5e6-46aa-acde-0f3629105c71",
+        "name": "IF Found Existing Page",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.3,
+        "position": [1200, 224],
+        "onError": "continueErrorOutput",
+        "parameters": {
+          "conditions": {
+            "options": {"caseSensitive": true, "leftValue": "", "typeValidation": "loose"},
+            "conditions": [
+              {"id": "found_check", "leftValue": "={{ $json.id }}", "rightValue": "", "operator": {"type": "string", "operation": "exists"}}
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        }
+      },
+      {
+        "id": "0798c3f9-0e62-4df5-8d8d-055cc114d2b8",
+        "name": "Prepare Update Payload",
+        "type": "n8n-nodes-base.set",
+        "typeVersion": 3.4,
+        "position": [1424, 160],
+        "parameters": {
+          "assignments": {
+            "assignments": [
+              {"id": "pageId", "name": "pageId", "type": "string", "value": "={{ $json.id }}"},
+              {"id": "properties", "name": "properties", "type": "object", "value": "={{ {\n  \"SOP Name\": $('Normalize Input').item.json.sopName,\n  \"Status\": ($('Normalize Input').item.json.status && [\"Active\",\"Live\"].includes($('Normalize Input').item.json.status)) ? $('Normalize Input').item.json.status : \"Draft\",\n  \"Tags\": $('Normalize Input').item.json.tags,\n  \"SOP ID\": $('Normalize Input').item.json.sopId,\n  \"Quick Summary\": $('Normalize Input').item.json.quickSummary,\n  \"Source\": $('Normalize Input').item.json.source,\n  \"Version\": $('Normalize Input').item.json.version,\n  \"Category\": $('Normalize Input').item.json.category,\n  \"Priority\": $('Normalize Input').item.json.priority\n} }}"}
+            ]
+          },
+          "options": {}
+        }
+      },
+      {
+        "id": "aef6bb1b-c6dc-487f-878a-48d2e1c965de",
+        "name": "Update Notion Page",
+        "type": "n8n-nodes-base.notion",
+        "typeVersion": 2.2,
+        "position": [1648, 160],
+        "onError": "continueRegularOutput",
+        "credentials": {"notionApi": {"id": "FjpcGfmwV7qFtUY4", "name": "Notion account"}},
+        "parameters": {
+          "resource": "databasePage",
+          "operation": "update",
+          "pageId": {"__rl": true, "mode": "id", "value": "={{ $json.pageId }}"},
+          "propertiesUi": {
+            "propertyValues": [
+              {"key": "Status|select", "selectValue": "={{ $json.properties.Status }}"}
+            ]
+          }
+        }
+      },
+      {
+        "id": "b76d1f92-2dd6-4b84-9a5e-b55b1c2fd8b2",
+        "name": "Prepare Create Payload",
+        "type": "n8n-nodes-base.set",
+        "typeVersion": 3.4,
+        "position": [1424, 288],
+        "parameters": {
+          "assignments": {
+            "assignments": [
+              {"id": "properties", "name": "properties", "type": "object", "value": "={{ {\n  \"SOP Name\": $('Normalize Input').item.json.sopName,\n  \"Status\": ($('Normalize Input').item.json.status && [\"Active\",\"Live\"].includes($('Normalize Input').item.json.status)) ? $('Normalize Input').item.json.status : \"Draft\",\n  \"Tags\": $('Normalize Input').item.json.tags,\n  \"SOP ID\": $('Normalize Input').item.json.sopId,\n  \"Quick Summary\": $('Normalize Input').item.json.quickSummary,\n  \"Source\": $('Normalize Input').item.json.source,\n  \"Version\": $('Normalize Input').item.json.version,\n  \"Category\": $('Normalize Input').item.json.category,\n  \"Priority\": $('Normalize Input').item.json.priority\n} }}"}
+            ]
+          },
+          "options": {}
+        }
+      },
+      {
+        "id": "e164d8f1-cd8e-4f6e-bb2f-97f79cfd98fe",
+        "name": "Create Notion Page",
+        "type": "n8n-nodes-base.notion",
+        "typeVersion": 2.2,
+        "position": [1648, 288],
+        "onError": "continueRegularOutput",
+        "credentials": {"notionApi": {"id": "FjpcGfmwV7qFtUY4", "name": "Notion account"}},
+        "parameters": {
+          "resource": "databasePage",
+          "operation": "create",
+          "databaseId": {"__rl": true, "mode": "id", "value": "5daa56637e0043f0a86f64bc1ed34dfb"},
+          "propertiesUi": {
+            "propertyValues": [
+              {"key": "SOP Name|title", "textValue": "={{ $json.properties['SOP Name'] }}"},
+              {"key": "Status|select", "selectValue": "={{ $json.properties.Status || 'Draft' }}"},
+              {"key": "Category|select", "selectValue": "={{ $json.properties.Category }}"}
+            ]
+          }
+        }
+      }
+    ],
+
+    "connections": {
+      "When Executed by Another Workflow": {"main": [[{"node": "Normalize Input", "type": "main", "index": 0}]]},
+      "Normalize Input": {"main": [[{"node": "IF Missing Required Fields", "type": "main", "index": 0}]]},
+      "IF Missing Required Fields": {"main": [[{"node": "Search Existing SOP by Name", "type": "main", "index": 0}], [{"node": "Build Error Response", "type": "main", "index": 0}]]},
+      "Build Error Response": {"main": [[]]},
+      "Search Existing SOP by Name": {"main": [[{"node": "IF Found Existing Page", "type": "main", "index": 0}]]},
+      "IF Found Existing Page": {"main": [[{"node": "Prepare Update Payload", "type": "main", "index": 0}], [{"node": "Prepare Create Payload", "type": "main", "index": 0}]]},
+      "Prepare Update Payload": {"main": [[{"node": "Update Notion Page", "type": "main", "index": 0}]]},
+      "Update Notion Page": {"main": [[]]},
+      "Prepare Create Payload": {"main": [[{"node": "Create Notion Page", "type": "main", "index": 0}]]},
+      "Create Notion Page": {"main": [[]]}
+    }
+  }
+}

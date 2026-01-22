@@ -1,0 +1,80 @@
+{
+  "id": "sop-publisher-tool",
+  "name": "Tool: Publish SOP to Notion",
+  "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+  "typeVersion": 2,
+  "position": [1200, 600],
+  "parameters": {
+    "name": "publish_sop",
+    "description": "Creates or updates an SOP (Standard Operating Procedure) in the Notion SOP database. Use this tool when:\n- The user asks to create a new SOP\n- You learn something that should be documented as a procedure\n- An existing SOP needs to be updated with new information\n- The user wants to save a workflow pattern or best practice\n\nThe tool will automatically check if an SOP with the same name exists and update it, or create a new one if not found.\n\nReturns: { success: boolean, action: 'create'|'update', sopName, notionPageId, notionUrl }",
+    "workflowId": {
+      "__rl": true,
+      "mode": "id",
+      "value": "1BAUctVezBekO60x"
+    },
+    "fields": {
+      "values": [
+        {
+          "name": "sopName",
+          "description": "The title/name of the SOP (REQUIRED). Should be clear and descriptive, e.g., 'Customer Onboarding Process' or 'Lead Enrichment Pipeline'",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "sopId",
+          "description": "Unique identifier for the SOP. If not provided, one will be auto-generated. Format: SOP-XXX",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "quickSummary",
+          "description": "A 1-2 sentence summary of what this SOP covers. Helps with searchability.",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "content",
+          "description": "The full content/body of the SOP in markdown format. Include steps, notes, examples.",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "status",
+          "description": "The SOP status. Options: Draft, Active, Archived, Under Review. Defaults to 'Draft'",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "category",
+          "description": "The category this SOP belongs to. Examples: Operations, Sales, Engineering, Support",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "priority",
+          "description": "Priority level: Low, Medium, High, Critical. Defaults to 'Medium'",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "tags",
+          "description": "Comma-separated list of tags for categorization. Example: 'automation,n8n,lead-gen'",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "source",
+          "description": "Where this SOP originated from. Defaults to 'Agent-Generated'",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "version",
+          "description": "Version number of the SOP. Defaults to '1.0'",
+          "type": "string",
+          "required": false
+        }
+      ]
+    }
+  }
+}

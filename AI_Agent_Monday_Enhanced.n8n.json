@@ -1,0 +1,376 @@
+{
+  "name": "🕵️ AI Agent: Monday.com Operations",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "agent/monday",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "🌐 Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -400,
+        300
+      ],
+      "webhookId": "monday-agent-webhook"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ═══════════════════════════════════════════════════════════════════\n// 📋 Normalize Input + Build Parameterized SQL for Monday.com Agent\n// ═══════════════════════════════════════════════════════════════════\n\nconst raw = $input.first().json;\nconst body = raw.body || raw;\n\n// Helper to safely quote values for params array\nconst q = (v) => (v === undefined || v === null) ? null : String(v);\n\n// ───────────────────────────────────────────────────────────────────\n// Extract input fields\n// ───────────────────────────────────────────────────────────────────\nconst input = {\n  action: (body.action || body.tool || 'help').toLowerCase().trim(),\n  board_id: body.board_id || body.boardId || null,\n  board_name: body.board_name || body.boardName || null,\n  item_id: body.item_id || body.itemId || body.pulseId || null,\n  item_name: body.item_name || body.itemName || body.name || null,\n  group_id: body.group_id || body.groupId || null,\n  column_id: body.column_id || body.columnId || null,\n  column_values: body.column_values || body.columnValues || {},\n  query: body.query || body.search || null,\n  workspace_id: body.workspace_id || body.workspaceId || null,\n  dry_run: body.dry_run === true || body.preview === true,\n  user_id: body.user_id || body.agent_user_id || 'system',\n  session_id: body.session_id || body.conversation_id || `monday_${Date.now()}`\n};\n\n// ───────────────────────────────────────────────────────────────────\n// Action routing map\n// ───────────────────────────────────────────────────────────────────\nconst ACTIONS = {\n  list_boards: 'List all boards in a workspace',\n  get_board: 'Get board details with columns and groups',\n  create_item: 'Create a new item (row) in a board',\n  update_item: 'Update an existing item column values',\n  delete_item: 'Delete an item from a board',\n  get_item: 'Get item details with all column values',\n  search_items: 'Search items across boards',\n  move_item: 'Move item to a different group',\n  create_update: 'Add an update/comment to an item',\n  get_updates: 'Get updates/comments on an item',\n  list_groups: 'List groups in a board',\n  create_group: 'Create a new group in a board',\n  list_columns: 'List columns and their types in a board',\n  get_workspaces: 'List available workspaces',\n  sync_to_hubspot: 'Sync Monday item to HubSpot',\n  help: 'List available Monday.com operations'\n};\n\nconst tool_name = `monday_${input.action}`;\nconst action_description = ACTIONS[input.action] || 'Unknown action';\n\n// ───────────────────────────────────────────────────────────────────\n// Build payload for logging\n// ───────────────────────────────────────────────────────────────────\nconst payload_for_log = {\n  action: input.action,\n  board_id: input.board_id,\n  item_id: input.item_id,\n  item_name: input.item_name,\n  dry_run: input.dry_run\n};\n\n// ───────────────────────────────────────────────────────────────────\n// Build parameterized SQL for log_start\n// ───────────────────────────────────────────────────────────────────\nconst log_start_sql = `\nINSERT INTO tool_execution_log (\n  tool_name, input_data, success, conversation_id, user_id, required_approval\n)\nVALUES ($1, $2::jsonb, false, $3, $4, $5)\nRETURNING id;\n`;\n\nconst log_start_params = [\n  tool_name,\n  JSON.stringify(payload_for_log),\n  q(input.session_id),\n  q(input.user_id),\n  !input.dry_run && ['create_item', 'update_item', 'delete_item', 'move_item', 'create_update', 'create_group'].includes(input.action)\n];\n\n// ───────────────────────────────────────────────────────────────────\n// Build parameterized SQL for context loading\n// ───────────────────────────────────────────────────────────────────\nconst ctx_sql = `\nSELECT jsonb_build_object(\n  'monday_config', (\n    SELECT COALESCE(jsonb_agg(jsonb_build_object(\n      'key', m.key,\n      'value', m.value\n    )), '[]'::jsonb)\n    FROM memory_items m\n    WHERE m.key LIKE 'monday_%'\n    AND m.status = 'active'\n    LIMIT 10\n  ),\n  'recent_monday_actions', (\n    SELECT COALESCE(jsonb_agg(t ORDER BY t.started_at DESC), '[]'::jsonb)\n    FROM tool_execution_log t\n    WHERE t.tool_name LIKE 'monday_%'\n    AND t.started_at > NOW() - INTERVAL '7 days'\n    LIMIT 20\n  ),\n  'hubspot_company_link', (\n    SELECT to_jsonb(hc) FROM hubspot_companies hc\n    WHERE hc.attrs->'properties'->>'monday_item_id' = $1\n    LIMIT 1\n  ),\n  'agent_notes', (\n    SELECT COALESCE(jsonb_agg(n ORDER BY n.updated_at DESC), '[]'::jsonb)\n    FROM agent_notes n \n    WHERE n.scope = 'integration' AND n.note_key = 'monday'\n    LIMIT 10\n  )\n) AS context;\n`;\n\nconst ctx_params = [\n  q(input.item_id)\n];\n\n// ───────────────────────────────────────────────────────────────────\n// Output\n// ───────────────────────────────────────────────────────────────────\nreturn [{\n  json: {\n    input,\n    tool_name,\n    action_description,\n    available_actions: ACTIONS,\n    log_start_sql,\n    log_start_params,\n    ctx_sql,\n    ctx_params\n  }\n}];"
+      },
+      "id": "normalize-input",
+      "name": "📋 Normalize + Build SQL",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -160,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ $json.log_start_sql }}",
+        "options": {
+          "queryReplacement": "={{ $json.log_start_params }}"
+        }
+      },
+      "id": "log-start",
+      "name": "🗄️ Log Start",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        80,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CRED_ID",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ $('📋 Normalize + Build SQL').item.json.ctx_sql }}",
+        "options": {
+          "queryReplacement": "={{ $('📋 Normalize + Build SQL').item.json.ctx_params }}"
+        }
+      },
+      "id": "load-context",
+      "name": "📥 Load Context",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        320,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CRED_ID",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "options": {
+          "systemMessage": "You are the Monday.com Operations Agent for Auto Shop Media. You help manage projects, tasks, and workflow items in Monday.com boards.\n\n## Your Capabilities\n- Manage boards and items\n- Create and update tasks\n- Search across boards\n- Sync data with HubSpot\n- Track project progress\n- Add updates/comments\n\n## Current Context\n{{$json.context}}\n\n## Available Actions\n- list_boards: List all boards\n- get_board: Get board details (columns, groups)\n- create_item: Create new item/task\n- update_item: Update item column values\n- delete_item: Delete an item\n- get_item: Get item details\n- search_items: Search across boards\n- move_item: Move item to different group\n- create_update: Add comment/update\n- get_updates: Get item comments\n- list_groups: List board groups\n- create_group: Create new group\n- list_columns: List board columns\n- get_workspaces: List workspaces\n- sync_to_hubspot: Sync to HubSpot\n\n## Monday.com GraphQL API Reference\nEndpoint: https://api.monday.com/v2\nAuth: Bearer token in Authorization header\n\n### Get Boards\n```graphql\nquery {\n  boards(limit: 50) {\n    id name description\n    columns { id title type }\n    groups { id title }\n  }\n}\n```\n\n### Get Items from Board\n```graphql\nquery {\n  boards(ids: [BOARD_ID]) {\n    items_page(limit: 100) {\n      items {\n        id name\n        column_values { id text value }\n      }\n    }\n  }\n}\n```\n\n### Create Item\n```graphql\nmutation {\n  create_item(\n    board_id: BOARD_ID\n    group_id: \"GROUP_ID\"\n    item_name: \"Task Name\"\n    column_values: \"{\\\"status\\\":{\\\"label\\\":\\\"Working on it\\\"}}\"\n  ) {\n    id\n  }\n}\n```\n\n### Update Item\n```graphql\nmutation {\n  change_multiple_column_values(\n    board_id: BOARD_ID\n    item_id: ITEM_ID\n    column_values: \"{\\\"status\\\":{\\\"label\\\":\\\"Done\\\"}}\"\n  ) {\n    id\n  }\n}\n```\n\n### Search Items\n```graphql\nquery {\n  items_page_by_column_values(\n    board_id: BOARD_ID\n    columns: [{column_id: \"name\", column_values: [\"search term\"]}]\n  ) {\n    items { id name }\n  }\n}\n```\n\n## Column Value Formatting\nDifferent column types need different JSON formats:\n- Status: `{\"label\": \"Done\"}`\n- Date: `{\"date\": \"2026-01-20\"}`\n- Text: `\"plain text\"`\n- Numbers: `\"123\"`\n- Email: `{\"email\": \"test@test.com\", \"text\": \"test@test.com\"}`\n- Phone: `{\"phone\": \"+1234567890\", \"countryShortName\": \"US\"}`\n- Link: `{\"url\": \"https://...\", \"text\": \"Link text\"}`\n- Person: `{\"personsAndTeams\": [{\"id\": USER_ID, \"kind\": \"person\"}]}`\n\n## Rules\n1. Always get board structure first to understand columns\n2. Use correct column value format for each type\n3. Log all changes for audit trail\n4. If dry_run=true, show what would change but don't execute\n5. Validate board_id and item_id before mutations\n\nBe helpful and precise with Monday.com operations."
+        }
+      },
+      "id": "ai-agent",
+      "name": "🕵️ Monday.com Agent",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.7,
+      "position": [
+        560,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "model": "gpt-4o",
+        "options": {
+          "temperature": 0.3
+        }
+      },
+      "id": "openai-chat",
+      "name": "🧠 OpenAI Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.2,
+      "position": [
+        560,
+        520
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "OPENAI_CRED_ID",
+          "name": "OpenAI API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "name": "monday_graphql",
+        "description": "Execute a GraphQL query or mutation against Monday.com API. Input: JSON with 'query' (GraphQL string) and optional 'variables' object.",
+        "workflowId": "={{ $env.MONDAY_GRAPHQL_WORKFLOW_ID }}",
+        "responsePropertyName": "monday_result"
+      },
+      "id": "tool-graphql",
+      "name": "📊 Tool: Monday GraphQL",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2,
+      "position": [
+        360,
+        520
+      ]
+    },
+    {
+      "parameters": {
+        "name": "search_postgres",
+        "description": "Query Postgres database for Monday.com configs, HubSpot links, or action history. Input: SQL query string.",
+        "workflowId": "={{ $env.POSTGRES_QUERY_TOOL_WORKFLOW_ID }}",
+        "responsePropertyName": "query_result"
+      },
+      "id": "tool-postgres",
+      "name": "🗄️ Tool: Query Database",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2,
+      "position": [
+        560,
+        640
+      ]
+    },
+    {
+      "parameters": {
+        "name": "hubspot_sync",
+        "description": "Sync Monday.com item data to HubSpot. Input: JSON with 'monday_item_id', 'hubspot_object_type', 'hubspot_id', 'data_to_sync'.",
+        "workflowId": "={{ $env.HUBSPOT_SYNC_WORKFLOW_ID }}",
+        "responsePropertyName": "sync_result"
+      },
+      "id": "tool-hubspot",
+      "name": "🔄 Tool: HubSpot Sync",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2,
+      "position": [
+        760,
+        520
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ═══════════════════════════════════════════════════════════════════\n// 📤 Parse Agent Output + Build Parameterized SQL for Log End\n// ═══════════════════════════════════════════════════════════════════\n\nconst agentOutput = $input.first().json;\nconst inputData = $('📋 Normalize + Build SQL').first().json.input;\nconst logStartResult = $('🗄️ Log Start').first().json;\n\nconst tool_execution_id = logStartResult?.id || null;\n\n// ───────────────────────────────────────────────────────────────────\n// Determine success and extract key results\n// ───────────────────────────────────────────────────────────────────\nconst output_text = agentOutput.output || agentOutput.text || JSON.stringify(agentOutput);\nconst success = !output_text.toLowerCase().includes('error') && \n                !output_text.toLowerCase().includes('failed') &&\n                !output_text.toLowerCase().includes('unable to');\n\n// Extract item ID from response\nconst item_id_match = output_text.match(/item[_\\s]?id[\"']?\\s*[:\\s]\\s*[\"']?(\\d+)/i);\nconst item_id = item_id_match ? item_id_match[1] : inputData.item_id;\n\n// Build output payload\nconst output_payload = {\n  action: inputData.action,\n  result: output_text.substring(0, 2000),\n  success: success,\n  item_id: item_id,\n  board_id: inputData.board_id,\n  dry_run: inputData.dry_run,\n  timestamp: new Date().toISOString()\n};\n\n// ───────────────────────────────────────────────────────────────────\n// Build parameterized SQL for log_end\n// ───────────────────────────────────────────────────────────────────\nconst log_end_sql = `\nUPDATE tool_execution_log\nSET \n  success = $1,\n  output_data = $2::jsonb,\n  completed_at = NOW(),\n  duration_ms = EXTRACT(EPOCH FROM (NOW() - started_at)) * 1000\nWHERE id = $3\nRETURNING *;\n`;\n\nconst log_end_params = [\n  success,\n  JSON.stringify(output_payload),\n  tool_execution_id\n];\n\n// ───────────────────────────────────────────────────────────────────\n// Build webhook response\n// ───────────────────────────────────────────────────────────────────\nconst webhook_response = {\n  success: success,\n  action: inputData.action,\n  message: output_text,\n  item_id: item_id,\n  board_id: inputData.board_id,\n  dry_run: inputData.dry_run,\n  execution_id: tool_execution_id\n};\n\nreturn [{\n  json: {\n    log_end_sql,\n    log_end_params,\n    webhook_response,\n    agent_output: agentOutput\n  }\n}];"
+      },
+      "id": "parse-output",
+      "name": "📤 Parse + Finalize Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        800,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ $json.log_end_sql }}",
+        "options": {
+          "queryReplacement": "={{ $json.log_end_params }}"
+        }
+      },
+      "id": "log-end",
+      "name": "🗄️ Log End",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1040,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CRED_ID",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "options": {},
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($('📤 Parse + Finalize Output').item.json.webhook_response) }}"
+      },
+      "id": "respond-webhook",
+      "name": "📤 Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1280,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "🌐 Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "📋 Normalize + Build SQL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📋 Normalize + Build SQL": {
+      "main": [
+        [
+          {
+            "node": "🗄️ Log Start",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🗄️ Log Start": {
+      "main": [
+        [
+          {
+            "node": "📥 Load Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📥 Load Context": {
+      "main": [
+        [
+          {
+            "node": "🕵️ Monday.com Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🕵️ Monday.com Agent": {
+      "main": [
+        [
+          {
+            "node": "📤 Parse + Finalize Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🧠 OpenAI Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "🕵️ Monday.com Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📊 Tool: Monday GraphQL": {
+      "ai_tool": [
+        [
+          {
+            "node": "🕵️ Monday.com Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🗄️ Tool: Query Database": {
+      "ai_tool": [
+        [
+          {
+            "node": "🕵️ Monday.com Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔄 Tool: HubSpot Sync": {
+      "ai_tool": [
+        [
+          {
+            "node": "🕵️ Monday.com Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📤 Parse + Finalize Output": {
+      "main": [
+        [
+          {
+            "node": "🗄️ Log End",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🗄️ Log End": {
+      "main": [
+        [
+          {
+            "node": "📤 Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "name": "ai-agent"
+    },
+    {
+      "name": "monday"
+    },
+    {
+      "name": "project-management"
+    },
+    {
+      "name": "integration"
+    }
+  ],
+  "triggerCount": 1,
+  "pinData": {},
+  "versionId": "1",
+  "meta": {
+    "description": "AI Agent for managing Monday.com boards, items, and project workflows. Supports CRUD operations, search, and HubSpot sync.",
+    "category": "ai-agent",
+    "triggers": [
+      "webhook"
+    ],
+    "outputs": [
+      "webhook_response",
+      "postgres_log"
+    ],
+    "requiredCredentials": [
+      "Supabase Postgres",
+      "OpenAI API",
+      "Monday.com API (v2 token)"
+    ]
+  }
+}

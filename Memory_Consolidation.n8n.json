@@ -1,0 +1,478 @@
+{
+  "name": "Memory Consolidation (Scheduled)",
+  "nodes": [
+    {
+      "id": "trigger-001",
+      "name": "Every 24 Hours",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        240,
+        300
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 24
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "get-lessons-001",
+      "name": "Get Recent Lessons",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        460,
+        300
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT \n  category,\n  example_type,\n  COUNT(*) as count,\n  array_agg(DISTINCT lesson_summary) as lessons,\n  array_agg(DISTINCT expected_behavior) as patterns\nFROM learning_examples\nWHERE \n  created_at > NOW() - INTERVAL '7 days'\n  AND lesson_summary IS NOT NULL\n  AND lesson_summary != 'No lesson generated'\n  AND LENGTH(lesson_summary) > 20\nGROUP BY category, example_type\nHAVING COUNT(*) >= 3\nORDER BY count DESC\nLIMIT 10;",
+        "options": {}
+      },
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CRED_ID",
+          "name": "Postgres account"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "id": "check-data-001",
+      "name": "IF Has Patterns",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        680,
+        300
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "has-data",
+              "leftValue": "={{ $json.length }}",
+              "rightValue": "0",
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "consolidate-001",
+      "name": "Consolidate Patterns (LLM)",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.4,
+      "position": [
+        900,
+        200
+      ],
+      "parameters": {
+        "promptType": "define",
+        "text": "=You are a KNOWLEDGE CONSOLIDATOR. Your job is to extract high-level patterns from individual lessons.\n\n## Raw Lessons (grouped by category)\n{{ JSON.stringify($json, null, 2) }}\n\n## Your Task\nFor each category with 3+ lessons, extract:\n1. **The Core Pattern:** What's the underlying principle?\n2. **Best Practice:** The recommended approach\n3. **Common Pitfall:** What to avoid\n\nOnly extract patterns that appear across multiple lessons. Ignore one-off insights.\n\n## Output Format (JSON array):\n```json\n[\n  {\n    \"key\": \"pattern_name_in_snake_case\",\n    \"value\": \"Clear, actionable statement of the pattern\",\n    \"category\": \"category_name\",\n    \"confidence\": 0.7-1.0,\n    \"source_count\": number_of_lessons_this_came_from,\n    \"tags\": [\"relevant\", \"tags\"]\n  }\n]\n```\n\nIf no clear patterns emerge, return: `[]`"
+      }
+    },
+    {
+      "id": "llm-001",
+      "name": "GPT-4o-mini",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.2,
+      "position": [
+        720,
+        80
+      ],
+      "parameters": {
+        "model": "gpt-4o-mini",
+        "options": {
+          "temperature": 0.2,
+          "maxTokens": 800
+        }
+      },
+      "credentials": {
+        "openAiApi": {
+          "id": "OPENAI_CRED_ID",
+          "name": "OpenAI API"
+        }
+      }
+    },
+    {
+      "id": "parse-patterns-001",
+      "name": "Parse Patterns",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        200
+      ],
+      "parameters": {
+        "jsCode": "const llmOutput = $input.first().json.text || $input.first().json.response || '[]';\n\nlet patterns = [];\ntry {\n  let jsonStr = llmOutput;\n  const jsonMatch = llmOutput.match(/```json\\n?([\\s\\S]*?)\\n?```/);\n  if (jsonMatch) {\n    jsonStr = jsonMatch[1];\n  }\n  patterns = JSON.parse(jsonStr);\n  \n  if (!Array.isArray(patterns)) {\n    patterns = [patterns];\n  }\n} catch (e) {\n  patterns = [];\n}\n\n// Validate and format\nconst validPatterns = patterns.filter(p => \n  p.key && p.value && p.confidence >= 0.7\n).map(p => ({\n  key: p.key,\n  value: p.value,\n  value_type: 'pattern',\n  authority: 'system',\n  confidence: p.confidence,\n  source_type: 'consolidation',\n  status: 'active',\n  tags: p.tags || [],\n  created_by: 'memory_consolidation'\n}));\n\nreturn validPatterns.map(p => ({ json: p }));"
+      }
+    },
+    {
+      "id": "check-existing-001",
+      "name": "Check Existing Patterns",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1340,
+        200
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "=SELECT key FROM memory_items WHERE key = '{{ $json.key }}' AND status = 'active' LIMIT 1;",
+        "options": {}
+      },
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CRED_ID",
+          "name": "Postgres account"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "id": "if-new-001",
+      "name": "IF New Pattern",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1560,
+        200
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "is-new",
+              "leftValue": "={{ $json.length }}",
+              "rightValue": "0",
+              "operator": {
+                "type": "number",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "insert-pattern-001",
+      "name": "Insert New Pattern",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1780,
+        100
+      ],
+      "parameters": {
+        "operation": "insert",
+        "schema": "public",
+        "table": "memory_items",
+        "columns": "key,value,value_type,authority,confidence,source_type,status,tags,created_by",
+        "options": {}
+      },
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CRED_ID",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "id": "update-pattern-001",
+      "name": "Update Existing Pattern",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1780,
+        300
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "=UPDATE memory_items SET \n  value = '{{ $('Parse Patterns').item.json.value }}',\n  confidence = {{ $('Parse Patterns').item.json.confidence }},\n  version = version + 1,\n  updated_at = NOW()\nWHERE key = '{{ $('Parse Patterns').item.json.key }}' AND status = 'active';",
+        "options": {}
+      },
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CRED_ID",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "id": "no-patterns-001",
+      "name": "No Patterns to Consolidate",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        900,
+        400
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "cleanup-001",
+      "name": "Cleanup Old Low-Quality Lessons",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        460,
+        480
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Archive lessons older than 30 days that were never referenced\nUPDATE learning_examples\nSET category = 'archived'\nWHERE \n  created_at < NOW() - INTERVAL '30 days'\n  AND times_referenced = 0\n  AND (lesson_summary IS NULL OR lesson_summary = 'No lesson generated');\n\n-- Return count of archived\nSELECT COUNT(*) as archived_count FROM learning_examples WHERE category = 'archived';",
+        "options": {}
+      },
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CRED_ID",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "id": "log-001",
+      "name": "Log Consolidation Run",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        2000,
+        200
+      ],
+      "parameters": {
+        "operation": "insert",
+        "schema": "public",
+        "table": "agent_audit_log",
+        "columns": "action,action_type,success,input_data,output_data",
+        "options": {}
+      },
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CRED_ID",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "id": "prep-log-001",
+      "name": "Prepare Log Entry",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        2000,
+        80
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "action",
+              "name": "action",
+              "type": "string",
+              "value": "memory_consolidation"
+            },
+            {
+              "id": "action_type",
+              "name": "action_type",
+              "type": "string",
+              "value": "maintenance"
+            },
+            {
+              "id": "success",
+              "name": "success",
+              "type": "boolean",
+              "value": "={{ true }}"
+            },
+            {
+              "id": "input_data",
+              "name": "input_data",
+              "type": "object",
+              "value": "={{ { patterns_found: $('Parse Patterns').all().length } }}"
+            },
+            {
+              "id": "output_data",
+              "name": "output_data",
+              "type": "object",
+              "value": "={{ { patterns_saved: $('Parse Patterns').all().length } }}"
+            }
+          ]
+        },
+        "options": {}
+      }
+    }
+  ],
+  "connections": {
+    "Every 24 Hours": {
+      "main": [
+        [
+          {
+            "node": "Get Recent Lessons",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Cleanup Old Low-Quality Lessons",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Recent Lessons": {
+      "main": [
+        [
+          {
+            "node": "IF Has Patterns",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF Has Patterns": {
+      "main": [
+        [
+          {
+            "node": "Consolidate Patterns (LLM)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "No Patterns to Consolidate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Consolidate Patterns (LLM)": {
+      "main": [
+        [
+          {
+            "node": "Parse Patterns",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GPT-4o-mini": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Consolidate Patterns (LLM)",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Patterns": {
+      "main": [
+        [
+          {
+            "node": "Check Existing Patterns",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Existing Patterns": {
+      "main": [
+        [
+          {
+            "node": "IF New Pattern",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF New Pattern": {
+      "main": [
+        [
+          {
+            "node": "Insert New Pattern",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Update Existing Pattern",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert New Pattern": {
+      "main": [
+        [
+          {
+            "node": "Prepare Log Entry",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Existing Pattern": {
+      "main": [
+        [
+          {
+            "node": "Prepare Log Entry",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Log Entry": {
+      "main": [
+        [
+          {
+            "node": "Log Consolidation Run",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "saveManualExecutions": true,
+    "saveExecutionProgress": true
+  }
+}

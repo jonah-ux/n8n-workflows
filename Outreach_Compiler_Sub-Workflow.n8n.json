@@ -1,0 +1,285 @@
+{
+  "name": "🎯 Outreach Compiler — Enrichment Finalizer",
+  "nodes": [
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            { "name": "research_run_id" },
+            { "name": "company_id" },
+            { "name": "airtable_id" }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [-1200, 300],
+      "id": "trigger-001",
+      "name": "When Executed by Another Workflow"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT * FROM public.enriched_leads WHERE research_run_id = $1 LIMIT 1;",
+        "options": {
+          "queryReplacement": "={{ [$json.research_run_id] }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [-800, 160],
+      "id": "db-get-enriched",
+      "name": "📥 Get Enriched Lead",
+      "credentials": {
+        "postgres": {
+          "id": "xogKD739Qe4gqWBU",
+          "name": "Postgres account"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT COALESCE(context_jsonb, '{}'::jsonb) AS context_jsonb, COALESCE(context_summary, '') AS context_summary, updated_at FROM public.company_contexts WHERE company_id = $1 LIMIT 1;",
+        "options": {
+          "queryReplacement": "={{ [$json.company_id] }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [-800, 300],
+      "id": "db-get-context",
+      "name": "📥 Get Company Context",
+      "credentials": {
+        "postgres": {
+          "id": "xogKD739Qe4gqWBU",
+          "name": "Postgres account"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT log_id, node_name, node_id, node_type, stage, status, started_at, completed_at, duration_ms, api_call_count, estimated_cost_usd, metadata, output_data, error_details FROM public.workflow_step_logs WHERE research_run_id = $1 ORDER BY COALESCE(completed_at, started_at) ASC, log_id ASC;",
+        "options": {
+          "queryReplacement": "={{ [$json.research_run_id] }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [-800, 440],
+      "id": "db-get-logs",
+      "name": "📥 Get Step Logs For Run",
+      "credentials": {
+        "postgres": {
+          "id": "xogKD739Qe4gqWBU",
+          "name": "Postgres account"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "numberInputs": 3,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [-560, 300],
+      "id": "merge-db-results",
+      "name": "🤝 Merge DB Results"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ⚙️ Assemble Full Dossier\n// Combines ALL data sources into a comprehensive dossier for AI analysis\n\nconst trigger = $('When Executed by Another Workflow').first().json;\nconst enrichedRow = $('📥 Get Enriched Lead').first().json ?? {};\nconst ctxRow = $('📥 Get Company Context').first().json ?? {};\nconst logs = $('📥 Get Step Logs For Run').all().map(i => i.json);\n\n// Helper to safely parse JSON\nfunction safeJson(v) {\n  if (!v) return null;\n  if (typeof v === 'object') return v;\n  try { return JSON.parse(v); } catch { return null; }\n}\n\nconst context_jsonb = safeJson(ctxRow.context_jsonb) || {};\nconst context_summary = ctxRow.context_summary || '';\n\n// ========================================\n// EXTRACT ALL DATA FROM STEP LOGS\n// ========================================\n\nconst extracted = {\n  // Identity & Contact\n  owner_names: [],\n  emails: [],\n  phones: [],\n  linkedin_profiles: [],\n  \n  // Company Data\n  websites: [],\n  domains: [],\n  addresses: [],\n  employee_counts: [],\n  year_founded: null,\n  \n  // Reviews & Ratings\n  google_rating: null,\n  google_review_count: null,\n  review_highlights: [],\n  owner_response_rate: null,\n  sentiment_summary: null,\n  \n  // Hiring & Jobs\n  job_postings: [],\n  is_hiring: false,\n  hiring_roles: [],\n  \n  // Risk & Red Flags\n  risk_score: null,\n  red_flags: [],\n  lawsuits: [],\n  bbb_complaints: [],\n  \n  // Intel & Analysis\n  intel_summaries: [],\n  decision_makers: [],\n  \n  // Tool Results Summary\n  tools_succeeded: [],\n  tools_failed: [],\n  total_api_calls: 0,\n  total_cost_usd: 0\n};\n\n// Process each log entry\nfor (const log of logs) {\n  const output = safeJson(log.output_data) || {};\n  const meta = safeJson(log.metadata) || {};\n  const nodeId = log.node_id || '';\n  const nodeName = log.node_name || '';\n  const status = log.status || '';\n  \n  // Track tool success/failure\n  if (status === 'completed') {\n    extracted.tools_succeeded.push(nodeName);\n  } else if (status === 'failed') {\n    extracted.tools_failed.push({ name: nodeName, error: log.error_details });\n  }\n  \n  // Aggregate costs\n  extracted.total_api_calls += log.api_call_count || 0;\n  extracted.total_cost_usd += parseFloat(log.estimated_cost_usd) || 0;\n  \n  // ---- FIRECRAWL / WEBSITE DATA ----\n  if (nodeId.includes('firecrawl') || nodeName.toLowerCase().includes('firecrawl')) {\n    if (output.identity?.owner_name) extracted.owner_names.push({ name: output.identity.owner_name, source: 'website', confidence: 80 });\n    if (output.emails?.length) extracted.emails.push(...output.emails.map(e => ({ email: e, source: 'website', confidence: 70 })));\n    if (output.form_url) extracted.websites.push({ type: 'contact_form', url: output.form_url });\n    if (output.about_summary) extracted.intel_summaries.push({ source: 'website', summary: output.about_summary });\n  }\n  \n  // ---- APOLLO / FIRMOGRAPHICS ----\n  if (nodeId.includes('apollo') || nodeName.toLowerCase().includes('apollo')) {\n    if (output.employee_count) extracted.employee_counts.push({ count: output.employee_count, source: 'apollo' });\n    if (output.year_founded) extracted.year_founded = output.year_founded;\n    if (output.ceo_name) extracted.owner_names.push({ name: output.ceo_name, source: 'apollo', confidence: 85 });\n    if (output.technologies) extracted.intel_summaries.push({ source: 'apollo', summary: `Technologies: ${output.technologies.join(', ')}` });\n  }\n  \n  // ---- SERPAPI / SEARCH RESULTS ----\n  if (nodeId.includes('serp') || nodeName.toLowerCase().includes('serp')) {\n    if (output.place_results?.place_id) extracted.google_place_id = output.place_results.place_id;\n    if (output.place_results?.rating) extracted.google_rating = output.place_results.rating;\n    if (output.place_results?.reviews) extracted.google_review_count = output.place_results.reviews;\n    if (output.news_results?.length) {\n      for (const news of output.news_results) {\n        if (news.title?.toLowerCase().includes('lawsuit') || news.title?.toLowerCase().includes('fraud')) {\n          extracted.red_flags.push({ type: 'news', title: news.title, source: news.source });\n        }\n      }\n    }\n  }\n  \n  // ---- APIFY / REVIEWS ----\n  if (nodeId.includes('apify') || nodeId.includes('review') || nodeName.toLowerCase().includes('review')) {\n    if (output.metrics?.avg_rating) extracted.google_rating = output.metrics.avg_rating;\n    if (output.metrics?.total_reviews) extracted.google_review_count = output.metrics.total_reviews;\n    if (output.owner_name) extracted.owner_names.push({ name: output.owner_name, source: 'reviews', confidence: 75 });\n    if (output.review_highlights?.length) extracted.review_highlights = output.review_highlights;\n    if (output.sentiment) extracted.sentiment_summary = output.sentiment;\n    if (meta.owner_response_rate) extracted.owner_response_rate = meta.owner_response_rate;\n  }\n  \n  // ---- LINKEDIN ----\n  if (nodeId.includes('linkedin') || nodeName.toLowerCase().includes('linkedin')) {\n    if (output.profiles?.length) {\n      for (const profile of output.profiles) {\n        extracted.linkedin_profiles.push(profile);\n        if (profile.role === 'owner' || profile.role === 'ceo') {\n          extracted.owner_names.push({ name: profile.name, source: 'linkedin', confidence: profile.confidence || 90 });\n        }\n      }\n    }\n    if (output.owner_name) extracted.owner_names.push({ name: output.owner_name, source: 'linkedin', confidence: 85 });\n  }\n  \n  // ---- JOB BOARD ----\n  if (nodeId.includes('job') || nodeName.toLowerCase().includes('job') || nodeName.toLowerCase().includes('hiring')) {\n    if (output.is_hiring) extracted.is_hiring = true;\n    if (output.job_postings?.length) {\n      extracted.job_postings = output.job_postings;\n      extracted.hiring_roles = output.job_postings.map(j => j.title || j.role).filter(Boolean);\n    }\n  }\n  \n  // ---- HUNTER.IO / EMAIL ----\n  if (nodeId.includes('hunter') || nodeName.toLowerCase().includes('hunter')) {\n    if (output.email) extracted.emails.push({ email: output.email, source: 'hunter', confidence: output.score || 80 });\n    if (output.emails?.length) {\n      for (const e of output.emails) {\n        extracted.emails.push({ email: e.value || e, source: 'hunter', confidence: e.confidence || 70 });\n      }\n    }\n  }\n  \n  // ---- HEADHUNTER / DECISION MAKERS ----\n  if (nodeId.includes('headhunter') || nodeName.toLowerCase().includes('headhunter')) {\n    if (output.decision_makers?.length) extracted.decision_makers = output.decision_makers;\n  }\n  \n  // ---- RISK OFFICER ----\n  if (nodeId.includes('risk') || nodeName.toLowerCase().includes('risk')) {\n    if (output.risk_score !== undefined) extracted.risk_score = output.risk_score;\n    if (output.red_flags?.length) extracted.red_flags.push(...output.red_flags.map(f => ({ type: 'risk_analysis', flag: f })));\n    if (output.lawsuits?.length) extracted.lawsuits = output.lawsuits;\n    if (output.bbb_complaints?.length) extracted.bbb_complaints = output.bbb_complaints;\n  }\n  \n  // ---- INTEL ANALYST ----\n  if (nodeId.includes('intel') || nodeName.toLowerCase().includes('intel') || nodeName.toLowerCase().includes('analyst')) {\n    if (output.summary) extracted.intel_summaries.push({ source: 'intel_analyst', summary: output.summary });\n    if (output.intel_summary) extracted.intel_summaries.push({ source: 'intel_analyst', summary: output.intel_summary });\n  }\n}\n\n// ========================================\n// DETERMINE BEST VALUES (HIGHEST CONFIDENCE)\n// ========================================\n\n// Best owner name\nconst sortedOwners = extracted.owner_names.sort((a, b) => (b.confidence || 0) - (a.confidence || 0));\nconst bestOwner = sortedOwners[0] || null;\n\n// Best email\nconst sortedEmails = extracted.emails.sort((a, b) => (b.confidence || 0) - (a.confidence || 0));\nconst bestEmail = sortedEmails[0] || null;\n\n// Best LinkedIn profile (owner/ceo first)\nconst ownerLinkedIn = extracted.linkedin_profiles.find(p => p.role === 'owner' || p.role === 'ceo');\nconst bestLinkedIn = ownerLinkedIn || extracted.linkedin_profiles[0] || null;\n\n// Best employee count\nconst bestEmployeeCount = extracted.employee_counts[0]?.count || null;\n\nreturn [{\n  json: {\n    // IDs\n    research_run_id: trigger.research_run_id,\n    company_id: trigger.company_id,\n    airtable_id: trigger.airtable_id ?? enrichedRow.airtable_id ?? null,\n    \n    // Current enriched_leads data\n    enriched_lead: enrichedRow,\n    \n    // Full context from company_contexts\n    context_summary,\n    context_jsonb,\n    \n    // Extracted & Ranked Data\n    extracted,\n    \n    // Best Values\n    best_owner: bestOwner,\n    best_email: bestEmail,\n    best_linkedin: bestLinkedIn,\n    best_employee_count: bestEmployeeCount,\n    \n    // Metrics\n    tools_succeeded_count: extracted.tools_succeeded.length,\n    tools_failed_count: extracted.tools_failed.length,\n    total_api_calls: extracted.total_api_calls,\n    total_cost_usd: extracted.total_cost_usd.toFixed(4)\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-320, 300],
+      "id": "code-assemble",
+      "name": "⚙️ Assemble Full Dossier"
+    },
+    {
+      "parameters": {
+        "jsCode": "// 🧮 Calculate DCS Score\n// Data Confidence Score based on evidence from all sources\n\nconst data = $json;\nconst extracted = data.extracted;\nconst enriched = data.enriched_lead || {};\n\n// ========================================\n// DCS SCORING BREAKDOWN\n// ========================================\n\nconst scoring = {\n  // CONTACT REACHABILITY (max 30 points)\n  contact: {\n    has_email: 0,\n    email_confidence: 0,\n    has_phone: 0,\n    has_linkedin: 0,\n    has_contact_form: 0,\n    subtotal: 0\n  },\n  \n  // OWNER IDENTIFICATION (max 25 points)\n  owner: {\n    has_owner_name: 0,\n    owner_confidence: 0,\n    multiple_sources: 0,\n    subtotal: 0\n  },\n  \n  // BUSINESS VALIDATION (max 20 points)\n  business: {\n    has_reviews: 0,\n    review_rating: 0,\n    review_volume: 0,\n    has_website: 0,\n    subtotal: 0\n  },\n  \n  // INTEL QUALITY (max 15 points)\n  intel: {\n    has_firmographics: 0,\n    has_intel_summary: 0,\n    has_decision_makers: 0,\n    subtotal: 0\n  },\n  \n  // RISK ASSESSMENT (max 10 points - penalty based)\n  risk: {\n    no_red_flags: 10,\n    red_flag_penalty: 0,\n    subtotal: 10\n  }\n};\n\n// ---- CONTACT REACHABILITY ----\nif (data.best_email?.email) {\n  scoring.contact.has_email = 10;\n  scoring.contact.email_confidence = Math.min(10, Math.round((data.best_email.confidence || 50) / 10));\n}\nif (enriched.contact_phone || enriched.company_phone) scoring.contact.has_phone = 5;\nif (data.best_linkedin?.linkedin_url) scoring.contact.has_linkedin = 3;\nif (extracted.websites?.some(w => w.type === 'contact_form')) scoring.contact.has_contact_form = 2;\nscoring.contact.subtotal = scoring.contact.has_email + scoring.contact.email_confidence + \n                           scoring.contact.has_phone + scoring.contact.has_linkedin + \n                           scoring.contact.has_contact_form;\n\n// ---- OWNER IDENTIFICATION ----\nif (data.best_owner?.name) {\n  scoring.owner.has_owner_name = 10;\n  scoring.owner.owner_confidence = Math.min(10, Math.round((data.best_owner.confidence || 50) / 10));\n}\nconst uniqueSources = new Set(extracted.owner_names.map(o => o.source)).size;\nscoring.owner.multiple_sources = Math.min(5, uniqueSources * 2);\nscoring.owner.subtotal = scoring.owner.has_owner_name + scoring.owner.owner_confidence + \n                         scoring.owner.multiple_sources;\n\n// ---- BUSINESS VALIDATION ----\nif (extracted.google_review_count > 0) {\n  scoring.business.has_reviews = 5;\n  \n  // Rating score (4.0+ = 5pts, 3.5+ = 3pts, 3.0+ = 1pt)\n  const rating = extracted.google_rating || 0;\n  if (rating >= 4.0) scoring.business.review_rating = 5;\n  else if (rating >= 3.5) scoring.business.review_rating = 3;\n  else if (rating >= 3.0) scoring.business.review_rating = 1;\n  \n  // Volume score (100+ = 5pts, 50+ = 3pts, 10+ = 1pt)\n  const count = extracted.google_review_count || 0;\n  if (count >= 100) scoring.business.review_volume = 5;\n  else if (count >= 50) scoring.business.review_volume = 3;\n  else if (count >= 10) scoring.business.review_volume = 1;\n}\nif (enriched.company_domain) scoring.business.has_website = 5;\nscoring.business.subtotal = scoring.business.has_reviews + scoring.business.review_rating + \n                            scoring.business.review_volume + scoring.business.has_website;\n\n// ---- INTEL QUALITY ----\nif (data.best_employee_count) scoring.intel.has_firmographics = 5;\nif (extracted.intel_summaries.length > 0) scoring.intel.has_intel_summary = 5;\nif (extracted.decision_makers.length > 0) scoring.intel.has_decision_makers = 5;\nscoring.intel.subtotal = scoring.intel.has_firmographics + scoring.intel.has_intel_summary + \n                         scoring.intel.has_decision_makers;\n\n// ---- RISK ASSESSMENT ----\nconst redFlagCount = extracted.red_flags.length + extracted.lawsuits.length + extracted.bbb_complaints.length;\nscoring.risk.red_flag_penalty = Math.min(10, redFlagCount * 3);\nscoring.risk.subtotal = Math.max(0, 10 - scoring.risk.red_flag_penalty);\n\n// ========================================\n// CALCULATE TOTAL & TIER\n// ========================================\n\nconst totalScore = scoring.contact.subtotal + scoring.owner.subtotal + \n                   scoring.business.subtotal + scoring.intel.subtotal + \n                   scoring.risk.subtotal;\n\nlet tier = 'bronze';\nif (totalScore >= 70) tier = 'platinum';\nelse if (totalScore >= 50) tier = 'gold';\n\n// ========================================\n// DETERMINE READINESS\n// ========================================\n\nconst hasReachableChannel = !!(data.best_email?.email || enriched.contact_phone || enriched.company_phone);\nconst hasOwnerInfo = !!(data.best_owner?.name);\nconst hasMinimalData = data.tools_succeeded_count >= 3;\n\nconst outreach_ready = hasReachableChannel && hasMinimalData;\n\nlet readiness_reason = '';\nif (!hasReachableChannel) readiness_reason = 'No reachable contact channel (email or phone)';\nelse if (!hasMinimalData) readiness_reason = `Only ${data.tools_succeeded_count} tools succeeded, need at least 3`;\nelse readiness_reason = `Ready: ${tier.toUpperCase()} tier lead with ${data.tools_succeeded_count} data sources`;\n\nreturn [{\n  json: {\n    ...data,\n    \n    // DCS Results\n    dcs_score: totalScore,\n    dcs_tier: tier,\n    dcs_breakdown: scoring,\n    \n    // Readiness\n    outreach_ready,\n    readiness_reason,\n    \n    // Flags for AI\n    has_reachable_channel: hasReachableChannel,\n    has_owner_info: hasOwnerInfo,\n    has_minimal_data: hasMinimalData\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-80, 300],
+      "id": "code-dcs",
+      "name": "🧮 Calculate DCS Score"
+    },
+    {
+      "parameters": {
+        "jsCode": "// 🧾 Build AI Analysis Prompt\n// Creates a comprehensive prompt for the AI to analyze the lead\n\nconst data = $json;\nconst extracted = data.extracted;\nconst enriched = data.enriched_lead || {};\n\n// Build a structured summary of what we found\nconst findings = [];\n\n// Owner Info\nif (data.best_owner?.name) {\n  findings.push(`OWNER: ${data.best_owner.name} (from ${data.best_owner.source}, ${data.best_owner.confidence}% confidence)`);\n}\nif (extracted.owner_names.length > 1) {\n  findings.push(`OTHER NAME CANDIDATES: ${extracted.owner_names.slice(1).map(o => `${o.name} (${o.source})`).join(', ')}`);\n}\n\n// Contact Info\nif (data.best_email?.email) {\n  findings.push(`EMAIL: ${data.best_email.email} (${data.best_email.source}, ${data.best_email.confidence}% confidence)`);\n}\nif (enriched.contact_phone) findings.push(`PHONE: ${enriched.contact_phone}`);\nif (data.best_linkedin?.linkedin_url) {\n  findings.push(`LINKEDIN: ${data.best_linkedin.name || 'Unknown'} - ${data.best_linkedin.linkedin_url}`);\n}\n\n// Business Info\nfindings.push(`COMPANY: ${enriched.company_name || 'Unknown'}`);\nif (enriched.company_domain) findings.push(`WEBSITE: ${enriched.company_domain}`);\nif (enriched.company_address) findings.push(`ADDRESS: ${enriched.company_address}`);\nif (data.best_employee_count) findings.push(`EMPLOYEES: ~${data.best_employee_count}`);\n\n// Reviews\nif (extracted.google_rating) {\n  findings.push(`GOOGLE RATING: ${extracted.google_rating} stars (${extracted.google_review_count || 0} reviews)`);\n}\nif (extracted.review_highlights?.length) {\n  findings.push(`REVIEW HIGHLIGHTS: ${extracted.review_highlights.slice(0, 3).join('; ')}`);\n}\nif (extracted.owner_response_rate) {\n  findings.push(`OWNER RESPONDS TO REVIEWS: ${extracted.owner_response_rate}% of the time`);\n}\n\n// Hiring\nif (extracted.is_hiring) {\n  findings.push(`CURRENTLY HIRING: ${extracted.hiring_roles.join(', ') || 'Yes'}`);\n}\n\n// Risk\nif (extracted.red_flags.length > 0) {\n  findings.push(`RED FLAGS: ${extracted.red_flags.map(f => f.flag || f.title || f.type).join('; ')}`);\n}\nif (extracted.risk_score !== null) {\n  findings.push(`RISK SCORE: ${extracted.risk_score}/100`);\n}\n\n// Intel\nif (extracted.intel_summaries.length > 0) {\n  for (const intel of extracted.intel_summaries.slice(0, 2)) {\n    findings.push(`INTEL (${intel.source}): ${intel.summary.substring(0, 200)}...`);\n  }\n}\n\n// Tool Performance\nfindings.push(`DATA QUALITY: ${data.tools_succeeded_count} tools succeeded, ${data.tools_failed_count} failed`);\nfindings.push(`DCS SCORE: ${data.dcs_score}/100 (${data.dcs_tier.toUpperCase()})`);\n\nconst systemPrompt = `You are a senior sales intelligence analyst at Auto Shop Media, specializing in automotive service businesses.\n\nYour job is to analyze the enrichment data for a potential lead and provide:\n1. A comprehensive LEAD PROFILE summarizing who they are and their business\n2. PERSONALIZATION HOOKS - specific, evidence-based talking points for outreach\n3. PAIN POINTS - likely challenges this business faces based on the data\n4. BUYING SIGNALS - indicators they might be ready to buy our services\n5. RED FLAGS - any concerns or reasons to deprioritize this lead\n6. RECOMMENDED APPROACH - how to best reach out to this lead\n\nRULES:\n- Only cite facts present in the data. Do not invent or assume.\n- Be specific. \"Strong reviews\" is weak. \"4.5 stars with 127 reviews mentioning fast turnaround\" is strong.\n- If data is missing, acknowledge it. Don't pretend we have info we don't.\n- For personalization hooks, reference SPECIFIC things from their reviews, website, or hiring activity.\n- Pain points should be inferred from evidence (e.g., hiring = likely understaffed)\n- Buying signals should be concrete (e.g., \"currently hiring technicians\" = growth mode)\n\nRespond with JSON only. No markdown.`;\n\nconst userPrompt = `Analyze this lead for Auto Shop Media.\n\n=== ENRICHMENT FINDINGS ===\n${findings.join('\\n')}\n\n=== FULL CONTEXT (from company_contexts) ===\n${data.context_summary || 'No summary available'}\n\n=== RAW CONTEXT DATA ===\n${JSON.stringify(data.context_jsonb, null, 2).substring(0, 3000)}\n\nProvide your analysis as JSON with these exact fields:\n{\n  \"lead_profile\": \"2-3 sentence summary of who this lead is\",\n  \"personalization_hooks\": [\"specific hook 1\", \"specific hook 2\", ...],\n  \"pain_points\": [\"likely pain point 1\", \"likely pain point 2\", ...],\n  \"buying_signals\": [\"signal 1\", \"signal 2\", ...],\n  \"red_flags\": [\"concern 1\", ...],\n  \"talking_points\": [\"specific thing to mention 1\", \"specific thing to mention 2\", ...],\n  \"recommended_channel\": \"email\" or \"sms\" or \"call\",\n  \"best_time_to_contact\": \"morning\" or \"afternoon\" or \"evening\",\n  \"approach_notes\": \"1-2 sentences on how to approach this lead\",\n  \"confidence_assessment\": \"high\" or \"medium\" or \"low\",\n  \"confidence_reason\": \"why you rated confidence this way\"\n}`;\n\nreturn [{\n  json: {\n    ...data,\n    ai_prompt: {\n      system: systemPrompt,\n      user: userPrompt\n    }\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [160, 300],
+      "id": "code-build-prompt",
+      "name": "🧾 Build AI Analysis Prompt"
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "gpt-4o",
+          "mode": "list",
+          "cachedResultName": "GPT-4O"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "={{ $json.ai_prompt.system }}",
+              "role": "system"
+            },
+            {
+              "content": "={{ $json.ai_prompt.user }}"
+            }
+          ]
+        },
+        "options": {
+          "temperature": 0.3,
+          "responseFormat": "json_object"
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1.8,
+      "position": [400, 300],
+      "id": "ai-lead-analyst",
+      "name": "🤖 AI Lead Analyst",
+      "credentials": {
+        "openAiApi": {
+          "id": "Lb7LQd5GQa1bZ9yX",
+          "name": "OpenAi account 4"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ⚙️ Parse & Validate AI Analysis\n// Extracts and validates the AI response\n\nconst prevData = $('🧾 Build AI Analysis Prompt').first().json;\nconst ai = $json;\n\n// The LangChain OpenAI node returns differently than HTTP Request\nlet text = '';\ntry {\n  // LangChain node returns content directly or in message property\n  if (typeof ai.text === 'string') {\n    text = ai.text;\n  } else if (typeof ai.content === 'string') {\n    text = ai.content;\n  } else if (ai.message?.content) {\n    text = ai.message.content;\n  } else if (ai.choices?.[0]?.message?.content) {\n    text = ai.choices[0].message.content;\n  } else if (typeof ai === 'string') {\n    text = ai;\n  }\n} catch (e) {\n  text = '';\n}\n\n// Clean markdown artifacts\ntext = (text || '').replace(/```json/g, '').replace(/```/g, '').trim();\n\nlet parsed = {};\ntry {\n  parsed = JSON.parse(text);\n} catch (e) {\n  parsed = {\n    lead_profile: 'AI analysis failed to parse',\n    confidence_assessment: 'low',\n    confidence_reason: 'Parse error: ' + e.message\n  };\n}\n\n// Validation helpers\nconst cleanArray = (v) => Array.isArray(v) ? v.filter(x => typeof x === 'string').slice(0, 7) : [];\nconst allowedChannel = new Set(['email', 'sms', 'call']);\nconst allowedTime = new Set(['morning', 'afternoon', 'evening']);\nconst allowedConfidence = new Set(['high', 'medium', 'low']);\n\nconst aiAnalysis = {\n  lead_profile: typeof parsed.lead_profile === 'string' ? parsed.lead_profile : '',\n  personalization_hooks: cleanArray(parsed.personalization_hooks),\n  pain_points: cleanArray(parsed.pain_points),\n  buying_signals: cleanArray(parsed.buying_signals),\n  red_flags: cleanArray(parsed.red_flags),\n  talking_points: cleanArray(parsed.talking_points),\n  recommended_channel: allowedChannel.has(parsed.recommended_channel) ? parsed.recommended_channel : 'email',\n  best_time_to_contact: allowedTime.has(parsed.best_time_to_contact) ? parsed.best_time_to_contact : 'morning',\n  approach_notes: typeof parsed.approach_notes === 'string' ? parsed.approach_notes : '',\n  confidence_assessment: allowedConfidence.has(parsed.confidence_assessment) ? parsed.confidence_assessment : 'medium',\n  confidence_reason: typeof parsed.confidence_reason === 'string' ? parsed.confidence_reason : ''\n};\n\nreturn [{\n  json: {\n    // Pass through all previous data\n    research_run_id: prevData.research_run_id,\n    company_id: prevData.company_id,\n    airtable_id: prevData.airtable_id,\n    enriched_lead: prevData.enriched_lead,\n    \n    // DCS data\n    dcs_score: prevData.dcs_score,\n    dcs_tier: prevData.dcs_tier,\n    dcs_breakdown: prevData.dcs_breakdown,\n    \n    // Best values\n    best_owner: prevData.best_owner,\n    best_email: prevData.best_email,\n    best_linkedin: prevData.best_linkedin,\n    best_employee_count: prevData.best_employee_count,\n    \n    // Extracted data\n    extracted: prevData.extracted,\n    \n    // Readiness\n    outreach_ready: prevData.outreach_ready,\n    readiness_reason: prevData.readiness_reason,\n    \n    // AI Analysis\n    ai_analysis: aiAnalysis,\n    \n    // Metrics\n    tools_succeeded_count: prevData.tools_succeeded_count,\n    tools_failed_count: prevData.tools_failed_count,\n    total_cost_usd: prevData.total_cost_usd\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [640, 300],
+      "id": "code-parse-ai",
+      "name": "⚙️ Parse AI Analysis"
+    },
+    {
+      "parameters": {
+        "jsCode": "// 🏗️ Build Final Update Payload\n// Prepares the complete update for enriched_leads table\n\nconst data = $json;\nconst enriched = data.enriched_lead || {};\nconst ai = data.ai_analysis || {};\nconst extracted = data.extracted || {};\n\n// Combine AI profile with context summary for intel_summary\nconst intel_summary = [\n  ai.lead_profile,\n  ai.approach_notes,\n  `DCS: ${data.dcs_tier?.toUpperCase()} (${data.dcs_score}/100)`,\n  `AI Confidence: ${ai.confidence_assessment} - ${ai.confidence_reason}`\n].filter(Boolean).join('\\n\\n');\n\n// Update contact info if we found better data\nconst contact_firstname = data.best_owner?.name?.split(' ')[0] || enriched.contact_firstname || '';\nconst contact_lastname = data.best_owner?.name?.split(' ').slice(1).join(' ') || enriched.contact_lastname || '';\nconst contact_email = data.best_email?.email || enriched.contact_email || null;\nconst contact_linkedin = data.best_linkedin?.linkedin_url || enriched.contact_linkedin || null;\nconst contact_confidence = data.best_email?.confidence || data.best_owner?.confidence || enriched.contact_confidence || 0;\n\nreturn [{\n  json: {\n    // IDs\n    research_run_id: data.research_run_id,\n    company_id: data.company_id,\n    airtable_id: data.airtable_id,\n    \n    // DCS\n    dcs_tier: data.dcs_tier,\n    dcs_score: data.dcs_score,\n    dcs_breakdown: data.dcs_breakdown,\n    \n    // Contact (potentially updated)\n    contact_firstname,\n    contact_lastname,\n    contact_email,\n    contact_linkedin,\n    contact_confidence,\n    contact_source: data.best_email?.source || data.best_owner?.source || enriched.contact_source || 'unknown',\n    \n    // Company (from extracted)\n    company_rating: extracted.google_rating || enriched.company_rating,\n    company_review_count: extracted.google_review_count || enriched.company_review_count,\n    company_employee_count: data.best_employee_count || enriched.company_employee_count,\n    google_place_id: extracted.google_place_id || enriched.google_place_id,\n    google_rating: extracted.google_rating || enriched.google_rating,\n    google_review_count: extracted.google_review_count || enriched.google_review_count,\n    \n    // Intel & AI Analysis\n    intel_summary,\n    personalization_hooks: ai.personalization_hooks || [],\n    pain_points: ai.pain_points || [],\n    buying_signals: ai.buying_signals || [],\n    red_flags: ai.red_flags || [],\n    talking_points: ai.talking_points || [],\n    \n    // Outreach Strategy\n    recommended_channel: ai.recommended_channel || 'email',\n    best_time_to_contact: ai.best_time_to_contact || 'morning',\n    \n    // Status\n    outreach_ready: data.outreach_ready,\n    \n    // For return\n    ai_confidence: ai.confidence_assessment,\n    readiness_reason: data.readiness_reason\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [880, 300],
+      "id": "code-build-update",
+      "name": "🏗️ Build Final Update"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE public.enriched_leads SET dcs_tier = $2, dcs_score = $3, dcs_breakdown = $4::jsonb, contact_firstname = COALESCE(NULLIF($5, ''), contact_firstname), contact_lastname = COALESCE(NULLIF($6, ''), contact_lastname), contact_email = COALESCE($7, contact_email), contact_linkedin = COALESCE($8, contact_linkedin), contact_confidence = GREATEST($9, contact_confidence), contact_source = COALESCE(NULLIF($10, 'unknown'), contact_source), company_rating = COALESCE($11, company_rating), company_review_count = COALESCE($12, company_review_count), company_employee_count = COALESCE($13, company_employee_count), google_place_id = COALESCE($14, google_place_id), google_rating = COALESCE($15, google_rating), google_review_count = COALESCE($16, google_review_count), intel_summary = $17, personalization_hooks = $18::jsonb, pain_points = $19::jsonb, buying_signals = $20::jsonb, red_flags = $21::jsonb, talking_points = $22::jsonb, recommended_channel = $23, best_time_to_contact = $24, outreach_ready = $25, updated_at = NOW() WHERE research_run_id = $1 RETURNING *;",
+        "options": {
+          "queryReplacement": "={{ [$json.research_run_id, $json.dcs_tier, $json.dcs_score, JSON.stringify($json.dcs_breakdown), $json.contact_firstname, $json.contact_lastname, $json.contact_email, $json.contact_linkedin, $json.contact_confidence, $json.contact_source, $json.company_rating, $json.company_review_count, $json.company_employee_count, $json.google_place_id, $json.google_rating, $json.google_review_count, $json.intel_summary, JSON.stringify($json.personalization_hooks), JSON.stringify($json.pain_points), JSON.stringify($json.buying_signals), JSON.stringify($json.red_flags), JSON.stringify($json.talking_points), $json.recommended_channel, $json.best_time_to_contact, $json.outreach_ready] }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [1120, 300],
+      "id": "db-update-lead",
+      "name": "🗄️ Update enriched_leads",
+      "credentials": {
+        "postgres": {
+          "id": "xogKD739Qe4gqWBU",
+          "name": "Postgres account"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// 📤 Return Final Result\n// Standardized return for orchestrator\n\nconst update = $('🏗️ Build Final Update').first().json;\nconst dbResult = $json;\n\nconst hookCount = update.personalization_hooks?.length || 0;\nconst painCount = update.pain_points?.length || 0;\nconst signalCount = update.buying_signals?.length || 0;\n\nlet summary = '';\nif (update.outreach_ready) {\n  summary = `${update.dcs_tier.toUpperCase()} lead ready for ${update.recommended_channel}. ` +\n            `${hookCount} hooks, ${signalCount} buying signals. ` +\n            `AI confidence: ${update.ai_confidence}.`;\n} else {\n  summary = `Lead not ready: ${update.readiness_reason}. DCS: ${update.dcs_score}/100.`;\n}\n\nreturn [{\n  json: {\n    success: true,\n    stage: 'outreach_compiler',\n    \n    // Key outputs\n    dcs_tier: update.dcs_tier,\n    dcs_score: update.dcs_score,\n    outreach_ready: update.outreach_ready,\n    recommended_channel: update.recommended_channel,\n    ai_confidence: update.ai_confidence,\n    \n    // Counts\n    hooks_count: hookCount,\n    pain_points_count: painCount,\n    buying_signals_count: signalCount,\n    \n    // Summary\n    run_summary: summary,\n    \n    // IDs\n    research_run_id: update.research_run_id,\n    company_id: update.company_id,\n    airtable_id: update.airtable_id\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1360, 300],
+      "id": "code-return",
+      "name": "📤 Return Result"
+    }
+  ],
+  "connections": {
+    "When Executed by Another Workflow": {
+      "main": [
+        [
+          { "node": "📥 Get Enriched Lead", "type": "main", "index": 0 },
+          { "node": "📥 Get Company Context", "type": "main", "index": 0 },
+          { "node": "📥 Get Step Logs For Run", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "📥 Get Enriched Lead": {
+      "main": [
+        [{ "node": "🤝 Merge DB Results", "type": "main", "index": 0 }]
+      ]
+    },
+    "📥 Get Company Context": {
+      "main": [
+        [{ "node": "🤝 Merge DB Results", "type": "main", "index": 1 }]
+      ]
+    },
+    "📥 Get Step Logs For Run": {
+      "main": [
+        [{ "node": "🤝 Merge DB Results", "type": "main", "index": 2 }]
+      ]
+    },
+    "🤝 Merge DB Results": {
+      "main": [
+        [{ "node": "⚙️ Assemble Full Dossier", "type": "main", "index": 0 }]
+      ]
+    },
+    "⚙️ Assemble Full Dossier": {
+      "main": [
+        [{ "node": "🧮 Calculate DCS Score", "type": "main", "index": 0 }]
+      ]
+    },
+    "🧮 Calculate DCS Score": {
+      "main": [
+        [{ "node": "🧾 Build AI Analysis Prompt", "type": "main", "index": 0 }]
+      ]
+    },
+    "🧾 Build AI Analysis Prompt": {
+      "main": [
+        [{ "node": "🤖 AI Lead Analyst", "type": "main", "index": 0 }]
+      ]
+    },
+    "🤖 AI Lead Analyst": {
+      "main": [
+        [{ "node": "⚙️ Parse AI Analysis", "type": "main", "index": 0 }]
+      ]
+    },
+    "⚙️ Parse AI Analysis": {
+      "main": [
+        [{ "node": "🏗️ Build Final Update", "type": "main", "index": 0 }]
+      ]
+    },
+    "🏗️ Build Final Update": {
+      "main": [
+        [{ "node": "🗄️ Update enriched_leads", "type": "main", "index": 0 }]
+      ]
+    },
+    "🗄️ Update enriched_leads": {
+      "main": [
+        [{ "node": "📤 Return Result", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "pinData": {},
+  "meta": {
+    "instanceId": "2d82e0d27c2a88970c7ba9693b6bad225f1d31f9cf0d392d33dd9cabf99f185f"
+  }
+}

@@ -1,0 +1,433 @@
+{
+  "name": "🕵️ AI Agent: Salesmsg Operations",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "agent/salesmsg",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "🌐 Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -400,
+        300
+      ],
+      "webhookId": "salesmsg-agent-webhook"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ═══════════════════════════════════════════════════════════════════\n// 📋 Normalize Input + Build Parameterized SQL for Salesmsg Agent\n// ═══════════════════════════════════════════════════════════════════\n\nconst raw = $input.first().json;\nconst body = raw.body || raw;\n\n// Helper to safely quote values for params array\nconst q = (v) => (v === undefined || v === null) ? null : String(v);\n\n// ───────────────────────────────────────────────────────────────────\n// Extract input fields\n// ───────────────────────────────────────────────────────────────────\nconst input = {\n  action: (body.action || body.tool || 'help').toLowerCase().trim(),\n  phone_number: body.phone_number || body.to || body.phone || null,\n  contact_id: body.contact_id || body.hubspot_contact_id || null,\n  company_id: body.company_id || body.hubspot_company_id || null,\n  message_body: body.message || body.body || body.text || null,\n  template_name: body.template || body.template_name || null,\n  template_vars: body.template_vars || body.variables || {},\n  conversation_id: body.conversation_id || body.salesmsg_conversation_id || null,\n  dry_run: body.dry_run === true || body.preview === true,\n  user_id: body.user_id || body.agent_user_id || 'system',\n  session_id: body.session_id || body.conversation_id || `salesmsg_${Date.now()}`\n};\n\n// ───────────────────────────────────────────────────────────────────\n// Action routing map\n// ───────────────────────────────────────────────────────────────────\nconst ACTIONS = {\n  send_sms: 'Send an SMS message to a phone number',\n  send_template: 'Send a pre-built SMS template with variables',\n  get_conversations: 'List recent conversations for a contact/phone',\n  get_messages: 'Get messages from a specific conversation',\n  search_contacts: 'Search Salesmsg contacts by phone or name',\n  create_contact: 'Create a new contact in Salesmsg',\n  update_contact: 'Update an existing Salesmsg contact',\n  send_voicemail: 'Send a ringless voicemail drop',\n  get_templates: 'List available SMS templates',\n  get_analytics: 'Get SMS delivery/response analytics',\n  schedule_message: 'Schedule an SMS for future delivery',\n  cancel_scheduled: 'Cancel a scheduled message',\n  help: 'List available Salesmsg operations'\n};\n\nconst tool_name = `salesmsg_${input.action}`;\nconst action_description = ACTIONS[input.action] || 'Unknown action';\n\n// ───────────────────────────────────────────────────────────────────\n// Build payload for logging\n// ───────────────────────────────────────────────────────────────────\nconst payload_for_log = {\n  action: input.action,\n  phone_number: input.phone_number,\n  contact_id: input.contact_id,\n  company_id: input.company_id,\n  has_message: !!input.message_body,\n  template_name: input.template_name,\n  dry_run: input.dry_run\n};\n\n// ───────────────────────────────────────────────────────────────────\n// Build parameterized SQL for log_start\n// ───────────────────────────────────────────────────────────────────\nconst log_start_sql = `\nINSERT INTO tool_execution_log (\n  tool_name, input_data, success, conversation_id, user_id, required_approval\n)\nVALUES ($1, $2::jsonb, false, $3, $4, $5)\nRETURNING id;\n`;\n\nconst log_start_params = [\n  tool_name,\n  JSON.stringify(payload_for_log),\n  q(input.session_id),\n  q(input.user_id),\n  !input.dry_run && ['send_sms', 'send_template', 'send_voicemail', 'create_contact', 'update_contact', 'schedule_message', 'cancel_scheduled'].includes(input.action)\n];\n\n// ───────────────────────────────────────────────────────────────────\n// Build parameterized SQL for context loading\n// ───────────────────────────────────────────────────────────────────\nconst note_scope = input.company_id ? 'company' : (input.contact_id ? 'contact' : 'global');\nconst note_key = input.company_id || input.contact_id || 'salesmsg_general';\n\nconst ctx_sql = `\nSELECT jsonb_build_object(\n  'recent_messages', (\n    SELECT COALESCE(jsonb_agg(m ORDER BY m.sent_at DESC), '[]'::jsonb)\n    FROM outreach_messages m \n    WHERE (m.company_id::text = $1 OR $1 IS NULL)\n    AND m.channel IN ('sms', 'voicemail')\n    LIMIT 10\n  ),\n  'contact_from_hubspot', (\n    SELECT to_jsonb(c) FROM hubspot_contacts c \n    WHERE c.id = $2 OR c.attrs->'properties'->>'phone' = $3\n    LIMIT 1\n  ),\n  'company_from_hubspot', (\n    SELECT to_jsonb(co) FROM hubspot_companies co \n    WHERE co.id = $4\n    LIMIT 1\n  ),\n  'sms_templates', (\n    SELECT COALESCE(jsonb_agg(jsonb_build_object(\n      'name', t.key,\n      'body', t.value->>'body',\n      'variables', t.value->'variables'\n    )), '[]'::jsonb)\n    FROM memory_items t\n    WHERE t.key LIKE 'sms_template_%'\n    AND t.status = 'active'\n    LIMIT 20\n  ),\n  'agent_notes', (\n    SELECT COALESCE(jsonb_agg(n ORDER BY n.updated_at DESC), '[]'::jsonb)\n    FROM agent_notes n \n    WHERE n.scope = $5 AND n.note_key = $6\n    LIMIT 10\n  ),\n  'outreach_sequence', (\n    SELECT to_jsonb(s) FROM outreach_sequences s\n    WHERE s.company_id::text = $1\n    AND s.status IN ('active', 'paused')\n    ORDER BY s.updated_at DESC\n    LIMIT 1\n  ),\n  'delivery_stats', (\n    SELECT jsonb_build_object(\n      'total_sent', COUNT(*) FILTER (WHERE status = 'sent'),\n      'total_delivered', COUNT(*) FILTER (WHERE delivered_at IS NOT NULL),\n      'total_opened', COUNT(*) FILTER (WHERE opened_at IS NOT NULL),\n      'total_replied', COUNT(*) FILTER (WHERE replied_at IS NOT NULL)\n    )\n    FROM outreach_messages\n    WHERE channel = 'sms'\n    AND sent_at > NOW() - INTERVAL '30 days'\n  )\n) AS context;\n`;\n\nconst ctx_params = [\n  q(input.company_id),\n  q(input.contact_id),\n  q(input.phone_number),\n  q(input.company_id),\n  note_scope,\n  note_key\n];\n\n// ───────────────────────────────────────────────────────────────────\n// Output\n// ───────────────────────────────────────────────────────────────────\nreturn [{\n  json: {\n    input,\n    tool_name,\n    action_description,\n    available_actions: ACTIONS,\n    log_start_sql,\n    log_start_params,\n    ctx_sql,\n    ctx_params\n  }\n}];"
+      },
+      "id": "normalize-input",
+      "name": "📋 Normalize + Build SQL",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -160,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ $json.log_start_sql }}",
+        "options": {
+          "queryReplacement": "={{ $json.log_start_params }}"
+        }
+      },
+      "id": "log-start",
+      "name": "🗄️ Log Start",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        80,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CRED_ID",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ $('📋 Normalize + Build SQL').item.json.ctx_sql }}",
+        "options": {
+          "queryReplacement": "={{ $('📋 Normalize + Build SQL').item.json.ctx_params }}"
+        }
+      },
+      "id": "load-context",
+      "name": "📥 Load Context",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        320,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CRED_ID",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "options": {
+          "systemMessage": "You are the Salesmsg Operations Agent for Auto Shop Media. You help manage SMS communications, voicemail drops, and contact management through Salesmsg.\n\n## Your Capabilities\n- Send SMS messages (individual or templated)\n- Send ringless voicemail drops\n- Manage Salesmsg contacts\n- View conversation history\n- Track delivery analytics\n- Schedule future messages\n\n## Current Context\n{{$json.context}}\n\n## Available Actions\n- send_sms: Send a direct SMS message\n- send_template: Send a pre-built template with variable substitution\n- send_voicemail: Queue a ringless voicemail drop\n- get_conversations: View recent conversations\n- get_messages: Get messages from a conversation\n- search_contacts: Find contacts by phone/name\n- create_contact: Add new contact\n- update_contact: Modify existing contact\n- get_templates: List SMS templates\n- get_analytics: View delivery statistics\n- schedule_message: Schedule future SMS\n- cancel_scheduled: Cancel pending message\n\n## Rules\n1. ALWAYS confirm phone numbers are in E.164 format (+1XXXXXXXXXX)\n2. Check for opt-out status before sending\n3. Respect quiet hours (8am-9pm local time)\n4. Use templates when available for consistency\n5. Log all outreach attempts\n6. If dry_run=true, preview but don't send\n\n## Salesmsg API Reference\nEndpoint: https://api.salesmessage.com/v2/\nAuthentication: Bearer token in header\n\n### Send SMS\nPOST /messages\n{\n  \"to\": \"+1XXXXXXXXXX\",\n  \"message\": \"Your message here\"\n}\n\n### Send MMS (with media)\nPOST /messages\n{\n  \"to\": \"+1XXXXXXXXXX\",\n  \"message\": \"Check this out!\",\n  \"media_url\": \"https://example.com/image.jpg\"\n}\n\nAlways be helpful, professional, and compliant with TCPA regulations."
+        }
+      },
+      "id": "ai-agent",
+      "name": "🕵️ Salesmsg Agent",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.7,
+      "position": [
+        560,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "model": "gpt-4o",
+        "options": {
+          "temperature": 0.3
+        }
+      },
+      "id": "openai-chat",
+      "name": "🧠 OpenAI Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.2,
+      "position": [
+        560,
+        520
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "OPENAI_CRED_ID",
+          "name": "OpenAI API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "name": "send_sms",
+        "description": "Send an SMS message via Salesmsg API. Requires 'to' (E.164 phone) and 'message' (text body).",
+        "workflowId": "={{ $env.SALESMSG_SEND_SMS_WORKFLOW_ID }}",
+        "responsePropertyName": "sms_result"
+      },
+      "id": "tool-send-sms",
+      "name": "📱 Tool: Send SMS",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2,
+      "position": [
+        360,
+        520
+      ]
+    },
+    {
+      "parameters": {
+        "name": "send_voicemail",
+        "description": "Send a ringless voicemail drop. Requires 'to' (E.164 phone) and 'script' (voicemail text to convert to speech).",
+        "workflowId": "={{ $env.SALESMSG_VOICEMAIL_WORKFLOW_ID }}",
+        "responsePropertyName": "voicemail_result"
+      },
+      "id": "tool-voicemail",
+      "name": "🎙️ Tool: Voicemail Drop",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2,
+      "position": [
+        360,
+        640
+      ]
+    },
+    {
+      "parameters": {
+        "name": "get_conversations",
+        "description": "Get recent Salesmsg conversations. Optional 'phone' filter.",
+        "workflowId": "={{ $env.SALESMSG_GET_CONVERSATIONS_WORKFLOW_ID }}",
+        "responsePropertyName": "conversations"
+      },
+      "id": "tool-conversations",
+      "name": "💬 Tool: Get Conversations",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2,
+      "position": [
+        560,
+        640
+      ]
+    },
+    {
+      "parameters": {
+        "name": "schedule_sms",
+        "description": "Schedule an SMS for future delivery. Requires 'to', 'message', and 'send_at' (ISO datetime).",
+        "workflowId": "={{ $env.SALESMSG_SCHEDULE_SMS_WORKFLOW_ID }}",
+        "responsePropertyName": "scheduled_result"
+      },
+      "id": "tool-schedule",
+      "name": "⏰ Tool: Schedule SMS",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2,
+      "position": [
+        760,
+        520
+      ]
+    },
+    {
+      "parameters": {
+        "name": "search_postgres",
+        "description": "Query Postgres database for contact info, outreach history, or templates. Input: SQL query string.",
+        "workflowId": "={{ $env.POSTGRES_QUERY_TOOL_WORKFLOW_ID }}",
+        "responsePropertyName": "query_result"
+      },
+      "id": "tool-postgres",
+      "name": "🗄️ Tool: Query Database",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2,
+      "position": [
+        760,
+        640
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ═══════════════════════════════════════════════════════════════════\n// 📤 Parse Agent Output + Build Parameterized SQL for Log End\n// ═══════════════════════════════════════════════════════════════════\n\nconst agentOutput = $input.first().json;\nconst inputData = $('📋 Normalize + Build SQL').first().json.input;\nconst logStartResult = $('🗄️ Log Start').first().json;\n\nconst tool_execution_id = logStartResult?.id || null;\n\n// ───────────────────────────────────────────────────────────────────\n// Determine success and extract key results\n// ───────────────────────────────────────────────────────────────────\nconst output_text = agentOutput.output || agentOutput.text || JSON.stringify(agentOutput);\nconst success = !output_text.toLowerCase().includes('error') && \n                !output_text.toLowerCase().includes('failed') &&\n                !output_text.toLowerCase().includes('unable to');\n\n// Extract any message IDs or external references\nconst message_id_match = output_text.match(/message[_\\s]?id[\"']?\\s*[:\\s]\\s*[\"']?([a-zA-Z0-9_-]+)/i);\nconst external_id = message_id_match ? message_id_match[1] : null;\n\n// Build output payload\nconst output_payload = {\n  action: inputData.action,\n  result: output_text.substring(0, 2000),\n  success: success,\n  external_id: external_id,\n  dry_run: inputData.dry_run,\n  phone_number: inputData.phone_number,\n  timestamp: new Date().toISOString()\n};\n\n// ───────────────────────────────────────────────────────────────────\n// Build parameterized SQL for log_end\n// ───────────────────────────────────────────────────────────────────\nconst log_end_sql = `\nUPDATE tool_execution_log\nSET \n  success = $1,\n  output_data = $2::jsonb,\n  completed_at = NOW(),\n  duration_ms = EXTRACT(EPOCH FROM (NOW() - started_at)) * 1000\nWHERE id = $3\nRETURNING *;\n`;\n\nconst log_end_params = [\n  success,\n  JSON.stringify(output_payload),\n  tool_execution_id\n];\n\n// ───────────────────────────────────────────────────────────────────\n// Build webhook response\n// ───────────────────────────────────────────────────────────────────\nconst webhook_response = {\n  success: success,\n  action: inputData.action,\n  message: output_text,\n  external_id: external_id,\n  dry_run: inputData.dry_run,\n  execution_id: tool_execution_id\n};\n\nreturn [{\n  json: {\n    log_end_sql,\n    log_end_params,\n    webhook_response,\n    agent_output: agentOutput\n  }\n}];"
+      },
+      "id": "parse-output",
+      "name": "📤 Parse + Finalize Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        800,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ $json.log_end_sql }}",
+        "options": {
+          "queryReplacement": "={{ $json.log_end_params }}"
+        }
+      },
+      "id": "log-end",
+      "name": "🗄️ Log End",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1040,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CRED_ID",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "options": {},
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($('📤 Parse + Finalize Output').item.json.webhook_response) }}"
+      },
+      "id": "respond-webhook",
+      "name": "📤 Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1280,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "🌐 Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "📋 Normalize + Build SQL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📋 Normalize + Build SQL": {
+      "main": [
+        [
+          {
+            "node": "🗄️ Log Start",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🗄️ Log Start": {
+      "main": [
+        [
+          {
+            "node": "📥 Load Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📥 Load Context": {
+      "main": [
+        [
+          {
+            "node": "🕵️ Salesmsg Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🕵️ Salesmsg Agent": {
+      "main": [
+        [
+          {
+            "node": "📤 Parse + Finalize Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🧠 OpenAI Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "🕵️ Salesmsg Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📱 Tool: Send SMS": {
+      "ai_tool": [
+        [
+          {
+            "node": "🕵️ Salesmsg Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🎙️ Tool: Voicemail Drop": {
+      "ai_tool": [
+        [
+          {
+            "node": "🕵️ Salesmsg Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "💬 Tool: Get Conversations": {
+      "ai_tool": [
+        [
+          {
+            "node": "🕵️ Salesmsg Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "⏰ Tool: Schedule SMS": {
+      "ai_tool": [
+        [
+          {
+            "node": "🕵️ Salesmsg Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🗄️ Tool: Query Database": {
+      "ai_tool": [
+        [
+          {
+            "node": "🕵️ Salesmsg Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📤 Parse + Finalize Output": {
+      "main": [
+        [
+          {
+            "node": "🗄️ Log End",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🗄️ Log End": {
+      "main": [
+        [
+          {
+            "node": "📤 Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "name": "ai-agent"
+    },
+    {
+      "name": "salesmsg"
+    },
+    {
+      "name": "sms"
+    },
+    {
+      "name": "communications"
+    },
+    {
+      "name": "outreach"
+    }
+  ],
+  "triggerCount": 1,
+  "pinData": {},
+  "versionId": "1",
+  "meta": {
+    "description": "AI Agent for managing Salesmsg SMS/voicemail operations. Supports sending messages, managing contacts, viewing conversations, and scheduling.",
+    "category": "ai-agent",
+    "triggers": [
+      "webhook"
+    ],
+    "outputs": [
+      "webhook_response",
+      "postgres_log"
+    ],
+    "requiredCredentials": [
+      "Supabase Postgres",
+      "OpenAI API",
+      "Salesmsg API (httpHeaderAuth)"
+    ]
+  }
+}

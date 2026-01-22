@@ -1,0 +1,181 @@
+{
+  "name": "Google Drive SOP Folder Setup",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "trigger-001",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [-576, 0]
+    },
+    {
+      "parameters": {
+        "resource": "folder",
+        "name": "Auto Shop Media - SOPs",
+        "driveId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "My Drive"
+        },
+        "folderId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "root",
+          "cachedResultName": "/ (Root folder)"
+        },
+        "options": {}
+      },
+      "id": "create-root-001",
+      "name": "Create Root SOP Folder",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [-352, 0],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "ExsRjOctoObRh6we",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "folders",
+              "name": "folders",
+              "type": "json",
+              "value": "={{ [\n  { name: '01_MASTER_DOCUMENTS', description: 'Single source of truth - MASTER_SYSTEM_TRUTH, company overview', icon: '📋' },\n  { name: '02_Business_Operations', description: 'How we do business - sales process, client onboarding, pricing', icon: '💼' },\n  { name: '03_Target_Market', description: 'ICP, verticals, qualifying criteria, personas', icon: '🎯' },\n  { name: '04_Services_Products', description: 'What we offer, packages, deliverables', icon: '📦' },\n  { name: '05_Enrichment_Pipeline', description: 'Lead enrichment workflows and tools', icon: '🔍' },\n  { name: '06_HubSpot_CRM', description: 'CRM setup, properties, pipelines, workflows', icon: '🏢' },\n  { name: '07_Outreach_Sequences', description: 'SMS, calls, email sequences, scripts', icon: '📤' },\n  { name: '08_Voice_AI', description: 'Retell agents, call scripts, objection handling', icon: '🎙️' },\n  { name: '09_Infrastructure', description: 'n8n workflows, error handling, monitoring', icon: '⚙️' },\n  { name: '10_Integrations', description: 'External APIs - SerpAPI, Hunter, Firecrawl, Apify', icon: '🔗' },\n  { name: '11_AI_Agents', description: 'Agent behaviors, tools, guardrails', icon: '🤖' },\n  { name: '12_Knowledge_Base', description: 'RAG system, memory, learning examples', icon: '🧠' },\n  { name: '13_Standards_Guidelines', description: 'Coding standards, naming conventions, best practices', icon: '📐' },\n  { name: '14_Templates', description: 'Message templates, email templates, script templates', icon: '📝' },\n  { name: '15_Analytics_Reports', description: 'KPIs, dashboards, reporting SOPs', icon: '📊' },\n  { name: '16_Archive', description: 'Deprecated or old documents', icon: '🗄️' }\n] }}"
+            },
+            {
+              "id": "rootFolderId",
+              "name": "rootFolderId",
+              "type": "string",
+              "value": "={{ $('Create Root SOP Folder').item.json.id }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "define-folders-001",
+      "name": "Define Folder Structure",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [-128, 0]
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "folders",
+        "options": {}
+      },
+      "id": "split-folders-001",
+      "name": "Split Into Items",
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [96, 0]
+    },
+    {
+      "parameters": {
+        "resource": "folder",
+        "name": "={{ $json.name }}",
+        "driveId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "My Drive"
+        },
+        "folderId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $('Define Folder Structure').first().json.rootFolderId }}"
+        },
+        "options": {}
+      },
+      "id": "create-subfolder-001",
+      "name": "Create Category Folder",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [304, 0],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "ExsRjOctoObRh6we",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "aggregate": "aggregateAllItemData",
+        "options": {}
+      },
+      "id": "aggregate-001",
+      "name": "Aggregate Results",
+      "type": "n8n-nodes-base.aggregate",
+      "typeVersion": 1,
+      "position": [528, 0]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO system_registry (system_id, system_name, system_type, category, config, status) VALUES ('google_drive_sops', 'Google Drive SOP Folders', 'storage', 'documentation', $1::jsonb, 'active') ON CONFLICT (system_id) DO UPDATE SET config = $1::jsonb, updated_at = NOW() RETURNING *",
+        "options": {
+          "queryParameters": "={{ JSON.stringify({ root_folder_id: $('Define Folder Structure').first().json.rootFolderId, folders: $json.data.map(f => ({ name: f.name, id: f.id, webViewLink: f.webViewLink })) }) }}"
+        }
+      },
+      "id": "save-config-001",
+      "name": "Save Folder Config to Database",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [752, 0],
+      "credentials": {
+        "postgres": {
+          "id": "BwXy2JHETe47vH1I",
+          "name": "Postgres account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Create helpful output with folder links\nconst rootFolderId = $('Define Folder Structure').first().json.rootFolderId;\nconst folders = $json.data || [];\n\nconst folderLinks = folders.map(f => ({\n  name: f.name,\n  id: f.id,\n  link: `https://drive.google.com/drive/folders/${f.id}`\n}));\n\nreturn [{\n  json: {\n    success: true,\n    message: 'SOP folder structure created successfully!',\n    root_folder: {\n      id: rootFolderId,\n      link: `https://drive.google.com/drive/folders/${rootFolderId}`\n    },\n    category_folders: folderLinks,\n    next_steps: [\n      'Set GOOGLE_DRIVE_SOP_ROOT_FOLDER_ID environment variable to: ' + rootFolderId,\n      'Update SOP Publisher workflow with folder mapping',\n      'Run System Discovery to auto-generate SOPs'\n    ]\n  }\n}];"
+      },
+      "id": "output-001",
+      "name": "Output Folder Structure",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [976, 0]
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [[{ "node": "Create Root SOP Folder", "type": "main", "index": 0 }]]
+    },
+    "Create Root SOP Folder": {
+      "main": [[{ "node": "Define Folder Structure", "type": "main", "index": 0 }]]
+    },
+    "Define Folder Structure": {
+      "main": [[{ "node": "Split Into Items", "type": "main", "index": 0 }]]
+    },
+    "Split Into Items": {
+      "main": [[{ "node": "Create Category Folder", "type": "main", "index": 0 }]]
+    },
+    "Create Category Folder": {
+      "main": [[{ "node": "Aggregate Results", "type": "main", "index": 0 }]]
+    },
+    "Aggregate Results": {
+      "main": [[{ "node": "Save Folder Config to Database", "type": "main", "index": 0 }]]
+    },
+    "Save Folder Config to Database": {
+      "main": [[{ "node": "Output Folder Structure", "type": "main", "index": 0 }]]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "saveManualExecutions": true
+  },
+  "meta": {
+    "templateCredsSetupCompleted": true
+  }
+}

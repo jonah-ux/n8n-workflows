@@ -1,0 +1,500 @@
+{
+  "name": "🧠 Master Orchestrator Agent",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 15
+            }
+          ]
+        }
+      },
+      "id": "schedule-trigger",
+      "name": "⏰ Every 15 Min",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -800,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Check agent control flags\nSELECT * FROM agent_controls LIMIT 1;",
+        "options": {}
+      },
+      "id": "check-controls",
+      "name": "🔍 Check Agent Controls",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        -560,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CRED_ID",
+          "name": "Postgres account"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "kill-switch",
+              "leftValue": "={{ $json.kill_switch }}",
+              "rightValue": false,
+              "operator": {
+                "type": "boolean",
+                "operation": "false",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-enabled",
+      "name": "🔀 Agents Enabled?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.1,
+      "position": [
+        -320,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Get comprehensive system status\nSELECT \n  'research_runs' as metric,\n  COUNT(*) FILTER (WHERE status = 'pending') as pending,\n  COUNT(*) FILTER (WHERE status = 'processing') as processing,\n  COUNT(*) FILTER (WHERE status = 'completed') as completed,\n  COUNT(*) FILTER (WHERE status = 'failed') as failed\nFROM research_runs\nUNION ALL\nSELECT \n  'outreach_sequences',\n  COUNT(*) FILTER (WHERE status = 'pending'),\n  COUNT(*) FILTER (WHERE status = 'active'),\n  COUNT(*) FILTER (WHERE status = 'completed'),\n  COUNT(*) FILTER (WHERE status = 'failed')\nFROM outreach_sequences\nUNION ALL\nSELECT \n  'proposals',\n  COUNT(*) FILTER (WHERE status = 'pending'),\n  0,\n  COUNT(*) FILTER (WHERE status = 'approved'),\n  COUNT(*) FILTER (WHERE status = 'rejected')\nFROM proposals\nUNION ALL\nSELECT \n  'rag_gaps',\n  COUNT(*) FILTER (WHERE status = 'pending'),\n  COUNT(*) FILTER (WHERE status = 'in_progress'),\n  COUNT(*) FILTER (WHERE status = 'completed'),\n  0\nFROM rag_gaps\nUNION ALL\nSELECT\n  'companies',\n  COUNT(*),\n  0,\n  0,\n  0\nFROM companies;",
+        "options": {}
+      },
+      "id": "get-system-status",
+      "name": "🔍 Get System Status",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        -80,
+        200
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CRED_ID",
+          "name": "Postgres account"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Get recent workflow executions health\nSELECT \n  workflow_name,\n  COUNT(*) as total_runs,\n  COUNT(*) FILTER (WHERE status = 'success') as success,\n  COUNT(*) FILTER (WHERE status = 'error') as errors,\n  AVG(duration_ms) as avg_duration_ms\nFROM workflow_executions\nWHERE started_at > NOW() - INTERVAL '24 hours'\nGROUP BY workflow_name\nORDER BY errors DESC, total_runs DESC\nLIMIT 20;",
+        "options": {}
+      },
+      "id": "get-workflow-health",
+      "name": "🔍 Get Workflow Health",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        -80,
+        400
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CRED_ID",
+          "name": "Postgres account"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Get pending outreach actions for today\nSELECT \n  os.sequence_id,\n  os.company_id,\n  os.current_step,\n  os.next_step_date,\n  os.contact_data,\n  os.total_touches\nFROM outreach_sequences os\nWHERE os.status = 'active'\nAND os.next_step_date <= CURRENT_DATE\nORDER BY os.next_step_date ASC\nLIMIT 20;",
+        "options": {}
+      },
+      "id": "get-pending-outreach",
+      "name": "🔍 Get Pending Outreach",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        -80,
+        600
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CRED_ID",
+          "name": "Postgres account"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// ═══════════════════════════════════════════════════════════════════\n// 🧠 Analyze System State & Generate Actions\n// ═══════════════════════════════════════════════════════════════════\n\nconst systemStatus = $('🔍 Get System Status').all().map(i => i.json);\nconst workflowHealth = $('🔍 Get Workflow Health').all().map(i => i.json);\nconst pendingOutreach = $('🔍 Get Pending Outreach').all().map(i => i.json);\n\n// Build status map\nconst statusMap = {};\nsystemStatus.forEach(s => {\n  statusMap[s.metric] = {\n    pending: parseInt(s.pending) || 0,\n    processing: parseInt(s.processing) || 0,\n    completed: parseInt(s.completed) || 0,\n    failed: parseInt(s.failed) || 0\n  };\n});\n\n// Calculate health scores\nlet healthScore = 100;\nconst issues = [];\nconst actions = [];\n\n// Check research runs\nif (statusMap.research_runs?.processing > 10) {\n  healthScore -= 10;\n  issues.push(`${statusMap.research_runs.processing} research runs stuck in processing`);\n  actions.push({ type: 'trigger_workflow', workflow: 'Research_Run_Recovery', priority: 'high' });\n}\n\n// Check proposals backlog\nif (statusMap.proposals?.pending > 100) {\n  healthScore -= 5;\n  issues.push(`${statusMap.proposals.pending} proposals pending`);\n  actions.push({ type: 'trigger_workflow', workflow: 'Proposal_Auto_Processor', priority: 'medium' });\n}\n\n// Check RAG gaps\nif (statusMap.rag_gaps?.processing > 200) {\n  healthScore -= 5;\n  issues.push(`${statusMap.rag_gaps.processing} RAG gaps stuck`);\n  actions.push({ type: 'trigger_workflow', workflow: 'RAG_Gap_Completion_Agent', priority: 'medium' });\n}\n\n// Check companies count (lead gen needed?)\nif (statusMap.companies?.pending < 20) {\n  healthScore -= 5;\n  issues.push('Low company count - need more lead generation');\n  actions.push({ type: 'trigger_workflow', workflow: 'Lead_Generation_Pipeline', priority: 'high' });\n}\n\n// Check workflow errors\nconst errorWorkflows = workflowHealth.filter(w => parseInt(w.errors) > 3);\nif (errorWorkflows.length > 0) {\n  healthScore -= errorWorkflows.length * 2;\n  errorWorkflows.forEach(w => {\n    issues.push(`${w.workflow_name}: ${w.errors} errors in last 24h`);\n  });\n}\n\n// Check pending outreach\nif (pendingOutreach.length > 0) {\n  actions.push({ \n    type: 'trigger_workflow', \n    workflow: 'Outreach_Sequence_Step_Executor', \n    priority: 'high',\n    data: { sequences: pendingOutreach.length }\n  });\n}\n\nconst analysis = {\n  timestamp: new Date().toISOString(),\n  health_score: Math.max(0, healthScore),\n  health_status: healthScore >= 80 ? 'healthy' : (healthScore >= 50 ? 'degraded' : 'critical'),\n  metrics: statusMap,\n  workflow_health: workflowHealth,\n  pending_outreach_count: pendingOutreach.length,\n  issues: issues,\n  recommended_actions: actions,\n  requires_attention: issues.length > 0\n};\n\nreturn [{ json: analysis }];"
+      },
+      "id": "analyze-state",
+      "name": "🧠 Analyze & Plan Actions",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        160,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Log orchestrator analysis\nINSERT INTO agent_audit_log (\n  action, action_type, success, duration_ms, input_data, output_data\n) VALUES (\n  'master_orchestrator_analysis',\n  'orchestrator',\n  true,\n  0,\n  '{\"trigger\": \"scheduled\"}'::jsonb,\n  $1::jsonb\n);",
+        "options": {
+          "queryReplacement": "={{ [JSON.stringify($json)] }}"
+        }
+      },
+      "id": "log-analysis",
+      "name": "🗄️ Log Analysis",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        400,
+        400
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CRED_ID",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "has-actions",
+              "leftValue": "={{ $json.recommended_actions.length }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-actions",
+      "name": "🔀 Has Actions?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.1,
+      "position": [
+        640,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ═══════════════════════════════════════════════════════════════════\n// ⚙️ Prepare Actions for Execution\n// ═══════════════════════════════════════════════════════════════════\n\nconst analysis = $input.first().json;\nconst actions = analysis.recommended_actions || [];\n\n// Filter to high priority actions only for automatic execution\nconst highPriorityActions = actions.filter(a => a.priority === 'high');\n\n// For now, just prepare the queue - actual triggering would call n8n API\nconst queue = highPriorityActions.map(action => ({\n  json: {\n    action_type: action.type,\n    workflow: action.workflow,\n    priority: action.priority,\n    data: action.data || {},\n    queued_at: new Date().toISOString(),\n    status: 'queued'\n  }\n}));\n\nreturn queue.length > 0 ? queue : [{ json: { no_actions: true } }];"
+      },
+      "id": "prepare-actions",
+      "name": "⚙️ Prepare Actions",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Queue action in communication_queue for execution\nINSERT INTO communication_queue (\n  type, severity, body, channel, status, scheduled_for\n) VALUES (\n  'workflow_trigger',\n  CASE WHEN $1 = 'high' THEN 'high' ELSE 'medium' END,\n  $2::jsonb,\n  'internal',\n  'queued',\n  NOW()\n)\nRETURNING *;",
+        "options": {
+          "queryReplacement": "={{ [$json.priority, JSON.stringify({workflow: $json.workflow, data: $json.data})] }}"
+        }
+      },
+      "id": "queue-action",
+      "name": "🗄️ Queue Action",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1120,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CRED_ID",
+          "name": "Postgres account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "critical",
+              "leftValue": "={{ $('🧠 Analyze & Plan Actions').first().json.health_status }}",
+              "rightValue": "critical",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-critical",
+      "name": "🔀 Critical?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.1,
+      "position": [
+        1360,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.salesmessage.com/pub/v2.2/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"to\": \"+13204064600\",\n  \"message\": \"🚨 SYSTEM ALERT - {{ $('🧠 Analyze & Plan Actions').first().json.health_status.toUpperCase() }}\\n\\nHealth Score: {{ $('🧠 Analyze & Plan Actions').first().json.health_score }}/100\\n\\nIssues:\\n{{ $('🧠 Analyze & Plan Actions').first().json.issues.slice(0, 5).map(i => '• ' + i).join('\\\\n') }}\\n\\nActions Queued: {{ $('🧠 Analyze & Plan Actions').first().json.recommended_actions.length }}\"\n}",
+        "options": {}
+      },
+      "id": "alert-critical",
+      "name": "🚨 Alert Critical",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1600,
+        300
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "HTTP_AUTH_CRED_ID",
+          "name": "HubSpot Private App - Full Access"
+        }
+      },
+      "continueOnFail": true
+    }
+  ],
+  "connections": {
+    "⏰ Every 15 Min": {
+      "main": [
+        [
+          {
+            "node": "🔍 Check Agent Controls",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔍 Check Agent Controls": {
+      "main": [
+        [
+          {
+            "node": "🔀 Agents Enabled?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔀 Agents Enabled?": {
+      "main": [
+        [
+          {
+            "node": "🔍 Get System Status",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "🔍 Get Workflow Health",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "🔍 Get Pending Outreach",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "🔍 Get System Status": {
+      "main": [
+        [
+          {
+            "node": "🧠 Analyze & Plan Actions",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔍 Get Workflow Health": {
+      "main": [
+        [
+          {
+            "node": "🧠 Analyze & Plan Actions",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔍 Get Pending Outreach": {
+      "main": [
+        [
+          {
+            "node": "🧠 Analyze & Plan Actions",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🧠 Analyze & Plan Actions": {
+      "main": [
+        [
+          {
+            "node": "🗄️ Log Analysis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🗄️ Log Analysis": {
+      "main": [
+        [
+          {
+            "node": "🔀 Has Actions?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔀 Has Actions?": {
+      "main": [
+        [
+          {
+            "node": "⚙️ Prepare Actions",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "🔀 Critical?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "⚙️ Prepare Actions": {
+      "main": [
+        [
+          {
+            "node": "🗄️ Queue Action",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🗄️ Queue Action": {
+      "main": [
+        [
+          {
+            "node": "🔀 Critical?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔀 Critical?": {
+      "main": [
+        [
+          {
+            "node": "🚨 Alert Critical",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "name": "orchestrator"
+    },
+    {
+      "name": "master-agent"
+    },
+    {
+      "name": "system-health"
+    },
+    {
+      "name": "background-agent"
+    }
+  ],
+  "triggerCount": 1,
+  "pinData": {},
+  "versionId": "1",
+  "meta": {
+    "description": "The brain of the system. Runs every 15 minutes to analyze system health, identify issues, and queue corrective actions. Monitors research runs, proposals, RAG gaps, outreach sequences, and workflow errors. Alerts on critical issues.",
+    "category": "orchestrator",
+    "triggers": [
+      "schedule"
+    ],
+    "outputs": [
+      "agent_audit_log",
+      "communication_queue",
+      "sms_notification"
+    ],
+    "requiredCredentials": [
+      "Supabase Postgres",
+      "Salesmessage API"
+    ]
+  }
+}

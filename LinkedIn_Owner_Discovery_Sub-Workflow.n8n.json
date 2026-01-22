@@ -1,0 +1,196 @@
+{
+  "name": "LinkedIn Owner Discovery Sub-Workflow",
+  "nodes": [
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            { "name": "company_id" },
+            { "name": "company_name" },
+            { "name": "location" },
+            { "name": "research_run_id" },
+            { "name": "enrichment_id" }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [-384, -80],
+      "id": "b5fce7c9-acd9-4345-9133-5b61bd5217b1",
+      "name": "When Executed by Another Workflow"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT context_jsonb FROM company_contexts WHERE company_id = $1",
+        "options": { "queryReplacement": "={{ [$json.company_id] }}" }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [-192, 32],
+      "id": "88a98f87-e91f-4b6a-80cd-63cd99587dfa",
+      "name": "📥 Read Context",
+      "credentials": { "postgres": { "id": "xogKD739Qe4gqWBU", "name": "Postgres account" } }
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [0, -64],
+      "id": "5118580e-c79c-4f40-a938-360df652a5a2",
+      "name": "🤝 Merge Context"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $json;\nconst ctx = input.context_jsonb || {};\n\n// Check if we already have LinkedIn profiles\nconst existingLinkedIn = ctx?.social?.linkedin_profiles || [];\nconst hasOwnerLinkedIn = existingLinkedIn.some(p => p.role === 'owner');\n\nconst needsLinkedIn = !hasOwnerLinkedIn;\n\nreturn [{\n  json: {\n    ...input,\n    context_jsonb: ctx,\n    flags: {\n      has_owner_linkedin: hasOwnerLinkedIn,\n      needs_linkedin: needsLinkedIn,\n      existing_profile_count: existingLinkedIn.length\n    }\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [192, -64],
+      "id": "cf6973e3-cfd3-4398-9e1c-20f2eafd288d",
+      "name": "⚙️ Check Need LinkedIn"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": false, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [{ "leftValue": "={{ $json.flags.needs_linkedin }}", "rightValue": true, "operator": { "type": "boolean", "operation": "equals" } }],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [384, -64],
+      "id": "eaf5af8d-0b42-40ac-8f20-9bcb699d5b16",
+      "name": "Need LinkedIn Search?"
+    },
+    {
+      "parameters": {
+        "url": "https://serpapi.com/search",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpQueryAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            { "name": "engine", "value": "google" },
+            { "name": "q", "value": "={{ 'site:linkedin.com/in \"Owner\" OR \"CEO\" OR \"President\" ' + $json.company_name + ' ' + $json.location }}" },
+            { "name": "num", "value": "5" }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [576, -80],
+      "id": "151a69b7-4300-4714-a8b2-70c31c02ca06",
+      "name": "🔍 SerpAPI - LinkedIn Search",
+      "credentials": { "httpQueryAuth": { "id": "etz3Bz1U05JSXpRB", "name": "Query Auth SerpAPI API Key" } }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse LinkedIn search results from SerpAPI\nconst global = $('When Executed by Another Workflow').first().json;\nconst raw = $json;\n\nconst organicResults = raw?.organic_results || [];\n\n// Extract LinkedIn profiles\nconst linkedinProfiles = organicResults\n  .filter(r => r.link && r.link.includes('linkedin.com/in/'))\n  .map(r => {\n    // Extract name from title (usually \"Name - Title at Company\")\n    const titleParts = (r.title || '').split('-');\n    const name = titleParts[0]?.trim() || 'Unknown';\n    const title = titleParts[1]?.trim() || '';\n    \n    // Determine role from title\n    const titleLower = title.toLowerCase();\n    let role = 'unknown';\n    if (titleLower.includes('owner') || titleLower.includes('president') || titleLower.includes('ceo')) {\n      role = 'owner';\n    } else if (titleLower.includes('general manager') || titleLower.includes('gm')) {\n      role = 'gm';\n    } else if (titleLower.includes('service manager')) {\n      role = 'service_manager';\n    }\n    \n    return {\n      name: name,\n      title: title,\n      role: role,\n      linkedin_url: r.link,\n      snippet: r.snippet || '',\n      confidence: role === 'owner' ? 90 : 70\n    };\n  });\n\nconst hasOwner = linkedinProfiles.some(p => p.role === 'owner');\n\nreturn [{\n  json: {\n    ...global,\n    linkedin_results: {\n      success: linkedinProfiles.length > 0,\n      profiles: linkedinProfiles,\n      has_owner: hasOwner,\n      total_found: linkedinProfiles.length\n    }\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [768, -80],
+      "id": "ede0d491-f9ad-4782-8c6c-7e7b98045e9a",
+      "name": "⚙️ Parse LinkedIn Results"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build log for LinkedIn discovery\nconst data = $json;\nconst results = data.linkedin_results;\n\nreturn [{\n  json: {\n    research_run_id: data.research_run_id,\n    company_id: data.company_id,\n    enrichment_id: data.enrichment_id,\n    node_name: 'Social Scout - LinkedIn Discovery',\n    node_id: 'social_scout_linkedin',\n    node_type: 'tool_log',\n    stage: 'Stage 1.5',\n    status: results.success ? 'completed' : 'failed',\n    output_data: {\n      profiles: results.profiles || [],\n      has_owner: results.has_owner || false,\n      total_found: results.total_found || 0\n    },\n    metadata: {\n      api_calls: 1,\n      estimated_cost_usd: 0.01,\n      has_owner_profile: results.has_owner,\n      profile_count: results.total_found\n    }\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [960, -80],
+      "id": "3d749924-1d21-4e61-b317-5017e74db9dc",
+      "name": "🧾 Build LinkedIn Log"
+    },
+    {
+      "parameters": {
+        "schema": { "__rl": true, "mode": "list", "value": "public" },
+        "table": { "__rl": true, "value": "workflow_step_logs", "mode": "list", "cachedResultName": "workflow_step_logs" },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "research_run_id": "={{ $json.research_run_id }}",
+            "company_id": "={{ $json.company_id }}",
+            "node_name": "={{ $json.node_name }}",
+            "node_id": "={{ $json.node_id }}",
+            "node_type": "={{ $json.node_type }}",
+            "stage": "={{ $json.stage }}",
+            "status": "={{ $json.status }}",
+            "output_data": "={{ $json.output_data }}",
+            "metadata": "={{ $json.metadata }}",
+            "duration_ms": 0,
+            "api_call_count": 0,
+            "estimated_cost_usd": 0,
+            "data_quality_score": 0,
+            "extracted_fields_count": 0
+          },
+          "matchingColumns": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [1152, -80],
+      "id": "5e7e9fcb-6984-49a8-b468-7706896713cf",
+      "name": "🗄️ Log — LinkedIn Discovery",
+      "alwaysOutputData": true,
+      "credentials": { "postgres": { "id": "xogKD739Qe4gqWBU", "name": "Postgres account" } }
+    },
+    {
+      "parameters": {
+        "workflowId": { "__rl": true, "value": "A4-U5nCoP9WMSikDE3qdi", "mode": "list", "cachedResultName": "🧠 Context Updater — Company Dossier (workflow_step_logs → company_contexts)" },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "log_id": "={{ $json.log_id }}",
+            "research_run_id": "={{ $json.research_run_id }}",
+            "company_id": "={{ $json.company_id }}"
+          },
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": { "waitForSubWorkflow": false }
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [1360, -80],
+      "id": "079b42cb-6250-4664-86e0-384c5d26da1b",
+      "name": "📤 Update Context via AI"
+    },
+    {
+      "parameters": {
+        "jsCode": "// 📤 Return Result (Concise Summary)\n// Grabs the findings from the Log node to send back to the Main Orchestrator\n\n// 1. Get the data from the Log node (it has the actual results)\nconst logItem = $('🗄️ Log — LinkedIn Discovery').first().json;\nconst out = logItem.output_data || {};\nconst success = logItem.status === 'completed';\n\n// 2. Generate a human-readable summary\nlet summary = \"No LinkedIn profiles found.\";\n\nif (success && out.profiles && out.profiles.length > 0) {\n  // Check if we found an owner/CEO\n  const owner = out.profiles.find(p => p.role === 'owner');\n  \n  if (owner) {\n    summary = `Found Owner: ${owner.name} (${owner.title})`;\n  } else {\n    summary = `Found ${out.profiles.length} employees (No specific owner identified)`;\n  }\n}\n\n// 3. Return clean object\nreturn [{\n  json: {\n    success: success,\n    stage: \"linkedin\",\n    \n    // Key Data Points\n    owner_name: out.owner_name || null,\n    has_owner: out.has_owner || false,\n    profile_count: out.total_found || 0,\n    \n    // Standard Return Fields\n    run_summary: summary,\n    company_id: logItem.company_id,\n    research_run_id: logItem.research_run_id\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1568, -80],
+      "id": "ad358156-0d82-4603-83b8-e8604f2e2f2d",
+      "name": "Send Results Back"
+    }
+  ],
+  "connections": {
+    "When Executed by Another Workflow": { "main": [[{ "node": "📥 Read Context", "type": "main", "index": 0 }, { "node": "🤝 Merge Context", "type": "main", "index": 0 }]] },
+    "📥 Read Context": { "main": [[{ "node": "🤝 Merge Context", "type": "main", "index": 1 }]] },
+    "🤝 Merge Context": { "main": [[{ "node": "⚙️ Check Need LinkedIn", "type": "main", "index": 0 }]] },
+    "⚙️ Check Need LinkedIn": { "main": [[{ "node": "Need LinkedIn Search?", "type": "main", "index": 0 }]] },
+    "Need LinkedIn Search?": { "main": [[{ "node": "🔍 SerpAPI - LinkedIn Search", "type": "main", "index": 0 }]] },
+    "🔍 SerpAPI - LinkedIn Search": { "main": [[{ "node": "⚙️ Parse LinkedIn Results", "type": "main", "index": 0 }]] },
+    "⚙️ Parse LinkedIn Results": { "main": [[{ "node": "🧾 Build LinkedIn Log", "type": "main", "index": 0 }]] },
+    "🧾 Build LinkedIn Log": { "main": [[{ "node": "🗄️ Log — LinkedIn Discovery", "type": "main", "index": 0 }]] },
+    "🗄️ Log — LinkedIn Discovery": { "main": [[{ "node": "📤 Update Context via AI", "type": "main", "index": 0 }]] },
+    "📤 Update Context via AI": { "main": [[{ "node": "Send Results Back", "type": "main", "index": 0 }]] }
+  },
+  "pinData": {},
+  "meta": { "instanceId": "2d82e0d27c2a88970c7ba9693b6bad225f1d31f9cf0d392d33dd9cabf99f185f" }
+}

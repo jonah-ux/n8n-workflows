@@ -1,0 +1,552 @@
+{
+  "name": "Workflow Context Generator",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "workflow-context-generator",
+        "options": {}
+      },
+      "id": "webhook-1",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        240,
+        300
+      ],
+      "webhookId": "workflow-context-gen"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract input from webhook\nconst body = $input.first().json.body;\n\nconst workflow_id = body.workflow_id || null;\nconst workflow_json = body.workflow_json || null;\nconst workflow_name = body.workflow_name || null;\n\nif (!workflow_id && !workflow_json) {\n  throw new Error('Must provide either workflow_id or workflow_json');\n}\n\nreturn [{\n  json: {\n    workflow_id,\n    workflow_json,\n    workflow_name,\n    request_id: `wfctx_${Date.now()}`,\n    started_at: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "code-1",
+      "name": "📥 Parse Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        460,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "combineOperation": "any"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.workflow_id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            }
+          ]
+        }
+      },
+      "id": "if-1",
+      "name": "Has Workflow ID?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        680,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "url": "=https://jonahautoshopmedia.app.n8n.cloud/api/v1/workflows/{{ $json.workflow_id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "id": "http-1",
+      "name": "🔍 Fetch Workflow from n8n",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        900,
+        200
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "n8n_api_key",
+          "name": "n8n API Key"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// Merge workflow JSON from either source\nconst fromApi = $('🔍 Fetch Workflow from n8n').first()?.json || null;\nconst fromInput = $('📥 Parse Input').first().json.workflow_json;\n\nconst workflow = fromApi || (typeof fromInput === 'string' ? JSON.parse(fromInput) : fromInput);\n\nif (!workflow) {\n  throw new Error('Could not obtain workflow JSON');\n}\n\nconst base = $('📥 Parse Input').first().json;\n\nreturn [{\n  json: {\n    ...base,\n    workflow_id: workflow.id || base.workflow_id,\n    workflow_name: workflow.name || base.workflow_name,\n    workflow,\n    node_count: workflow.nodes?.length || 0,\n    has_ai_agent: workflow.nodes?.some(n => n.type.includes('langchain.agent')) || false\n  }\n}];"
+      },
+      "id": "code-2",
+      "name": "🤝 Merge Workflow Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "prompt-1",
+              "name": "analysis_prompt",
+              "value": "=You are analyzing an n8n workflow to understand what it does and what context it needs.\n\nWORKFLOW NAME: {{ $json.workflow_name }}\nNODE COUNT: {{ $json.node_count }}\nHAS AI AGENT: {{ $json.has_ai_agent }}\n\nWORKFLOW JSON:\n{{ JSON.stringify($json.workflow, null, 2) }}\n\nAnalyze this workflow and provide:\n\n1. PURPOSE: What does this workflow do? (2-3 sentences)\n2. BUSINESS RULES NEEDED: What business rules, guidelines, or policies should this workflow know about?\n3. DATA SOURCES: What databases, APIs, or external systems does it access?\n4. DECISION POINTS: Where does it make decisions that require business context?\n5. NOTION SEARCH TERMS: List 5-10 keywords to search Notion for relevant SOPs (comma-separated)\n6. POSTGRES TABLES: List tables it queries or should know about (comma-separated)\n7. EDGE CASES: What unusual scenarios should it handle?\n8. CONTEXT INJECTION POINTS: Which nodes should have Google Docs context loaded? List node names.\n\nReturn as JSON:\n{\n  \"purpose\": \"...\",\n  \"business_rules\": [\"rule1\", \"rule2\"],\n  \"data_sources\": [\"source1\", \"source2\"],\n  \"decision_points\": [\"point1\", \"point2\"],\n  \"notion_keywords\": [\"keyword1\", \"keyword2\"],\n  \"postgres_tables\": [\"table1\", \"table2\"],\n  \"edge_cases\": [\"case1\", \"case2\"],\n  \"context_injection_nodes\": [\"node1\", \"node2\"]\n}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-1",
+      "name": "📋 Build Analysis Prompt",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1340,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "model": "gpt-4o",
+        "options": {
+          "temperature": 0.3
+        },
+        "prompt": "={{ $json.analysis_prompt }}",
+        "text": "={{ $json.analysis_prompt }}"
+      },
+      "id": "openai-1",
+      "name": "🤖 Analyze Workflow (GPT-4o)",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1,
+      "position": [
+        1560,
+        300
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "OPENAI_CRED_ID",
+          "name": "OpenAI API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse AI analysis response\nconst response = $input.first().json.response || $input.first().json.text || '';\n\nlet analysis;\ntry {\n  // Try to extract JSON from response\n  const jsonMatch = response.match(/\\{[\\s\\S]*\\}/);\n  analysis = JSON.parse(jsonMatch ? jsonMatch[0] : response);\n} catch (e) {\n  throw new Error('Could not parse AI analysis response: ' + e.message);\n}\n\nconst base = $('🤝 Merge Workflow Data').first().json;\n\nreturn [{\n  json: {\n    ...base,\n    analysis,\n    notion_keywords: analysis.notion_keywords || [],\n    postgres_tables: analysis.postgres_tables || []\n  }\n}];"
+      },
+      "id": "code-3",
+      "name": "📊 Parse Analysis",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1780,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "=-- Search Notion pages for relevant context\nSELECT \n  page_id,\n  title,\n  content,\n  url,\n  created_time,\n  last_edited_time\nFROM notion_pages\nWHERE \n  content ILIKE ANY(ARRAY[{{ $json.notion_keywords.map(k => \"'%\" + k + \"%'\").join(', ') }}])\n  OR title ILIKE ANY(ARRAY[{{ $json.notion_keywords.map(k => \"'%\" + k + \"%'\").join(', ') }}])\nORDER BY last_edited_time DESC\nLIMIT 20;",
+        "options": {}
+      },
+      "id": "postgres-1",
+      "name": "🔍 Search Notion Pages",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        2000,
+        200
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CRED_ID",
+          "name": "Postgres account"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "=-- Get sample data from relevant Postgres tables\n{{ $json.postgres_tables.map(table => `\nSELECT '${table}' as table_name, \n       jsonb_agg(t.*) as sample_data\nFROM (SELECT * FROM ${table} LIMIT 5) t\n`).join('UNION ALL') }};",
+        "options": {}
+      },
+      "id": "postgres-2",
+      "name": "🗄️ Sample Postgres Data",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        2000,
+        400
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CRED_ID",
+          "name": "Postgres account"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// Merge all context sources\nconst base = $('📊 Parse Analysis').first().json;\nconst notionPages = $('🔍 Search Notion Pages').all().map(item => item.json);\nconst postgresData = $('🗄️ Sample Postgres Data').all().map(item => item.json);\n\nreturn [{\n  json: {\n    ...base,\n    context_sources: {\n      notion_pages: notionPages,\n      postgres_samples: postgresData\n    },\n    notion_page_count: notionPages.length,\n    postgres_table_count: postgresData.length\n  }\n}];"
+      },
+      "id": "code-4",
+      "name": "🤝 Merge Context Sources",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2220,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "doc-gen-prompt",
+              "name": "doc_generation_prompt",
+              "value": "=You are creating a comprehensive context document for an n8n workflow.\n\nWORKFLOW: {{ $json.workflow_name }}\n\nANALYSIS:\n{{ JSON.stringify($json.analysis, null, 2) }}\n\nNOTION PAGES FOUND ({{ $json.notion_page_count }}):\n{{ JSON.stringify($json.context_sources.notion_pages.slice(0, 10), null, 2) }}\n\nPOSTGRES DATA SAMPLES:\n{{ JSON.stringify($json.context_sources.postgres_samples, null, 2) }}\n\nCreate a comprehensive context document in markdown format with these sections:\n\n# {{ $json.workflow_name }} - Context Document\n\n## Purpose\n[Clear explanation of what this workflow does]\n\n## Business Rules\n[Key rules extracted from Notion pages and analysis]\n\n## Data Sources & Schema\n[Tables, APIs, and their structure]\n\n## Decision Logic\n[Where the workflow makes decisions and what context it needs]\n\n## Common Scenarios\n[Typical use cases based on historical data]\n\n## Edge Cases\n[Special situations to handle]\n\n## Related SOPs\n[Links to relevant Notion pages]\n\n## Context Injection Points\n[Where to add Google Docs nodes in the workflow]\n\nMake this document actionable, specific, and comprehensive. Include actual examples from the data samples provided.",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-2",
+      "name": "📝 Build Doc Generation Prompt",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        2440,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "model": "gpt-4o",
+        "options": {
+          "temperature": 0.4,
+          "maxTokens": 4000
+        },
+        "text": "={{ $json.doc_generation_prompt }}"
+      },
+      "id": "openai-2",
+      "name": "🤖 Generate Context Document (GPT-4o)",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1,
+      "position": [
+        2660,
+        300
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "OPENAI_CRED_ID",
+          "name": "OpenAI API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Prepare final document\nconst base = $('🤝 Merge Context Sources').first().json;\nconst generatedDoc = $input.first().json.response || $input.first().json.text || '';\n\nconst doc_title = `${base.workflow_name} - Context`;\nconst doc_content = generatedDoc;\n\nreturn [{\n  json: {\n    ...base,\n    generated_document: {\n      title: doc_title,\n      content: doc_content,\n      workflow_id: base.workflow_id,\n      workflow_name: base.workflow_name,\n      generated_at: new Date().toISOString(),\n      context_injection_nodes: base.analysis.context_injection_nodes || []\n    }\n  }\n}];"
+      },
+      "id": "code-5",
+      "name": "📄 Prepare Final Document",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2880,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "document",
+        "operation": "create",
+        "title": "={{ $json.generated_document.title }}",
+        "content": "={{ $json.generated_document.content }}",
+        "additionalFields": {}
+      },
+      "id": "gdocs-1",
+      "name": "💾 Save to Google Docs",
+      "type": "n8n-nodes-base.googleDocs",
+      "typeVersion": 2,
+      "position": [
+        3100,
+        300
+      ],
+      "credentials": {}
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "=INSERT INTO workflow_context_documents (\n  workflow_id,\n  workflow_name,\n  document_url,\n  document_title,\n  context_injection_nodes,\n  notion_pages_analyzed,\n  postgres_tables_analyzed,\n  generated_at\n) VALUES (\n  $1, $2, $3, $4, $5::jsonb, $6, $7, $8\n)\nRETURNING *;",
+        "options": {
+          "queryParameters": "={{ $json.workflow_id }},{{ $json.workflow_name }},{{ $('💾 Save to Google Docs').first().json.documentUrl }},{{ $json.generated_document.title }},{{ JSON.stringify($json.generated_document.context_injection_nodes) }},{{ $json.notion_page_count }},{{ $json.postgres_table_count }},{{ $json.generated_document.generated_at }}"
+        }
+      },
+      "id": "postgres-3",
+      "name": "💾 Log to Database",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        3320,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CRED_ID",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build final response\nconst doc = $('💾 Save to Google Docs').first().json;\nconst base = $('📄 Prepare Final Document').first().json;\n\nreturn [{\n  json: {\n    success: true,\n    workflow_id: base.workflow_id,\n    workflow_name: base.workflow_name,\n    document: {\n      url: doc.documentUrl,\n      title: base.generated_document.title,\n      id: doc.documentId\n    },\n    recommendations: {\n      context_injection_nodes: base.generated_document.context_injection_nodes,\n      message: `Add Google Docs read nodes before these nodes: ${base.generated_document.context_injection_nodes.join(', ')}`\n    },\n    analysis_summary: {\n      notion_pages_analyzed: base.notion_page_count,\n      postgres_tables_analyzed: base.postgres_table_count,\n      purpose: base.analysis.purpose\n    }\n  }\n}];"
+      },
+      "id": "code-6",
+      "name": "📤 Build Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3540,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      },
+      "id": "webhook-response-1",
+      "name": "Webhook Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        3760,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "📥 Parse Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📥 Parse Input": {
+      "main": [
+        [
+          {
+            "node": "Has Workflow ID?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Workflow ID?": {
+      "main": [
+        [
+          {
+            "node": "🔍 Fetch Workflow from n8n",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "🤝 Merge Workflow Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔍 Fetch Workflow from n8n": {
+      "main": [
+        [
+          {
+            "node": "🤝 Merge Workflow Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🤝 Merge Workflow Data": {
+      "main": [
+        [
+          {
+            "node": "📋 Build Analysis Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📋 Build Analysis Prompt": {
+      "main": [
+        [
+          {
+            "node": "🤖 Analyze Workflow (GPT-4o)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🤖 Analyze Workflow (GPT-4o)": {
+      "main": [
+        [
+          {
+            "node": "📊 Parse Analysis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📊 Parse Analysis": {
+      "main": [
+        [
+          {
+            "node": "🔍 Search Notion Pages",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "🗄️ Sample Postgres Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔍 Search Notion Pages": {
+      "main": [
+        [
+          {
+            "node": "🤝 Merge Context Sources",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🗄️ Sample Postgres Data": {
+      "main": [
+        [
+          {
+            "node": "🤝 Merge Context Sources",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🤝 Merge Context Sources": {
+      "main": [
+        [
+          {
+            "node": "📝 Build Doc Generation Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📝 Build Doc Generation Prompt": {
+      "main": [
+        [
+          {
+            "node": "🤖 Generate Context Document (GPT-4o)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🤖 Generate Context Document (GPT-4o)": {
+      "main": [
+        [
+          {
+            "node": "📄 Prepare Final Document",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📄 Prepare Final Document": {
+      "main": [
+        [
+          {
+            "node": "💾 Save to Google Docs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "💾 Save to Google Docs": {
+      "main": [
+        [
+          {
+            "node": "💾 Log to Database",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "💾 Log to Database": {
+      "main": [
+        [
+          {
+            "node": "📤 Build Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📤 Build Response": {
+      "main": [
+        [
+          {
+            "node": "Webhook Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 1,
+  "updatedAt": "2026-01-19T00:00:00.000Z",
+  "versionId": "1"
+}

@@ -1,0 +1,465 @@
+{
+  "_meta": {
+    "description": "Tool node configurations to wire all 10 enhanced HubSpot agents into Jonah's Best Agent workflow",
+    "targetWorkflow": "Jonah's Best Agent (GKxc_HAAeGTCT7VDlpyjZ)",
+    "instructions": "Copy each tool node into the main agent workflow and connect to the AI Agent's ai_tool input",
+    "agents": [
+      "Contacts - Contact management and associations",
+      "Companies - Company management and associations",
+      "Deals - Deal pipeline and sales management",
+      "Engagements - Notes, emails, calls, meetings, tasks",
+      "Leads - Lead qualification and pipeline management",
+      "Lists - Static/dynamic list management",
+      "Products - Product catalog and line items",
+      "Quotes - Sales quotes and proposals",
+      "Tickets - Support ticket management",
+      "Operations - Property/pipeline management, data quality, owners, schemas"
+    ]
+  },
+  "toolNodes": [
+    {
+      "name": "🕵️ HubSpot Contacts Agent",
+      "description": "Manages HubSpot contacts: list, search, create, update, delete, merge, associations. Use for any contact-related CRM operations.",
+      "workflowId": "",
+      "workflowName": "AI Agent - HubSpot Contacts (Enhanced)",
+      "node": {
+        "parameters": {
+          "name": "HubSpot Contacts Agent",
+          "description": "Manages HubSpot contacts: list, search, create, update, delete, merge, associations, batch operations. Use for finding contacts, searching by email/name, creating new contacts, updating contact properties, merging duplicates, or linking contacts to companies/deals.",
+          "workflowId": {
+            "__rl": true,
+            "mode": "list",
+            "value": "",
+            "cachedResultName": "AI Agent - HubSpot Contacts (Enhanced)"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "request_id": "={{ $execution.id }}",
+              "session_id": "={{ $json.session_id || $json.sessionId || '' }}",
+              "chat_id": "={{ $json.chat_id || $json.chatId || '' }}",
+              "user_id": "={{ $json.user_id || $json.userId || '' }}",
+              "user_message": "={{ $json.user_message || $json.query || $json.input || '' }}",
+              "object_type": "contacts",
+              "object_id": "={{ $json.object_id || $json.objectId || '' }}",
+              "company_id": "={{ $json.company_id || $json.companyId || '' }}",
+              "contact_id": "={{ $json.contact_id || $json.contactId || '' }}",
+              "deal_id": "={{ $json.deal_id || $json.dealId || '' }}",
+              "caller_workflow_id": "={{ $workflow.id }}",
+              "caller_execution_id": "={{ $execution.id }}",
+              "tool_name": "hubspot.contacts",
+              "dry_run": "={{ $json.dry_run ?? true }}",
+              "conversation_id": "={{ $json.conversation_id || $json.conversationId || $execution.id }}",
+              "hs_portal_id": "={{ $json.hs_portal_id || '' }}"
+            }
+          }
+        },
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.1,
+        "position": [0, 0],
+        "id": "tool-hs-contacts",
+        "name": "🕵️ HubSpot Contacts Agent"
+      }
+    },
+    {
+      "name": "🕵️ HubSpot Companies Agent",
+      "description": "Manages HubSpot companies: list, search, create, update, delete, merge, associations. Use for any company-related CRM operations.",
+      "workflowId": "",
+      "workflowName": "AI Agent - HubSpot Companies (Enhanced)",
+      "node": {
+        "parameters": {
+          "name": "HubSpot Companies Agent",
+          "description": "Manages HubSpot companies: list, search, create, update, delete, merge, associations, batch operations. Use for finding companies, searching by domain/name, creating new companies, updating company properties, merging duplicates, or linking companies to contacts/deals.",
+          "workflowId": {
+            "__rl": true,
+            "mode": "list",
+            "value": "", 
+            "cachedResultName": "AI Agent - HubSpot Companies (Enhanced)"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "request_id": "={{ $execution.id }}",
+              "session_id": "={{ $json.session_id || $json.sessionId || '' }}",
+              "chat_id": "={{ $json.chat_id || $json.chatId || '' }}",
+              "user_id": "={{ $json.user_id || $json.userId || '' }}",
+              "user_message": "={{ $json.user_message || $json.query || $json.input || '' }}",
+              "object_type": "companies",
+              "object_id": "={{ $json.object_id || $json.objectId || '' }}",
+              "company_id": "={{ $json.company_id || $json.companyId || '' }}",
+              "contact_id": "={{ $json.contact_id || $json.contactId || '' }}",
+              "deal_id": "={{ $json.deal_id || $json.dealId || '' }}",
+              "caller_workflow_id": "={{ $workflow.id }}",
+              "caller_execution_id": "={{ $execution.id }}",
+              "tool_name": "hubspot.companies",
+              "dry_run": "={{ $json.dry_run ?? true }}",
+              "conversation_id": "={{ $json.conversation_id || $json.conversationId || $execution.id }}",
+              "hs_portal_id": "={{ $json.hs_portal_id || '' }}"
+            }
+          }
+        },
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.1,
+        "position": [0, 0],
+        "id": "tool-hs-companies",
+        "name": "🕵️ HubSpot Companies Agent"
+      }
+    },
+    {
+      "name": "🕵️ HubSpot Deals Agent",
+      "description": "Manages HubSpot deals: list, search, create, update, delete, pipelines, stages, associations. Use for any deal-related CRM operations.",
+      "workflowId": "4J19cZdd4aLVDxOZCwmKB",
+      "workflowName": "AI Agent - HubSpot Deals (Enhanced)",
+      "node": {
+        "parameters": {
+          "name": "HubSpot Deals Agent",
+          "description": "Manages HubSpot deals: list, search, create, update, delete, pipelines, stages, associations. Use for any deal-related CRM operations like finding deals, checking pipeline stages, creating new deals, updating deal properties, or linking deals to contacts/companies.",
+          "workflowId": {
+            "__rl": true,
+            "mode": "list",
+            "value": "4J19cZdd4aLVDxOZCwmKB",
+            "cachedResultName": "AI Agent - HubSpot Deals (Enhanced)"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "request_id": "={{ $execution.id }}",
+              "session_id": "={{ $json.session_id || $json.sessionId || '' }}",
+              "chat_id": "={{ $json.chat_id || $json.chatId || '' }}",
+              "user_id": "={{ $json.user_id || $json.userId || '' }}",
+              "user_message": "={{ $json.user_message || $json.query || $json.input || '' }}",
+              "object_type": "deals",
+              "object_id": "={{ $json.object_id || $json.objectId || '' }}",
+              "company_id": "={{ $json.company_id || $json.companyId || '' }}",
+              "contact_id": "={{ $json.contact_id || $json.contactId || '' }}",
+              "deal_id": "={{ $json.deal_id || $json.dealId || '' }}",
+              "caller_workflow_id": "={{ $workflow.id }}",
+              "caller_execution_id": "={{ $execution.id }}",
+              "tool_name": "hubspot.deals",
+              "dry_run": "={{ $json.dry_run ?? true }}",
+              "conversation_id": "={{ $json.conversation_id || $json.conversationId || $execution.id }}",
+              "hs_portal_id": "={{ $json.hs_portal_id || '' }}"
+            }
+          }
+        },
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.1,
+        "position": [0, 0],
+        "id": "tool-hs-deals",
+        "name": "🕵️ HubSpot Deals Agent"
+      }
+    },
+    {
+      "name": "🕵️ HubSpot Engagements Agent",
+      "description": "Manages HubSpot engagements: notes, emails, calls, meetings, tasks. Use for logging activities, tracking communications, and managing engagement history.",
+      "workflowId": "N10BUVD9S-4ZyIsEtnKfp",
+      "workflowName": "AI Agent - HubSpot Engagements (Enhanced)",
+      "node": {
+        "parameters": {
+          "name": "HubSpot Engagements Agent",
+          "description": "Manages HubSpot engagements: notes, emails, calls, meetings, tasks. Use for logging activities, creating notes on records, tracking communications, scheduling meetings, managing tasks, and viewing engagement history on contacts, companies, or deals.",
+          "workflowId": {
+            "__rl": true,
+            "mode": "list",
+            "value": "N10BUVD9S-4ZyIsEtnKfp",
+            "cachedResultName": "AI Agent - HubSpot Engagements (Enhanced)"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "request_id": "={{ $execution.id }}",
+              "session_id": "={{ $json.session_id || $json.sessionId || '' }}",
+              "chat_id": "={{ $json.chat_id || $json.chatId || '' }}",
+              "user_id": "={{ $json.user_id || $json.userId || '' }}",
+              "user_message": "={{ $json.user_message || $json.query || $json.input || '' }}",
+              "object_type": "engagements",
+              "object_id": "={{ $json.object_id || $json.objectId || '' }}",
+              "company_id": "={{ $json.company_id || $json.companyId || '' }}",
+              "contact_id": "={{ $json.contact_id || $json.contactId || '' }}",
+              "deal_id": "={{ $json.deal_id || $json.dealId || '' }}",
+              "engagement_id": "={{ $json.engagement_id || $json.engagementId || '' }}",
+              "caller_workflow_id": "={{ $workflow.id }}",
+              "caller_execution_id": "={{ $execution.id }}",
+              "tool_name": "hubspot.engagements",
+              "dry_run": "={{ $json.dry_run ?? true }}",
+              "conversation_id": "={{ $json.conversation_id || $json.conversationId || $execution.id }}",
+              "hs_portal_id": "={{ $json.hs_portal_id || '' }}"
+            }
+          }
+        },
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.1,
+        "position": [0, 0],
+        "id": "tool-hs-engagements",
+        "name": "🕵️ HubSpot Engagements Agent"
+      }
+    },
+    {
+      "name": "🕵️ HubSpot Leads Agent",
+      "description": "Manages HubSpot leads: list, search, create, update, qualify, disqualify, pipelines. Use for lead management, qualification, and conversion workflows.",
+      "workflowId": "udUe7akEBzR9mJqjq4Jnz",
+      "workflowName": "AI Agent - HubSpot Leads (Enhanced)",
+      "node": {
+        "parameters": {
+          "name": "HubSpot Leads Agent",
+          "description": "Manages HubSpot leads: list, search, create, update, qualify, disqualify, pipelines. Use for lead management, checking lead status, moving leads through pipeline stages, qualifying or disqualifying leads, and tracking lead-to-deal conversions.",
+          "workflowId": {
+            "__rl": true,
+            "mode": "list",
+            "value": "udUe7akEBzR9mJqjq4Jnz",
+            "cachedResultName": "AI Agent - HubSpot Leads (Enhanced)"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "request_id": "={{ $execution.id }}",
+              "session_id": "={{ $json.session_id || $json.sessionId || '' }}",
+              "chat_id": "={{ $json.chat_id || $json.chatId || '' }}",
+              "user_id": "={{ $json.user_id || $json.userId || '' }}",
+              "user_message": "={{ $json.user_message || $json.query || $json.input || '' }}",
+              "object_type": "leads",
+              "object_id": "={{ $json.object_id || $json.objectId || '' }}",
+              "company_id": "={{ $json.company_id || $json.companyId || '' }}",
+              "contact_id": "={{ $json.contact_id || $json.contactId || '' }}",
+              "deal_id": "={{ $json.deal_id || $json.dealId || '' }}",
+              "lead_id": "={{ $json.lead_id || $json.leadId || '' }}",
+              "caller_workflow_id": "={{ $workflow.id }}",
+              "caller_execution_id": "={{ $execution.id }}",
+              "tool_name": "hubspot.leads",
+              "dry_run": "={{ $json.dry_run ?? true }}",
+              "conversation_id": "={{ $json.conversation_id || $json.conversationId || $execution.id }}",
+              "hs_portal_id": "={{ $json.hs_portal_id || '' }}"
+            }
+          }
+        },
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.1,
+        "position": [0, 0],
+        "id": "tool-hs-leads",
+        "name": "🕵️ HubSpot Leads Agent"
+      }
+    },
+    {
+      "name": "🕵️ HubSpot Lists Agent",
+      "description": "Manages HubSpot lists: static and dynamic lists, memberships, folders. Use for segmentation, list management, and bulk contact/company operations.",
+      "workflowId": "Qq7PzFWL4uetPj10MUl69",
+      "workflowName": "AI Agent - HubSpot Lists (Enhanced)",
+      "node": {
+        "parameters": {
+          "name": "HubSpot Lists Agent",
+          "description": "Manages HubSpot lists: static and dynamic lists, memberships, folders. Use for segmentation, creating marketing lists, adding/removing contacts or companies from lists, checking list membership, and managing list folders.",
+          "workflowId": {
+            "__rl": true,
+            "mode": "list",
+            "value": "Qq7PzFWL4uetPj10MUl69",
+            "cachedResultName": "AI Agent - HubSpot Lists (Enhanced)"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "request_id": "={{ $execution.id }}",
+              "session_id": "={{ $json.session_id || $json.sessionId || '' }}",
+              "chat_id": "={{ $json.chat_id || $json.chatId || '' }}",
+              "user_id": "={{ $json.user_id || $json.userId || '' }}",
+              "user_message": "={{ $json.user_message || $json.query || $json.input || '' }}",
+              "object_type": "lists",
+              "object_id": "={{ $json.object_id || $json.objectId || '' }}",
+              "company_id": "={{ $json.company_id || $json.companyId || '' }}",
+              "contact_id": "={{ $json.contact_id || $json.contactId || '' }}",
+              "list_id": "={{ $json.list_id || $json.listId || '' }}",
+              "caller_workflow_id": "={{ $workflow.id }}",
+              "caller_execution_id": "={{ $execution.id }}",
+              "tool_name": "hubspot.lists",
+              "dry_run": "={{ $json.dry_run ?? true }}",
+              "conversation_id": "={{ $json.conversation_id || $json.conversationId || $execution.id }}",
+              "hs_portal_id": "={{ $json.hs_portal_id || '' }}"
+            }
+          }
+        },
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.1,
+        "position": [0, 0],
+        "id": "tool-hs-lists",
+        "name": "🕵️ HubSpot Lists Agent"
+      }
+    },
+    {
+      "name": "🕵️ HubSpot Products Agent",
+      "description": "Manages HubSpot products and line items: catalog management, line item creation, deal/quote associations. Use for product catalog and pricing operations.",
+      "workflowId": "",
+      "workflowName": "AI Agent - HubSpot Products (Enhanced)",
+      "node": {
+        "parameters": {
+          "name": "HubSpot Products Agent",
+          "description": "Manages HubSpot products and line items: product catalog CRUD, line item management, deal/quote associations, batch operations. Use for managing product catalog, creating/updating products, adding line items to deals or quotes, managing pricing and SKUs.",
+          "workflowId": {
+            "__rl": true,
+            "mode": "list",
+            "value": "",
+            "cachedResultName": "AI Agent - HubSpot Products (Enhanced)"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "request_id": "={{ $execution.id }}",
+              "session_id": "={{ $json.session_id || $json.sessionId || '' }}",
+              "chat_id": "={{ $json.chat_id || $json.chatId || '' }}",
+              "user_id": "={{ $json.user_id || $json.userId || '' }}",
+              "user_message": "={{ $json.user_message || $json.query || $json.input || '' }}",
+              "object_type": "products",
+              "object_id": "={{ $json.object_id || $json.objectId || '' }}",
+              "product_id": "={{ $json.product_id || $json.productId || '' }}",
+              "line_item_id": "={{ $json.line_item_id || $json.lineItemId || '' }}",
+              "deal_id": "={{ $json.deal_id || $json.dealId || '' }}",
+              "company_id": "={{ $json.company_id || $json.companyId || '' }}",
+              "caller_workflow_id": "={{ $workflow.id }}",
+              "caller_execution_id": "={{ $execution.id }}",
+              "tool_name": "hubspot.products",
+              "dry_run": "={{ $json.dry_run ?? true }}",
+              "conversation_id": "={{ $json.conversation_id || $json.conversationId || $execution.id }}",
+              "hs_portal_id": "={{ $json.hs_portal_id || '' }}"
+            }
+          }
+        },
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.1,
+        "position": [0, 0],
+        "id": "tool-hs-products",
+        "name": "🕵️ HubSpot Products Agent"
+      }
+    },
+    {
+      "name": "🕵️ HubSpot Quotes Agent",
+      "description": "Manages HubSpot quotes: create, update, associations, templates, e-signatures, payments. Use for sales proposals and quote management.",
+      "workflowId": "",
+      "workflowName": "AI Agent - HubSpot Quotes (Enhanced)",
+      "node": {
+        "parameters": {
+          "name": "HubSpot Quotes Agent",
+          "description": "Manages HubSpot quotes: create, update, state management, associations, templates, e-signatures, payments. Use for creating sales proposals, managing quote status/approval, adding line items to quotes, associating with deals/contacts/companies, enabling e-signatures or payment collection.",
+          "workflowId": {
+            "__rl": true,
+            "mode": "list",
+            "value": "",
+            "cachedResultName": "AI Agent - HubSpot Quotes (Enhanced)"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "request_id": "={{ $execution.id }}",
+              "session_id": "={{ $json.session_id || $json.sessionId || '' }}",
+              "chat_id": "={{ $json.chat_id || $json.chatId || '' }}",
+              "user_id": "={{ $json.user_id || $json.userId || '' }}",
+              "user_message": "={{ $json.user_message || $json.query || $json.input || '' }}",
+              "object_type": "quotes",
+              "object_id": "={{ $json.object_id || $json.objectId || '' }}",
+              "quote_id": "={{ $json.quote_id || $json.quoteId || '' }}",
+              "deal_id": "={{ $json.deal_id || $json.dealId || '' }}",
+              "company_id": "={{ $json.company_id || $json.companyId || '' }}",
+              "contact_id": "={{ $json.contact_id || $json.contactId || '' }}",
+              "caller_workflow_id": "={{ $workflow.id }}",
+              "caller_execution_id": "={{ $execution.id }}",
+              "tool_name": "hubspot.quotes",
+              "dry_run": "={{ $json.dry_run ?? true }}",
+              "conversation_id": "={{ $json.conversation_id || $json.conversationId || $execution.id }}",
+              "hs_portal_id": "={{ $json.hs_portal_id || '' }}"
+            }
+          }
+        },
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.1,
+        "position": [0, 0],
+        "id": "tool-hs-quotes",
+        "name": "🕵️ HubSpot Quotes Agent"
+      }
+    },
+    {
+      "name": "🕵️ HubSpot Tickets Agent",
+      "description": "Manages HubSpot support tickets: create, update, close, reopen, pipelines, SLA tracking. Use for customer support operations and ticket management.",
+      "workflowId": "M0fsLDvlZd9Mw9skct6YS",
+      "workflowName": "AI Agent - HubSpot Tickets (Enhanced)",
+      "node": {
+        "parameters": {
+          "name": "HubSpot Tickets Agent",
+          "description": "Manages HubSpot support tickets: create, update, close, reopen, pipelines, SLA tracking. Use for customer support operations, creating new tickets, updating ticket status, closing or reopening tickets, checking SLA compliance, and linking tickets to contacts/companies/deals.",
+          "workflowId": {
+            "__rl": true,
+            "mode": "list",
+            "value": "M0fsLDvlZd9Mw9skct6YS",
+            "cachedResultName": "AI Agent - HubSpot Tickets (Enhanced)"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "request_id": "={{ $execution.id }}",
+              "session_id": "={{ $json.session_id || $json.sessionId || '' }}",
+              "chat_id": "={{ $json.chat_id || $json.chatId || '' }}",
+              "user_id": "={{ $json.user_id || $json.userId || '' }}",
+              "user_message": "={{ $json.user_message || $json.query || $json.input || '' }}",
+              "object_type": "tickets",
+              "object_id": "={{ $json.object_id || $json.objectId || '' }}",
+              "company_id": "={{ $json.company_id || $json.companyId || '' }}",
+              "contact_id": "={{ $json.contact_id || $json.contactId || '' }}",
+              "deal_id": "={{ $json.deal_id || $json.dealId || '' }}",
+              "ticket_id": "={{ $json.ticket_id || $json.ticketId || '' }}",
+              "caller_workflow_id": "={{ $workflow.id }}",
+              "caller_execution_id": "={{ $execution.id }}",
+              "tool_name": "hubspot.tickets",
+              "dry_run": "={{ $json.dry_run ?? true }}",
+              "conversation_id": "={{ $json.conversation_id || $json.conversationId || $execution.id }}",
+              "hs_portal_id": "={{ $json.hs_portal_id || '' }}"
+            }
+          }
+        },
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.1,
+        "position": [0, 0],
+        "id": "tool-hs-tickets",
+        "name": "🕵️ HubSpot Tickets Agent"
+      }
+    },
+    {
+      "name": "🕵️ HubSpot Operations Agent",
+      "description": "Manages HubSpot schema operations: properties, pipelines, owners, data quality, custom objects. Use for CRM administration, configuration, and health monitoring.",
+      "workflowId": "",
+      "workflowName": "AI Agent - HubSpot Operations (Enhanced)",
+      "node": {
+        "parameters": {
+          "name": "HubSpot Operations Agent",
+          "description": "Manages HubSpot schema and administrative operations: property management (list, create, update properties and groups), pipeline management (create/update pipelines and stages), data quality (find missing fields, detect duplicates), owners/users management, association labels, custom object schemas, and account info. Use for CRM administration, creating new properties, managing pipelines, checking data quality, or getting account usage information.",
+          "workflowId": {
+            "__rl": true,
+            "mode": "list",
+            "value": "",
+            "cachedResultName": "AI Agent - HubSpot Operations (Enhanced)"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "request_id": "={{ $execution.id }}",
+              "session_id": "={{ $json.session_id || $json.sessionId || '' }}",
+              "chat_id": "={{ $json.chat_id || $json.chatId || '' }}",
+              "user_id": "={{ $json.user_id || $json.userId || '' }}",
+              "user_message": "={{ $json.user_message || $json.query || $json.input || '' }}",
+              "object_type": "={{ $json.object_type || $json.objectType || 'contacts' }}",
+              "property_name": "={{ $json.property_name || $json.propertyName || '' }}",
+              "pipeline_id": "={{ $json.pipeline_id || $json.pipelineId || '' }}",
+              "owner_id": "={{ $json.owner_id || $json.ownerId || '' }}",
+              "caller_workflow_id": "={{ $workflow.id }}",
+              "caller_execution_id": "={{ $execution.id }}",
+              "tool_name": "hubspot.operations",
+              "dry_run": "={{ $json.dry_run ?? true }}",
+              "conversation_id": "={{ $json.conversation_id || $json.conversationId || $execution.id }}",
+              "hs_portal_id": "={{ $json.hs_portal_id || '' }}"
+            }
+          }
+        },
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.1,
+        "position": [0, 0],
+        "id": "tool-hs-operations",
+        "name": "🕵️ HubSpot Operations Agent"
+      }
+    }
+  ]
+}

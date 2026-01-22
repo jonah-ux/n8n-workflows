@@ -1,0 +1,1014 @@
+{
+  "name": "Lead Enrichment Orchestrator v6",
+  "nodes": [
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [-2000, 0],
+      "id": "trigger-external",
+      "name": "When Executed by Another Workflow"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [-2000, 200],
+      "id": "trigger-manual",
+      "name": "When clicking 'Execute workflow'"
+    },
+    {
+      "parameters": {
+        "operation": "search",
+        "base": {
+          "__rl": true,
+          "value": "appUmr7c5VACTjiJj",
+          "mode": "list",
+          "cachedResultName": "ASM Lead Intelligence Hub (Copy)"
+        },
+        "table": {
+          "__rl": true,
+          "value": "tblLxOBg1zHfLYyUJ",
+          "mode": "list",
+          "cachedResultName": "Companies (Canonical)"
+        },
+        "filterByFormula": "AND({research_status}=BLANK())",
+        "returnAll": false,
+        "limit": 1,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2.1,
+      "position": [-1760, 200],
+      "id": "airtable-search",
+      "name": "🔍 Search Airtable",
+      "credentials": {
+        "airtableTokenApi": {
+          "id": "mP0iHEaWU9UB0y9B",
+          "name": "Jonah's n8n Personal Access Token Confirmed"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first();\nconst j = item.json;\nconst f = (j.fields && typeof j.fields === 'object') ? j.fields : j;\n\nconst safe = (v) => (v === null || v === undefined) ? '' : String(v);\nconst normalizeDomain = (urlOrDomain) =>\n  safe(urlOrDomain).replace(/^https?:\\/\\//i, '').replace(/^www\\./i, '').split('/')[0].trim();\n\nconst hq = safe(f['HQ Address'] || f['Address'] || f['Location'] || '');\nconst parts = hq.split(',').map(s => s.trim());\n\nreturn [{\n  json: {\n    airtable_id: safe(j.id || f.id || ''),\n    company_name: safe(f['Company Name'] || f['company_name'] || f['name'] || ''),\n    location: hq,\n    city: parts[1] || '',\n    state: (parts[2] || '').split(' ')[0] || '',\n    domain: safe(f['Website'] || f['website'] || f['domain'] || ''),\n    search_domain: normalizeDomain(f['Website'] || f['website'] || f['domain'] || ''),\n    phone: safe(f['Phone'] || f['phone'] || ''),\n    address: hq,\n    timestamp: new Date().toISOString(),\n    enrichment_id: `${Date.now()}-${safe(f['Company Name'] || 'unknown').replace(/[^a-zA-Z0-9]/g, '').slice(0,20)}`,\n    research_run_id: $execution.id.toString(),\n    company_id: safe(j.id || f.id || ''),\n    \n    // Initialize loop state\n    loop_iteration: 0,\n    phase: 'phase_1',\n    stages_completed: [],\n    stages_to_run: ['stage_0', 'stage_1', 'stage_2a', 'stage_2b', 'stage_3', 'stage_4a', 'stage_4b', 'stage_5a', 'stage_5b', 'stage_5c', 'stage_6', 'stage_7'],\n    context: {},\n    confidence_score: 0,\n    key_fields_found: 0\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-1520, 100],
+      "id": "normalize-record",
+      "name": "🧱 Normalize + Init Loop"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO enrichment_loop_runs (research_run_id, company_id, current_phase, status, current_iteration) VALUES ($1, $2, 'phase_1', 'running', 0) ON CONFLICT DO NOTHING;",
+        "options": {
+          "queryReplacement": "={{ [$json.research_run_id, $json.company_id] }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [-1280, 100],
+      "id": "register-run",
+      "name": "🗄️ Register Run",
+      "credentials": {
+        "postgres": {
+          "id": "xogKD739Qe4gqWBU",
+          "name": "Postgres account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "ICy-FJLl7ZNFNQEzf3iKE",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "airtable_id": "={{ $json.airtable_id }}",
+            "company_name": "={{ $json.company_name }}",
+            "location": "={{ $json.location }}",
+            "city": "={{ $json.city }}",
+            "state": "={{ $json.state }}",
+            "domain": "={{ $json.domain }}",
+            "search_domain": "={{ $json.search_domain }}",
+            "phone": "={{ $json.phone }}",
+            "timestamp": "={{ $json.timestamp }}",
+            "enrichment_id": "={{ $json.enrichment_id }}",
+            "research_run_id": "={{ $json.research_run_id }}",
+            "company_id": "={{ $json.company_id }}"
+          },
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [-1040, 100],
+      "id": "stage-0",
+      "name": "🚦 Stage 0: Smart Router",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const loopState = $('🧱 Normalize + Init Loop').first().json;\nconst routerResult = $json;\nconst runSummary = routerResult.run_summary || {};\n\nconst domain = runSummary.domain || routerResult.domain || loopState.search_domain || loopState.domain || null;\nconst hasDomain = !!domain && domain.length > 3;\n\n// Update context with what we found\nconst context = {\n  ...loopState.context,\n  domain: domain,\n  routing_path: runSummary.routing_path\n};\n\nreturn [{\n  json: {\n    ...loopState,\n    resolved_domain: domain,\n    has_valid_domain: hasDomain,\n    context: context,\n    stages_completed: [...loopState.stages_completed, 'stage_0']\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-800, 100],
+      "id": "process-stage-0",
+      "name": "⚙️ Process Stage 0"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [
+            {
+              "id": "has-domain",
+              "leftValue": "={{ $json.has_valid_domain }}",
+              "rightValue": true,
+              "operator": { "type": "boolean", "operation": "equals" }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [-560, 100],
+      "id": "check-domain",
+      "name": "🔀 Has Domain?"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "DVDTaG8QlJkivPVgFDx8Z",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "airtable_id": "={{ $json.airtable_id }}",
+            "company_name": "={{ $json.company_name }}",
+            "location": "={{ $json.location }}",
+            "city": "={{ $json.city }}",
+            "state": "={{ $json.state }}",
+            "domain": "={{ $json.resolved_domain }}",
+            "search_domain": "={{ $json.resolved_domain }}",
+            "phone": "={{ $json.phone }}",
+            "timestamp": "={{ $json.timestamp }}",
+            "enrichment_id": "={{ $json.enrichment_id }}",
+            "research_run_id": "={{ $json.research_run_id }}",
+            "company_id": "={{ $json.company_id }}"
+          },
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [-280, 20],
+      "id": "stage-1",
+      "name": "🔥 Stage 1: Firecrawl",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "HfMeQf6oCHhL9Q0p2H9ye",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "airtable_id": "={{ $('⚙️ Process Stage 0').item.json.airtable_id }}",
+            "company_name": "={{ $('⚙️ Process Stage 0').item.json.company_name }}",
+            "location": "={{ $('⚙️ Process Stage 0').item.json.location }}",
+            "city": "={{ $('⚙️ Process Stage 0').item.json.city }}",
+            "state": "={{ $('⚙️ Process Stage 0').item.json.state }}",
+            "domain": "={{ $('⚙️ Process Stage 0').item.json.resolved_domain }}",
+            "search_domain": "={{ $('⚙️ Process Stage 0').item.json.resolved_domain }}",
+            "phone": "={{ $('⚙️ Process Stage 0').item.json.phone }}",
+            "timestamp": "={{ $('⚙️ Process Stage 0').item.json.timestamp }}",
+            "enrichment_id": "={{ $('⚙️ Process Stage 0').item.json.enrichment_id }}",
+            "research_run_id": "={{ $('⚙️ Process Stage 0').item.json.research_run_id }}",
+            "company_id": "={{ $('⚙️ Process Stage 0').item.json.company_id }}"
+          },
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [0, -60],
+      "id": "stage-2a",
+      "name": "📧 Stage 2a: Contact Forms",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "4YgfhwtJDdVoBaQu",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "airtable_id": "={{ $('⚙️ Process Stage 0').item.json.airtable_id }}",
+            "company_name": "={{ $('⚙️ Process Stage 0').item.json.company_name }}",
+            "location": "={{ $('⚙️ Process Stage 0').item.json.location }}",
+            "city": "={{ $('⚙️ Process Stage 0').item.json.city }}",
+            "state": "={{ $('⚙️ Process Stage 0').item.json.state }}",
+            "domain": "={{ $('⚙️ Process Stage 0').item.json.resolved_domain }}",
+            "search_domain": "={{ $('⚙️ Process Stage 0').item.json.resolved_domain }}",
+            "phone": "={{ $('⚙️ Process Stage 0').item.json.phone }}",
+            "timestamp": "={{ $('⚙️ Process Stage 0').item.json.timestamp }}",
+            "enrichment_id": "={{ $('⚙️ Process Stage 0').item.json.enrichment_id }}",
+            "research_run_id": "={{ $('⚙️ Process Stage 0').item.json.research_run_id }}",
+            "company_id": "={{ $('⚙️ Process Stage 0').item.json.company_id }}"
+          },
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [0, 100],
+      "id": "stage-2b",
+      "name": "📧 Stage 2b: Hunter.io",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": { "mode": "chooseBranch" },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [240, 20],
+      "id": "merge-2",
+      "name": "🤝 Merge 2"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "Hl9aGZsO2GRt4eWGIkvxs",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "airtable_id": "={{ $('⚙️ Process Stage 0').item.json.airtable_id }}",
+            "company_name": "={{ $('⚙️ Process Stage 0').item.json.company_name }}",
+            "location": "={{ $('⚙️ Process Stage 0').item.json.location }}",
+            "city": "={{ $('⚙️ Process Stage 0').item.json.city }}",
+            "state": "={{ $('⚙️ Process Stage 0').item.json.state }}",
+            "domain": "={{ $('⚙️ Process Stage 0').item.json.resolved_domain }}",
+            "search_domain": "={{ $('⚙️ Process Stage 0').item.json.resolved_domain }}",
+            "phone": "={{ $('⚙️ Process Stage 0').item.json.phone }}",
+            "timestamp": "={{ $('⚙️ Process Stage 0').item.json.timestamp }}",
+            "enrichment_id": "={{ $('⚙️ Process Stage 0').item.json.enrichment_id }}",
+            "research_run_id": "={{ $('⚙️ Process Stage 0').item.json.research_run_id }}",
+            "company_id": "={{ $('⚙️ Process Stage 0').item.json.company_id }}"
+          },
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [480, 20],
+      "id": "stage-3",
+      "name": "📊 Stage 3: Apollo",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "IBw7IpH80m0TMa45KCJF5",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "airtable_id": "={{ $('⚙️ Process Stage 0').item.json.airtable_id }}",
+            "company_name": "={{ $('⚙️ Process Stage 0').item.json.company_name }}",
+            "location": "={{ $('⚙️ Process Stage 0').item.json.location }}",
+            "city": "={{ $('⚙️ Process Stage 0').item.json.city }}",
+            "state": "={{ $('⚙️ Process Stage 0').item.json.state }}",
+            "domain": "={{ $('⚙️ Process Stage 0').item.json.resolved_domain }}",
+            "search_domain": "={{ $('⚙️ Process Stage 0').item.json.resolved_domain }}",
+            "phone": "={{ $('⚙️ Process Stage 0').item.json.phone }}",
+            "timestamp": "={{ $('⚙️ Process Stage 0').item.json.timestamp }}",
+            "enrichment_id": "={{ $('⚙️ Process Stage 0').item.json.enrichment_id }}",
+            "research_run_id": "={{ $('⚙️ Process Stage 0').item.json.research_run_id }}",
+            "company_id": "={{ $('⚙️ Process Stage 0').item.json.company_id }}"
+          },
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [720, -60],
+      "id": "stage-4a",
+      "name": "👤 Stage 4a: Headhunter",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "LkcBjvdlGqBOYSdP",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "company_name": "={{ $('⚙️ Process Stage 0').item.json.company_name }}",
+            "location": "={{ $('⚙️ Process Stage 0').item.json.location }}",
+            "enrichment_id": "={{ $('⚙️ Process Stage 0').item.json.enrichment_id }}",
+            "research_run_id": "={{ $('⚙️ Process Stage 0').item.json.research_run_id }}",
+            "company_id": "={{ $('⚙️ Process Stage 0').item.json.company_id }}"
+          },
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [720, 100],
+      "id": "stage-4b",
+      "name": "👤 Stage 4b: Owner Research",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": { "mode": "chooseBranch" },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [960, 20],
+      "id": "merge-4",
+      "name": "🤝 Merge 4"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "LIhNhNsPemc-merLoqThs",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "airtable_id": "={{ $('⚙️ Process Stage 0').item.json.airtable_id }}",
+            "company_name": "={{ $('⚙️ Process Stage 0').item.json.company_name }}",
+            "location": "={{ $('⚙️ Process Stage 0').item.json.location }}",
+            "city": "={{ $('⚙️ Process Stage 0').item.json.city }}",
+            "state": "={{ $('⚙️ Process Stage 0').item.json.state }}",
+            "domain": "={{ $('⚙️ Process Stage 0').item.json.resolved_domain }}",
+            "search_domain": "={{ $('⚙️ Process Stage 0').item.json.resolved_domain }}",
+            "phone": "={{ $('⚙️ Process Stage 0').item.json.phone }}",
+            "timestamp": "={{ $('⚙️ Process Stage 0').item.json.timestamp }}",
+            "enrichment_id": "={{ $('⚙️ Process Stage 0').item.json.enrichment_id }}",
+            "research_run_id": "={{ $('⚙️ Process Stage 0').item.json.research_run_id }}",
+            "company_id": "={{ $('⚙️ Process Stage 0').item.json.company_id }}"
+          },
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [1200, -140],
+      "id": "stage-5a",
+      "name": "🕵️ Stage 5a: Intel",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "8KCihPqoU_xH5QkiP8UAr",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "company_name": "={{ $('⚙️ Process Stage 0').item.json.company_name }}",
+            "location": "={{ $('⚙️ Process Stage 0').item.json.location }}",
+            "city": "={{ $('⚙️ Process Stage 0').item.json.city }}",
+            "state": "={{ $('⚙️ Process Stage 0').item.json.state }}",
+            "enrichment_id": "={{ $('⚙️ Process Stage 0').item.json.enrichment_id }}",
+            "research_run_id": "={{ $('⚙️ Process Stage 0').item.json.research_run_id }}",
+            "company_id": "={{ $('⚙️ Process Stage 0').item.json.company_id }}"
+          },
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [1200, 20],
+      "id": "stage-5b",
+      "name": "💼 Stage 5b: Jobs",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "JllE0lttkSdFofbqzdibL",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "airtable_id": "={{ $('⚙️ Process Stage 0').item.json.airtable_id }}",
+            "company_name": "={{ $('⚙️ Process Stage 0').item.json.company_name }}",
+            "location": "={{ $('⚙️ Process Stage 0').item.json.location }}",
+            "city": "={{ $('⚙️ Process Stage 0').item.json.city }}",
+            "state": "={{ $('⚙️ Process Stage 0').item.json.state }}",
+            "domain": "={{ $('⚙️ Process Stage 0').item.json.resolved_domain }}",
+            "search_domain": "={{ $('⚙️ Process Stage 0').item.json.resolved_domain }}",
+            "phone": "={{ $('⚙️ Process Stage 0').item.json.phone }}",
+            "timestamp": "={{ $('⚙️ Process Stage 0').item.json.timestamp }}",
+            "enrichment_id": "={{ $('⚙️ Process Stage 0').item.json.enrichment_id }}",
+            "research_run_id": "={{ $('⚙️ Process Stage 0').item.json.research_run_id }}",
+            "company_id": "={{ $('⚙️ Process Stage 0').item.json.company_id }}"
+          },
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [1200, 180],
+      "id": "stage-5c",
+      "name": "📄 Stage 5c: Careers",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": { "mode": "chooseBranch", "numberInputs": 3 },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [1440, 20],
+      "id": "merge-5",
+      "name": "🤝 Merge 5"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "I039785tdTuohF_CqRlIB",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "airtable_id": "={{ $('⚙️ Process Stage 0').item.json.airtable_id }}",
+            "company_name": "={{ $('⚙️ Process Stage 0').item.json.company_name }}",
+            "location": "={{ $('⚙️ Process Stage 0').item.json.location }}",
+            "city": "={{ $('⚙️ Process Stage 0').item.json.city }}",
+            "state": "={{ $('⚙️ Process Stage 0').item.json.state }}",
+            "domain": "={{ $('⚙️ Process Stage 0').item.json.resolved_domain }}",
+            "search_domain": "={{ $('⚙️ Process Stage 0').item.json.resolved_domain }}",
+            "phone": "={{ $('⚙️ Process Stage 0').item.json.phone }}",
+            "timestamp": "={{ $('⚙️ Process Stage 0').item.json.timestamp }}",
+            "enrichment_id": "={{ $('⚙️ Process Stage 0').item.json.enrichment_id }}",
+            "research_run_id": "={{ $('⚙️ Process Stage 0').item.json.research_run_id }}",
+            "company_id": "={{ $('⚙️ Process Stage 0').item.json.company_id }}"
+          },
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [1680, 20],
+      "id": "stage-6",
+      "name": "⭐ Stage 6: Reviews",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "A4-U5nCoP9WMSikDE3qdi",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "company_id": "={{ $('⚙️ Process Stage 0').item.json.company_id }}",
+            "research_run_id": "={{ $('⚙️ Process Stage 0').item.json.research_run_id }}"
+          },
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [1920, 20],
+      "id": "stage-7",
+      "name": "🧠 Stage 7: Context",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ═══════════════════════════════════════════════════════════════════════════\n// PHASE 1 COMPLETE → ASSESSMENT\n// Query the database for actual context, calculate confidence\n// ═══════════════════════════════════════════════════════════════════════════\n\nconst loopState = $('⚙️ Process Stage 0').first().json;\nconst contextResult = $json;\n\n// Get context from context updater or from database results\nconst context = contextResult.context || contextResult.data || contextResult || {};\n\n// Merge with what we already know\nconst mergedContext = {\n  ...loopState.context,\n  ...context,\n  domain: loopState.resolved_domain || context.domain\n};\n\nreturn [{\n  json: {\n    ...loopState,\n    phase: 'assessment',\n    context: mergedContext,\n    stages_completed: ['stage_0', 'stage_1', 'stage_2a', 'stage_2b', 'stage_3', 'stage_4a', 'stage_4b', 'stage_5a', 'stage_5b', 'stage_5c', 'stage_6', 'stage_7'],\n    phase_1_complete: true\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2160, 20],
+      "id": "phase-1-complete",
+      "name": "✅ Phase 1 Complete"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT context_jsonb FROM company_contexts WHERE company_id = $1 ORDER BY updated_at DESC LIMIT 1;",
+        "options": {
+          "queryReplacement": "={{ [$json.company_id] }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [2400, 20],
+      "id": "load-context",
+      "name": "📥 Load Context from DB",
+      "credentials": {
+        "postgres": {
+          "id": "xogKD739Qe4gqWBU",
+          "name": "Postgres account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ═══════════════════════════════════════════════════════════════════════════\n// LOOP ASSESSMENT - Calculate confidence and decide: loop or exit?\n// ═══════════════════════════════════════════════════════════════════════════\n\nconst loopState = $('✅ Phase 1 Complete').first().json;\nconst dbResult = $json;\n\n// Get context from DB or use what we have\nlet context = loopState.context || {};\nif (dbResult && dbResult.context_jsonb) {\n  try {\n    const dbContext = typeof dbResult.context_jsonb === 'string' \n      ? JSON.parse(dbResult.context_jsonb) \n      : dbResult.context_jsonb;\n    context = { ...context, ...dbContext };\n  } catch (e) {}\n}\n\n// Key fields and weights\nconst keyFields = {\n  owner_email: 0.20,\n  owner_name: 0.15,\n  phone: 0.12,\n  employee_count: 0.10,\n  domain: 0.08,\n  google_rating: 0.08,\n  owner_linkedin: 0.07,\n  revenue: 0.06,\n  services: 0.05,\n  industry: 0.05,\n  contact_emails: 0.04\n};\n\n// Calculate confidence\nlet confidenceScore = 0;\nlet keyFieldsFound = 0;\nlet foundFields = [];\nlet missingFields = [];\n\nconst hasValue = (val) => val !== undefined && val !== null && val !== '' && \n  !(Array.isArray(val) && val.length === 0);\n\nfor (const [field, weight] of Object.entries(keyFields)) {\n  if (hasValue(context[field])) {\n    confidenceScore += weight;\n    keyFieldsFound++;\n    foundFields.push(field);\n  } else {\n    missingFields.push(field);\n  }\n}\n\n// Thresholds\nconst CONFIDENCE_THRESHOLD = 0.80;\nconst KEY_FIELDS_THRESHOLD = 3;\nconst MAX_ITERATIONS = 5;\n\nconst iteration = (loopState.loop_iteration || 0) + 1;\nconst meetsConfidence = confidenceScore >= CONFIDENCE_THRESHOLD;\nconst meetsKeyFields = keyFieldsFound >= KEY_FIELDS_THRESHOLD;\nconst maxIterationsReached = iteration >= MAX_ITERATIONS;\n\n// Should we exit the loop?\nconst shouldExit = meetsConfidence || meetsKeyFields || maxIterationsReached;\n\n// Determine exit reason\nlet exitReason = null;\nif (meetsConfidence) exitReason = 'confidence_threshold';\nelse if (meetsKeyFields) exitReason = 'key_fields_found';\nelse if (maxIterationsReached) exitReason = 'max_iterations';\n\n// Identify retry candidates\nconst retryStages = [];\n\nif (!shouldExit) {\n  // If we have owner_name but no owner_email, retry Hunter.io\n  if (hasValue(context.owner_name) && !hasValue(context.owner_email)) {\n    retryStages.push({ id: 'hunter', workflow_id: '4YgfhwtJDdVoBaQu', reason: 'have_owner_name' });\n  }\n  \n  // If we have domain but no employee_count, retry Apollo\n  if (hasValue(context.domain) && !hasValue(context.employee_count)) {\n    retryStages.push({ id: 'apollo', workflow_id: 'Hl9aGZsO2GRt4eWGIkvxs', reason: 'have_domain' });\n  }\n  \n  // If we have linkedin but no owner details\n  if ((hasValue(context.linkedin_url) || hasValue(context.owner_linkedin)) && !hasValue(context.owner_name)) {\n    retryStages.push({ id: 'owner', workflow_id: 'LkcBjvdlGqBOYSdP', reason: 'have_linkedin' });\n  }\n  \n  // If no retries identified but we haven't met criteria, try owner research again\n  if (retryStages.length === 0 && !hasValue(context.owner_email)) {\n    retryStages.push({ id: 'owner', workflow_id: 'LkcBjvdlGqBOYSdP', reason: 'need_owner_info' });\n  }\n}\n\nreturn [{\n  json: {\n    ...loopState,\n    context: context,\n    loop_iteration: iteration,\n    \n    // Scores\n    confidence_score: Math.round(confidenceScore * 100) / 100,\n    key_fields_found: keyFieldsFound,\n    found_fields: foundFields,\n    missing_fields: missingFields,\n    \n    // Loop control\n    should_exit: shouldExit,\n    exit_reason: exitReason,\n    continue_loop: !shouldExit && retryStages.length > 0,\n    retry_stages: retryStages,\n    \n    // Thresholds\n    thresholds: {\n      confidence: CONFIDENCE_THRESHOLD,\n      key_fields: KEY_FIELDS_THRESHOLD,\n      max_iterations: MAX_ITERATIONS\n    }\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2640, 20],
+      "id": "loop-assessment",
+      "name": "🔄 LOOP: Assessment"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [
+            {
+              "id": "continue-loop",
+              "leftValue": "={{ $json.continue_loop }}",
+              "rightValue": true,
+              "operator": { "type": "boolean", "operation": "equals" }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [2880, 20],
+      "id": "loop-decision",
+      "name": "🔀 Continue Loop?"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Pick which stages to retry this iteration\nconst loopState = $json;\nconst retryStages = loopState.retry_stages || [];\n\n// Log iteration\nconsole.log(`Loop iteration ${loopState.loop_iteration}: Retrying ${retryStages.map(s => s.id).join(', ')}`);\n\nreturn [{\n  json: {\n    ...loopState,\n    current_retries: retryStages,\n    retry_hunter: retryStages.some(s => s.id === 'hunter'),\n    retry_apollo: retryStages.some(s => s.id === 'apollo'),\n    retry_owner: retryStages.some(s => s.id === 'owner')\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3120, 100],
+      "id": "prep-loop-iteration",
+      "name": "⚙️ Prep Loop Iteration"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "4YgfhwtJDdVoBaQu",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "airtable_id": "={{ $json.airtable_id }}",
+            "company_name": "={{ $json.company_name }}",
+            "location": "={{ $json.location }}",
+            "city": "={{ $json.city }}",
+            "state": "={{ $json.state }}",
+            "domain": "={{ $json.resolved_domain || $json.context.domain }}",
+            "search_domain": "={{ $json.resolved_domain || $json.context.domain }}",
+            "phone": "={{ $json.phone }}",
+            "timestamp": "={{ new Date().toISOString() }}",
+            "enrichment_id": "={{ $json.enrichment_id }}",
+            "research_run_id": "={{ $json.research_run_id }}",
+            "company_id": "={{ $json.company_id }}",
+            "owner_name": "={{ $json.context.owner_name || '' }}"
+          },
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [3360, 20],
+      "id": "loop-hunter",
+      "name": "🔄 Loop: Hunter.io",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "LkcBjvdlGqBOYSdP",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "company_name": "={{ $('⚙️ Prep Loop Iteration').item.json.company_name }}",
+            "location": "={{ $('⚙️ Prep Loop Iteration').item.json.location }}",
+            "enrichment_id": "={{ $('⚙️ Prep Loop Iteration').item.json.enrichment_id }}",
+            "research_run_id": "={{ $('⚙️ Prep Loop Iteration').item.json.research_run_id }}",
+            "company_id": "={{ $('⚙️ Prep Loop Iteration').item.json.company_id }}"
+          },
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [3360, 180],
+      "id": "loop-owner",
+      "name": "🔄 Loop: Owner Research",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": { "mode": "chooseBranch" },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [3600, 100],
+      "id": "merge-loop",
+      "name": "🤝 Merge Loop"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "A4-U5nCoP9WMSikDE3qdi",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "company_id": "={{ $('⚙️ Prep Loop Iteration').item.json.company_id }}",
+            "research_run_id": "={{ $('⚙️ Prep Loop Iteration').item.json.research_run_id }}"
+          },
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [3840, 100],
+      "id": "loop-context-update",
+      "name": "🧠 Loop: Update Context",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Prepare for next loop iteration\nconst loopState = $('⚙️ Prep Loop Iteration').first().json;\n\nreturn [{\n  json: {\n    ...loopState,\n    phase: 'assessment',\n    // Will be re-assessed in the loop\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [4080, 100],
+      "id": "prep-next-iteration",
+      "name": "➡️ Next Iteration"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT context_jsonb FROM company_contexts WHERE company_id = $1 ORDER BY updated_at DESC LIMIT 1;",
+        "options": {
+          "queryReplacement": "={{ [$json.company_id] }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [4320, 100],
+      "id": "reload-context",
+      "name": "📥 Reload Context",
+      "credentials": {
+        "postgres": {
+          "id": "xogKD739Qe4gqWBU",
+          "name": "Postgres account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Re-assess after loop iteration\nconst loopState = $('➡️ Next Iteration').first().json;\nconst dbResult = $json;\n\n// Get updated context\nlet context = loopState.context || {};\nif (dbResult && dbResult.context_jsonb) {\n  try {\n    const dbContext = typeof dbResult.context_jsonb === 'string' \n      ? JSON.parse(dbResult.context_jsonb) \n      : dbResult.context_jsonb;\n    context = { ...context, ...dbContext };\n  } catch (e) {}\n}\n\n// Recalculate confidence\nconst keyFields = {\n  owner_email: 0.20,\n  owner_name: 0.15,\n  phone: 0.12,\n  employee_count: 0.10,\n  domain: 0.08,\n  google_rating: 0.08,\n  owner_linkedin: 0.07,\n  revenue: 0.06,\n  services: 0.05,\n  industry: 0.05,\n  contact_emails: 0.04\n};\n\nlet confidenceScore = 0;\nlet keyFieldsFound = 0;\nlet foundFields = [];\nlet missingFields = [];\n\nconst hasValue = (val) => val !== undefined && val !== null && val !== '' && \n  !(Array.isArray(val) && val.length === 0);\n\nfor (const [field, weight] of Object.entries(keyFields)) {\n  if (hasValue(context[field])) {\n    confidenceScore += weight;\n    keyFieldsFound++;\n    foundFields.push(field);\n  } else {\n    missingFields.push(field);\n  }\n}\n\nconst CONFIDENCE_THRESHOLD = 0.80;\nconst KEY_FIELDS_THRESHOLD = 3;\nconst MAX_ITERATIONS = 5;\n\nconst iteration = loopState.loop_iteration;\nconst meetsConfidence = confidenceScore >= CONFIDENCE_THRESHOLD;\nconst meetsKeyFields = keyFieldsFound >= KEY_FIELDS_THRESHOLD;\nconst maxIterationsReached = iteration >= MAX_ITERATIONS;\nconst shouldExit = meetsConfidence || meetsKeyFields || maxIterationsReached;\n\nlet exitReason = null;\nif (meetsConfidence) exitReason = 'confidence_threshold';\nelse if (meetsKeyFields) exitReason = 'key_fields_found';\nelse if (maxIterationsReached) exitReason = 'max_iterations';\n\n// Identify more retries if not exiting\nconst retryStages = [];\nif (!shouldExit) {\n  if (hasValue(context.owner_name) && !hasValue(context.owner_email)) {\n    retryStages.push({ id: 'hunter', workflow_id: '4YgfhwtJDdVoBaQu', reason: 'have_owner_name' });\n  }\n  if (hasValue(context.domain) && !hasValue(context.employee_count)) {\n    retryStages.push({ id: 'apollo', workflow_id: 'Hl9aGZsO2GRt4eWGIkvxs', reason: 'have_domain' });\n  }\n  if (!hasValue(context.owner_name)) {\n    retryStages.push({ id: 'owner', workflow_id: 'LkcBjvdlGqBOYSdP', reason: 'need_owner' });\n  }\n}\n\nreturn [{\n  json: {\n    ...loopState,\n    context: context,\n    confidence_score: Math.round(confidenceScore * 100) / 100,\n    key_fields_found: keyFieldsFound,\n    found_fields: foundFields,\n    missing_fields: missingFields,\n    should_exit: shouldExit,\n    exit_reason: exitReason,\n    continue_loop: !shouldExit && retryStages.length > 0,\n    retry_stages: retryStages\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [4560, 100],
+      "id": "reassess",
+      "name": "🔄 Re-Assess"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [
+            {
+              "id": "continue-loop-2",
+              "leftValue": "={{ $json.continue_loop }}",
+              "rightValue": true,
+              "operator": { "type": "boolean", "operation": "equals" }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [4800, 100],
+      "id": "loop-again",
+      "name": "🔀 Loop Again?"
+    },
+    {
+      "parameters": { "mode": "chooseBranch" },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [5040, 20],
+      "id": "merge-exit",
+      "name": "🤝 Merge Exit"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build final summary\nconst data = $json;\n\nreturn [{\n  json: {\n    status: 'completed',\n    research_run_id: data.research_run_id,\n    company_id: data.company_id,\n    company_name: data.company_name,\n    domain: data.resolved_domain || data.context?.domain,\n    \n    // Final scores\n    confidence_score: data.confidence_score,\n    key_fields_found: data.key_fields_found,\n    exit_reason: data.exit_reason || 'completed',\n    \n    // Fields\n    found_fields: data.found_fields,\n    missing_fields: data.missing_fields,\n    \n    // Loop stats\n    total_iterations: data.loop_iteration,\n    \n    completed_at: new Date().toISOString()\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [5280, 20],
+      "id": "final-summary",
+      "name": "📤 Final Summary"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE enrichment_loop_runs SET status = 'completed', current_phase = 'completed', confidence_score = $2, key_fields_found = $3, exit_reason = $4, current_iteration = $5, completed_at = NOW() WHERE research_run_id = $1;",
+        "options": {
+          "queryReplacement": "={{ [$json.research_run_id, $json.confidence_score, $json.key_fields_found, $json.exit_reason, $json.total_iterations] }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [5520, 20],
+      "id": "mark-complete",
+      "name": "🗄️ Mark Complete",
+      "credentials": {
+        "postgres": {
+          "id": "xogKD739Qe4gqWBU",
+          "name": "Postgres account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: { status: 'skipped', reason: 'no_domain', ...($json) } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-280, 260],
+      "id": "no-domain",
+      "name": "⚠️ No Domain"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE enrichment_loop_runs SET status = 'skipped', exit_reason = 'no_domain' WHERE research_run_id = $1;",
+        "options": { "queryReplacement": "={{ [$json.research_run_id] }}" }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [-40, 260],
+      "id": "mark-skipped",
+      "name": "🗄️ Skip",
+      "credentials": {
+        "postgres": {
+          "id": "xogKD739Qe4gqWBU",
+          "name": "Postgres account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    }
+  ],
+  "connections": {
+    "When Executed by Another Workflow": {
+      "main": [[{"node": "🧱 Normalize + Init Loop", "type": "main", "index": 0}]]
+    },
+    "When clicking 'Execute workflow'": {
+      "main": [[{"node": "🔍 Search Airtable", "type": "main", "index": 0}]]
+    },
+    "🔍 Search Airtable": {
+      "main": [[{"node": "🧱 Normalize + Init Loop", "type": "main", "index": 0}]]
+    },
+    "🧱 Normalize + Init Loop": {
+      "main": [[{"node": "🗄️ Register Run", "type": "main", "index": 0}]]
+    },
+    "🗄️ Register Run": {
+      "main": [[{"node": "🚦 Stage 0: Smart Router", "type": "main", "index": 0}]]
+    },
+    "🚦 Stage 0: Smart Router": {
+      "main": [[{"node": "⚙️ Process Stage 0", "type": "main", "index": 0}]]
+    },
+    "⚙️ Process Stage 0": {
+      "main": [[{"node": "🔀 Has Domain?", "type": "main", "index": 0}]]
+    },
+    "🔀 Has Domain?": {
+      "main": [
+        [{"node": "🔥 Stage 1: Firecrawl", "type": "main", "index": 0}],
+        [{"node": "⚠️ No Domain", "type": "main", "index": 0}]
+      ]
+    },
+    "🔥 Stage 1: Firecrawl": {
+      "main": [[
+        {"node": "📧 Stage 2a: Contact Forms", "type": "main", "index": 0},
+        {"node": "📧 Stage 2b: Hunter.io", "type": "main", "index": 0}
+      ]]
+    },
+    "📧 Stage 2a: Contact Forms": {
+      "main": [[{"node": "🤝 Merge 2", "type": "main", "index": 0}]]
+    },
+    "📧 Stage 2b: Hunter.io": {
+      "main": [[{"node": "🤝 Merge 2", "type": "main", "index": 1}]]
+    },
+    "🤝 Merge 2": {
+      "main": [[{"node": "📊 Stage 3: Apollo", "type": "main", "index": 0}]]
+    },
+    "📊 Stage 3: Apollo": {
+      "main": [[
+        {"node": "👤 Stage 4a: Headhunter", "type": "main", "index": 0},
+        {"node": "👤 Stage 4b: Owner Research", "type": "main", "index": 0}
+      ]]
+    },
+    "👤 Stage 4a: Headhunter": {
+      "main": [[{"node": "🤝 Merge 4", "type": "main", "index": 0}]]
+    },
+    "👤 Stage 4b: Owner Research": {
+      "main": [[{"node": "🤝 Merge 4", "type": "main", "index": 1}]]
+    },
+    "🤝 Merge 4": {
+      "main": [[
+        {"node": "🕵️ Stage 5a: Intel", "type": "main", "index": 0},
+        {"node": "💼 Stage 5b: Jobs", "type": "main", "index": 0},
+        {"node": "📄 Stage 5c: Careers", "type": "main", "index": 0}
+      ]]
+    },
+    "🕵️ Stage 5a: Intel": {
+      "main": [[{"node": "🤝 Merge 5", "type": "main", "index": 0}]]
+    },
+    "💼 Stage 5b: Jobs": {
+      "main": [[{"node": "🤝 Merge 5", "type": "main", "index": 1}]]
+    },
+    "📄 Stage 5c: Careers": {
+      "main": [[{"node": "🤝 Merge 5", "type": "main", "index": 2}]]
+    },
+    "🤝 Merge 5": {
+      "main": [[{"node": "⭐ Stage 6: Reviews", "type": "main", "index": 0}]]
+    },
+    "⭐ Stage 6: Reviews": {
+      "main": [[{"node": "🧠 Stage 7: Context", "type": "main", "index": 0}]]
+    },
+    "🧠 Stage 7: Context": {
+      "main": [[{"node": "✅ Phase 1 Complete", "type": "main", "index": 0}]]
+    },
+    "✅ Phase 1 Complete": {
+      "main": [[{"node": "📥 Load Context from DB", "type": "main", "index": 0}]]
+    },
+    "📥 Load Context from DB": {
+      "main": [[{"node": "🔄 LOOP: Assessment", "type": "main", "index": 0}]]
+    },
+    "🔄 LOOP: Assessment": {
+      "main": [[{"node": "🔀 Continue Loop?", "type": "main", "index": 0}]]
+    },
+    "🔀 Continue Loop?": {
+      "main": [
+        [{"node": "⚙️ Prep Loop Iteration", "type": "main", "index": 0}],
+        [{"node": "🤝 Merge Exit", "type": "main", "index": 0}]
+      ]
+    },
+    "⚙️ Prep Loop Iteration": {
+      "main": [[
+        {"node": "🔄 Loop: Hunter.io", "type": "main", "index": 0},
+        {"node": "🔄 Loop: Owner Research", "type": "main", "index": 0}
+      ]]
+    },
+    "🔄 Loop: Hunter.io": {
+      "main": [[{"node": "🤝 Merge Loop", "type": "main", "index": 0}]]
+    },
+    "🔄 Loop: Owner Research": {
+      "main": [[{"node": "🤝 Merge Loop", "type": "main", "index": 1}]]
+    },
+    "🤝 Merge Loop": {
+      "main": [[{"node": "🧠 Loop: Update Context", "type": "main", "index": 0}]]
+    },
+    "🧠 Loop: Update Context": {
+      "main": [[{"node": "➡️ Next Iteration", "type": "main", "index": 0}]]
+    },
+    "➡️ Next Iteration": {
+      "main": [[{"node": "📥 Reload Context", "type": "main", "index": 0}]]
+    },
+    "📥 Reload Context": {
+      "main": [[{"node": "🔄 Re-Assess", "type": "main", "index": 0}]]
+    },
+    "🔄 Re-Assess": {
+      "main": [[{"node": "🔀 Loop Again?", "type": "main", "index": 0}]]
+    },
+    "🔀 Loop Again?": {
+      "main": [
+        [{"node": "⚙️ Prep Loop Iteration", "type": "main", "index": 0}],
+        [{"node": "🤝 Merge Exit", "type": "main", "index": 1}]
+      ]
+    },
+    "🤝 Merge Exit": {
+      "main": [[{"node": "📤 Final Summary", "type": "main", "index": 0}]]
+    },
+    "📤 Final Summary": {
+      "main": [[{"node": "🗄️ Mark Complete", "type": "main", "index": 0}]]
+    },
+    "⚠️ No Domain": {
+      "main": [[{"node": "🗄️ Skip", "type": "main", "index": 0}]]
+    }
+  },
+  "settings": { "executionOrder": "v1" },
+  "meta": {
+    "description": "Lead Enrichment Orchestrator v6 - Phase 1 blast + Phase 2 LOOP until confidence threshold",
+    "version": "6.0"
+  }
+}

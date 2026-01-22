@@ -1,0 +1,231 @@
+{
+  "name": "🚨 Critical Alert Voice Call",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "critical-alert",
+        "options": {
+          "responseMode": "onReceived"
+        }
+      },
+      "id": "webhook-trigger",
+      "name": "🌐 Critical Alert Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [-600, 300],
+      "webhookId": "critical-alert-voice"
+    },
+    {
+      "parameters": {},
+      "id": "workflow-trigger",
+      "name": "📥 Called by Workflow",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [-600, 500]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ═══════════════════════════════════════════════════════════════════\n// 📋 Normalize Alert Input\n// ═══════════════════════════════════════════════════════════════════\n\nconst input = $input.first().json;\nconst body = input.body || input;\n\n// Check if within business hours (6 AM - 9 PM Central)\nconst now = new Date();\nconst hour = now.getHours();\nconst isBusinessHours = hour >= 6 && hour <= 21;\nconst isWeekend = now.getDay() === 0 || now.getDay() === 6;\n\n// Determine if we should call based on severity\nconst severity = (body.severity || 'high').toLowerCase();\nconst shouldCall = isBusinessHours && !isWeekend && ['critical', 'urgent'].includes(severity);\n\nreturn [{\n  json: {\n    alert_id: body.alert_id || `alert-${Date.now()}`,\n    alert_type: body.alert_type || body.type || 'system_alert',\n    severity: severity,\n    title: body.title || 'System Alert',\n    message: body.message || body.description || 'An alert was triggered',\n    workflow_id: body.workflow_id || null,\n    workflow_name: body.workflow_name || null,\n    error_count: body.error_count || body.failures || 1,\n    source: body.source || 'unknown',\n    timestamp: new Date().toISOString(),\n    is_business_hours: isBusinessHours,\n    should_call: shouldCall,\n    call_reason: shouldCall ? 'Business hours + critical severity' : (isBusinessHours ? 'Severity not critical' : 'Outside business hours')\n  }\n}];"
+      },
+      "id": "normalize-alert",
+      "name": "📋 Normalize Alert",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-360, 400]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "should-call",
+              "leftValue": "={{ $json.should_call }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "should-call-check",
+      "name": "🔀 Should Call?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.1,
+      "position": [-120, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build urgent voice script\nconst alert = $json;\n\nlet script = `Urgent alert from your automation system. `;\n\nswitch (alert.alert_type) {\n  case 'circuit_breaker':\n    script += `A circuit breaker has opened for workflow ${alert.workflow_name || 'unknown'}. `;\n    script += `There have been ${alert.error_count} consecutive failures. `;\n    script += `The workflow has been automatically paused to prevent further issues. `;\n    break;\n    \n  case 'system_down':\n    script += `Critical system alert: ${alert.title}. `;\n    script += `${alert.message}. `;\n    script += `Immediate attention required. `;\n    break;\n    \n  case 'quota_exceeded':\n    script += `Your API quota has been exceeded. `;\n    script += `Affected service: ${alert.source}. `;\n    script += `Operations requiring this service will fail until resolved. `;\n    break;\n    \n  case 'auth_failure':\n    script += `Authentication failure detected. `;\n    script += `Credentials for ${alert.source} need to be refreshed. `;\n    script += `Multiple workflows may be affected. `;\n    break;\n    \n  default:\n    script += `${alert.title}. `;\n    script += `${alert.message}. `;\n}\n\nscript += `This alert was triggered at ${new Date().toLocaleTimeString()}. Please check your Telegram for more details.`;\n\nreturn [{\n  json: {\n    ...alert,\n    voice_script: script\n  }\n}];"
+      },
+      "id": "build-voice-script",
+      "name": "🎙️ Build Voice Script",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [120, 280]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.retellai.com/v2/create-phone-call",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"from_number\": \"REPLACE_WITH_RETELL_FROM_NUMBER\",\n  \"to_number\": \"+13204064600\",\n  \"agent_id\": \"REPLACE_WITH_RETELL_URGENT_AGENT_ID\",\n  \"metadata\": {\n    \"type\": \"critical_alert\",\n    \"alert_id\": \"{{ $json.alert_id }}\",\n    \"severity\": \"{{ $json.severity }}\",\n    \"execution_id\": \"{{ $execution.id }}\"\n  },\n  \"retell_llm_dynamic_variables\": {\n    \"alert_script\": \"{{ $json.voice_script.replace(/\"/g, '\\\\\"') }}\"\n  }\n}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "initiate-retell-call",
+      "name": "📞 Initiate Urgent Call",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [360, 280],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_WITH_RETELL_CREDENTIAL_ID",
+          "name": "Retell API"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "chatId": "5408798342",
+        "text": "🚨 **CRITICAL ALERT**\n\n**{{ $('📋 Normalize Alert').first().json.title }}**\n\nSeverity: `{{ $('📋 Normalize Alert').first().json.severity }}`\nType: `{{ $('📋 Normalize Alert').first().json.alert_type }}`\n{{ $('📋 Normalize Alert').first().json.workflow_name ? 'Workflow: `' + $('📋 Normalize Alert').first().json.workflow_name + '`\\n' : '' }}Source: `{{ $('📋 Normalize Alert').first().json.source }}`\n\n{{ $('📋 Normalize Alert').first().json.message }}\n\n📞 Voice call: {{ $json.call_id ? 'Initiated' : 'Failed' }}\n\n_Alert ID: {{ $('📋 Normalize Alert').first().json.alert_id }}_",
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      },
+      "id": "send-telegram-critical",
+      "name": "💬 Telegram Critical",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [600, 280],
+      "credentials": {
+        "telegramApi": {
+          "id": "lnK3x3CBHsSqVAaT",
+          "name": "GodModeJan2026"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "5408798342",
+        "text": "⚠️ **Alert (Non-Critical)**\n\n**{{ $json.title }}**\n\nSeverity: `{{ $json.severity }}`\nType: `{{ $json.alert_type }}`\n{{ $json.workflow_name ? 'Workflow: `' + $json.workflow_name + '`\\n' : '' }}\n{{ $json.message }}\n\n_No voice call: {{ $json.call_reason }}_\n_Alert ID: {{ $json.alert_id }}_",
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      },
+      "id": "send-telegram-normal",
+      "name": "💬 Telegram Only",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [120, 520],
+      "credentials": {
+        "telegramApi": {
+          "id": "lnK3x3CBHsSqVAaT",
+          "name": "GodModeJan2026"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO agent_audit_log (action, action_type, success, input_data, output_data, source, target) VALUES ($1, $2, true, $3::jsonb, $4::jsonb, $5, 'critical_alert_system')",
+        "options": {
+          "queryReplacement": "={{ ['critical_alert_' + ($('📋 Normalize Alert').first().json.should_call ? 'called' : 'telegram_only'), 'alert', JSON.stringify($('📋 Normalize Alert').first().json), JSON.stringify({call_initiated: $('📋 Normalize Alert').first().json.should_call}), $('📋 Normalize Alert').first().json.source] }}"
+        }
+      },
+      "id": "log-alert",
+      "name": "🗄️ Log Alert",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [840, 400],
+      "credentials": {
+        "postgres": {
+          "id": "BwXy2JHETe47vH1I",
+          "name": "Postgres account 2"
+        }
+      },
+      "onError": "continueRegularOutput"
+    }
+  ],
+  "connections": {
+    "🌐 Critical Alert Webhook": {
+      "main": [[{ "node": "📋 Normalize Alert", "type": "main", "index": 0 }]]
+    },
+    "📥 Called by Workflow": {
+      "main": [[{ "node": "📋 Normalize Alert", "type": "main", "index": 0 }]]
+    },
+    "📋 Normalize Alert": {
+      "main": [[{ "node": "🔀 Should Call?", "type": "main", "index": 0 }]]
+    },
+    "🔀 Should Call?": {
+      "main": [
+        [{ "node": "🎙️ Build Voice Script", "type": "main", "index": 0 }],
+        [{ "node": "💬 Telegram Only", "type": "main", "index": 0 }]
+      ]
+    },
+    "🎙️ Build Voice Script": {
+      "main": [[{ "node": "📞 Initiate Urgent Call", "type": "main", "index": 0 }]]
+    },
+    "📞 Initiate Urgent Call": {
+      "main": [[{ "node": "💬 Telegram Critical", "type": "main", "index": 0 }]]
+    },
+    "💬 Telegram Critical": {
+      "main": [[{ "node": "🗄️ Log Alert", "type": "main", "index": 0 }]]
+    },
+    "💬 Telegram Only": {
+      "main": [[{ "node": "🗄️ Log Alert", "type": "main", "index": 0 }]]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "saveManualExecutions": true,
+    "timezone": "America/Chicago"
+  },
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "description": "Critical alert system with voice calls during business hours. Triggered by webhook or Execute Workflow. Business hours: 6 AM - 9 PM Central, weekdays only. Supports: circuit_breaker, system_down, quota_exceeded, auth_failure alerts.",
+    "category": "notifications",
+    "version": "1.0",
+    "requires": ["Retell API credential", "Retell Urgent Agent ID", "Retell From Number"],
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "alert_type": { "type": "string", "enum": ["circuit_breaker", "system_down", "quota_exceeded", "auth_failure", "custom"] },
+        "severity": { "type": "string", "enum": ["critical", "urgent", "high", "medium", "low"] },
+        "title": { "type": "string" },
+        "message": { "type": "string" },
+        "workflow_id": { "type": "string" },
+        "workflow_name": { "type": "string" },
+        "error_count": { "type": "number" },
+        "source": { "type": "string" }
+      },
+      "required": ["alert_type", "severity", "message"]
+    }
+  }
+}

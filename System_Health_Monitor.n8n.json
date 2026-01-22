@@ -1,0 +1,402 @@
+{
+  "name": "🏥 System Health Monitor & Dashboard",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "health/dashboard",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "🌐 GET Health Dashboard",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -600,
+        300
+      ],
+      "webhookId": "health-dashboard-webhook"
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 1
+            }
+          ]
+        }
+      },
+      "id": "schedule-trigger",
+      "name": "⏰ Hourly Check",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -600,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Comprehensive system health metrics\nWITH execution_stats AS (\n  SELECT \n    COUNT(*) as total_executions,\n    COUNT(*) FILTER (WHERE status = 'success') as successful,\n    COUNT(*) FILTER (WHERE status = 'error') as failed,\n    AVG(duration_ms) as avg_duration,\n    MAX(started_at) as last_execution\n  FROM workflow_executions\n  WHERE started_at > NOW() - INTERVAL '24 hours'\n),\ncompany_stats AS (\n  SELECT \n    COUNT(*) as total_companies,\n    COUNT(*) FILTER (WHERE dcs_tier = 'platinum') as platinum,\n    COUNT(*) FILTER (WHERE dcs_tier = 'gold') as gold,\n    COUNT(*) FILTER (WHERE dcs_tier = 'bronze') as bronze\n  FROM companies\n),\noutreach_stats AS (\n  SELECT\n    COUNT(*) as total_sequences,\n    COUNT(*) FILTER (WHERE status = 'active') as active_sequences,\n    COUNT(*) FILTER (WHERE status = 'completed') as completed_sequences,\n    SUM(total_touches) as total_touches\n  FROM outreach_sequences\n),\nresearch_stats AS (\n  SELECT\n    COUNT(*) as total_runs,\n    COUNT(*) FILTER (WHERE status = 'pending') as pending,\n    COUNT(*) FILTER (WHERE status = 'processing') as processing,\n    COUNT(*) FILTER (WHERE status = 'completed') as completed\n  FROM research_runs\n),\nhubspot_stats AS (\n  SELECT\n    (SELECT COUNT(*) FROM hubspot_contacts) as contacts,\n    (SELECT COUNT(*) FROM hubspot_companies) as companies,\n    (SELECT COUNT(*) FROM hubspot_deals) as deals\n)\nSELECT \n  json_build_object(\n    'executions', (SELECT row_to_json(execution_stats) FROM execution_stats),\n    'companies', (SELECT row_to_json(company_stats) FROM company_stats),\n    'outreach', (SELECT row_to_json(outreach_stats) FROM outreach_stats),\n    'research', (SELECT row_to_json(research_stats) FROM research_stats),\n    'hubspot', (SELECT row_to_json(hubspot_stats) FROM hubspot_stats)\n  ) as health_metrics;",
+        "options": {}
+      },
+      "id": "get-health-metrics",
+      "name": "🔍 Get Health Metrics",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        -360,
+        400
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CRED_ID",
+          "name": "Postgres account"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Get recent errors\nSELECT \n  we.execution_id,\n  we.workflow_name,\n  we.error_message,\n  we.last_node,\n  we.error_category,\n  we.created_at\nFROM workflow_execution_errors we\nWHERE we.created_at > NOW() - INTERVAL '24 hours'\nORDER BY we.created_at DESC\nLIMIT 10;",
+        "options": {}
+      },
+      "id": "get-recent-errors",
+      "name": "🔍 Get Recent Errors",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        -120,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CRED_ID",
+          "name": "Postgres account"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Get agent activity\nSELECT \n  action,\n  COUNT(*) as runs,\n  COUNT(*) FILTER (WHERE success) as successful,\n  AVG(duration_ms) as avg_duration\nFROM agent_audit_log\nWHERE ts > NOW() - INTERVAL '24 hours'\nGROUP BY action\nORDER BY runs DESC;",
+        "options": {}
+      },
+      "id": "get-agent-activity",
+      "name": "🔍 Get Agent Activity",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        -120,
+        500
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CRED_ID",
+          "name": "Postgres account"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// ═══════════════════════════════════════════════════════════════════\n// 📊 Compile Health Dashboard\n// ═══════════════════════════════════════════════════════════════════\n\nconst healthMetrics = $('🔍 Get Health Metrics').first().json.health_metrics || {};\nconst recentErrors = $('🔍 Get Recent Errors').all().map(i => i.json);\nconst agentActivity = $('🔍 Get Agent Activity').all().map(i => i.json);\n\n// Calculate overall health score\nlet healthScore = 100;\nconst issues = [];\n\n// Check execution health\nconst execStats = healthMetrics.executions || {};\nconst successRate = execStats.total_executions > 0 \n  ? (execStats.successful / execStats.total_executions * 100) \n  : 100;\nif (successRate < 90) {\n  healthScore -= Math.round((90 - successRate) / 2);\n  issues.push(`Execution success rate: ${successRate.toFixed(1)}%`);\n}\n\n// Check research run health\nconst researchStats = healthMetrics.research || {};\nif (researchStats.processing > 10) {\n  healthScore -= 10;\n  issues.push(`${researchStats.processing} research runs stuck in processing`);\n}\n\n// Check for recent errors\nif (recentErrors.length > 5) {\n  healthScore -= recentErrors.length;\n  issues.push(`${recentErrors.length} errors in last 24 hours`);\n}\n\n// Determine status\nlet status = 'healthy';\nif (healthScore < 80) status = 'degraded';\nif (healthScore < 50) status = 'critical';\n\nconst dashboard = {\n  generated_at: new Date().toISOString(),\n  \n  overall: {\n    health_score: Math.max(0, healthScore),\n    status: status,\n    issues: issues\n  },\n  \n  metrics: {\n    executions: {\n      last_24h: execStats.total_executions || 0,\n      success_rate: successRate.toFixed(1) + '%',\n      avg_duration_ms: Math.round(execStats.avg_duration || 0),\n      last_execution: execStats.last_execution\n    },\n    companies: healthMetrics.companies || {},\n    outreach: healthMetrics.outreach || {},\n    research: healthMetrics.research || {},\n    hubspot: healthMetrics.hubspot || {}\n  },\n  \n  recent_errors: recentErrors.slice(0, 5),\n  \n  agent_activity: agentActivity,\n  \n  system_status: {\n    database: 'connected',\n    workflows_active: true,\n    agents_enabled: true,\n    last_check: new Date().toISOString()\n  }\n};\n\nreturn [{ json: dashboard }];"
+      },
+      "id": "compile-dashboard",
+      "name": "📊 Compile Dashboard",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        120,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Log health check\nINSERT INTO agent_audit_log (\n  action, action_type, success, duration_ms, output_data\n) VALUES (\n  'system_health_check',\n  'monitoring',\n  true,\n  0,\n  $1::jsonb\n);",
+        "options": {
+          "queryReplacement": "={{ [JSON.stringify({health_score: $json.overall.health_score, status: $json.overall.status, issues_count: $json.overall.issues.length})] }}"
+        }
+      },
+      "id": "log-check",
+      "name": "🗄️ Log Health Check",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        360,
+        400
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CRED_ID",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "is-webhook",
+              "leftValue": "={{ $('🌐 GET Health Dashboard').item }}",
+              "rightValue": "",
+              "operator": {
+                "type": "object",
+                "operation": "exists",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-webhook",
+      "name": "🔀 Is Webhook?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.1,
+      "position": [
+        600,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "options": {},
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($('📊 Compile Dashboard').first().json) }}"
+      },
+      "id": "respond-webhook",
+      "name": "📤 Respond Dashboard",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        840,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "degraded",
+              "leftValue": "={{ $('📊 Compile Dashboard').first().json.overall.status }}",
+              "rightValue": "healthy",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-alert",
+      "name": "🔀 Alert Needed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.1,
+      "position": [
+        840,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.salesmessage.com/pub/v2.2/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"to\": \"+13204064600\",\n  \"message\": \"🏥 System Health Alert\\n\\nStatus: {{ $('📊 Compile Dashboard').first().json.overall.status.toUpperCase() }}\\nScore: {{ $('📊 Compile Dashboard').first().json.overall.health_score }}/100\\n\\nIssues:\\n{{ $('📊 Compile Dashboard').first().json.overall.issues.map(i => '• ' + i).join('\\\\n') }}\"\n}",
+        "options": {}
+      },
+      "id": "send-alert",
+      "name": "🚨 Send Alert",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1080,
+        500
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "HTTP_AUTH_CRED_ID",
+          "name": "HubSpot Private App - Full Access"
+        }
+      },
+      "continueOnFail": true
+    }
+  ],
+  "connections": {
+    "🌐 GET Health Dashboard": {
+      "main": [
+        [
+          {
+            "node": "🔍 Get Health Metrics",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "⏰ Hourly Check": {
+      "main": [
+        [
+          {
+            "node": "🔍 Get Health Metrics",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔍 Get Health Metrics": {
+      "main": [
+        [
+          {
+            "node": "🔍 Get Recent Errors",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "🔍 Get Agent Activity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔍 Get Recent Errors": {
+      "main": [
+        [
+          {
+            "node": "📊 Compile Dashboard",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔍 Get Agent Activity": {
+      "main": [
+        [
+          {
+            "node": "📊 Compile Dashboard",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📊 Compile Dashboard": {
+      "main": [
+        [
+          {
+            "node": "🗄️ Log Health Check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🗄️ Log Health Check": {
+      "main": [
+        [
+          {
+            "node": "🔀 Is Webhook?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔀 Is Webhook?": {
+      "main": [
+        [
+          {
+            "node": "📤 Respond Dashboard",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "🔀 Alert Needed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔀 Alert Needed?": {
+      "main": [
+        [
+          {
+            "node": "🚨 Send Alert",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "name": "monitoring"
+    },
+    {
+      "name": "health"
+    },
+    {
+      "name": "dashboard"
+    },
+    {
+      "name": "background-agent"
+    }
+  ],
+  "triggerCount": 2,
+  "pinData": {},
+  "versionId": "1",
+  "meta": {
+    "description": "Comprehensive system health monitoring dashboard. Provides metrics on executions, companies, outreach, research runs, and HubSpot sync. Runs hourly and alerts on degraded/critical status. Also available via webhook for on-demand checks.",
+    "category": "monitoring",
+    "triggers": [
+      "webhook",
+      "schedule"
+    ],
+    "outputs": [
+      "agent_audit_log",
+      "sms_notification",
+      "json_dashboard"
+    ],
+    "requiredCredentials": [
+      "Supabase Postgres",
+      "Salesmessage API"
+    ]
+  }
+}

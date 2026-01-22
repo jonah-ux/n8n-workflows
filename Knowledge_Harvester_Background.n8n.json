@@ -1,0 +1,767 @@
+{
+  "name": "Knowledge Harvester (Background)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 30
+            }
+          ]
+        }
+      },
+      "id": "schedule-1",
+      "name": "⏰ Every 30 Minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        240,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Get or create harvester state\nINSERT INTO knowledge_harvester_state (\n  id,\n  current_phase,\n  notion_pages_processed,\n  postgres_tables_processed,\n  documents_created,\n  last_run_at,\n  total_runs\n)\nVALUES (\n  'main',\n  'notion',\n  0,\n  0,\n  0,\n  NOW(),\n  0\n)\nON CONFLICT (id) DO UPDATE SET\n  last_run_at = NOW(),\n  total_runs = knowledge_harvester_state.total_runs + 1\nRETURNING *;",
+        "options": {}
+      },
+      "id": "postgres-1",
+      "name": "📊 Load Harvester State",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        460,
+        400
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CRED_ID",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Determine what to harvest this run\nconst state = $input.first().json;\n\nconst BATCH_SIZE = 50; // Process 50 items per run\nconst TOTAL_NOTION_PAGES = 2000;\nconst TOTAL_POSTGRES_TABLES = 70;\n\n// Calculate progress\nconst notion_progress = (state.notion_pages_processed / TOTAL_NOTION_PAGES) * 100;\nconst postgres_progress = (state.postgres_tables_processed / TOTAL_POSTGRES_TABLES) * 100;\n\n// Decide phase (alternate between Notion and Postgres)\nlet phase = state.current_phase;\nlet offset = 0;\nlet limit = BATCH_SIZE;\n\nif (phase === 'notion') {\n  offset = state.notion_pages_processed;\n  \n  // Switch to postgres if we've completed notion\n  if (offset >= TOTAL_NOTION_PAGES) {\n    phase = 'postgres';\n    offset = state.postgres_tables_processed;\n  }\n} else if (phase === 'postgres') {\n  offset = state.postgres_tables_processed;\n  \n  // Switch back to notion if we've completed postgres\n  if (offset >= TOTAL_POSTGRES_TABLES) {\n    phase = 'notion';\n    offset = 0; // Start notion over\n  }\n}\n\nreturn [{\n  json: {\n    ...state,\n    current_run: {\n      phase,\n      offset,\n      limit,\n      batch_number: Math.floor(offset / BATCH_SIZE) + 1\n    },\n    progress: {\n      notion: notion_progress.toFixed(1) + '%',\n      postgres: postgres_progress.toFixed(1) + '%'\n    },\n    estimated_completion: {\n      notion_runs_remaining: Math.ceil((TOTAL_NOTION_PAGES - state.notion_pages_processed) / BATCH_SIZE),\n      postgres_runs_remaining: Math.ceil((TOTAL_POSTGRES_TABLES - state.postgres_tables_processed) / 10)\n    }\n  }\n}];"
+      },
+      "id": "code-1",
+      "name": "🎯 Determine What to Harvest",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        680,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.current_run.phase }}",
+              "value2": "notion"
+            }
+          ]
+        }
+      },
+      "id": "if-1",
+      "name": "Phase: Notion or Postgres?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        900,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "=-- Harvest batch of Notion pages\nSELECT \n  page_id,\n  title,\n  content,\n  url,\n  parent_id,\n  parent_type,\n  created_time,\n  last_edited_time,\n  properties\nFROM notion_pages\nORDER BY last_edited_time DESC\nOFFSET {{ $json.current_run.offset }}\nLIMIT {{ $json.current_run.limit }};",
+        "options": {}
+      },
+      "id": "postgres-2",
+      "name": "📖 Harvest Notion Pages",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1120,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CRED_ID",
+          "name": "Postgres account"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "=-- Get list of tables to analyze\nSELECT \n  schemaname,\n  tablename,\n  pg_size_pretty(pg_total_relation_size(schemaname||'.'||tablename)) AS size,\n  (SELECT COUNT(*) FROM pg_stat_user_tables WHERE relname = tablename) as row_count_estimate\nFROM pg_tables\nWHERE schemaname = 'public'\nORDER BY tablename\nOFFSET {{ $json.current_run.offset }}\nLIMIT 10;",
+        "options": {}
+      },
+      "id": "postgres-3",
+      "name": "🗄️ Get Postgres Tables Batch",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1120,
+        500
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CRED_ID",
+          "name": "Postgres account"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "=-- Sample data from each table\n{{ $input.all().map(item => {\n  const table = item.json.tablename;\n  return `\nSELECT \n  '${table}' as source_table,\n  jsonb_agg(t.*) as sample_data,\n  COUNT(*) as sample_size\nFROM (SELECT * FROM ${table} LIMIT 100) t\n`;\n}).join('UNION ALL\\n') }};",
+        "options": {}
+      },
+      "id": "postgres-4",
+      "name": "📊 Sample Table Data",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1340,
+        500
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CRED_ID",
+          "name": "Postgres account"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// Merge harvested data\nconst state = $('🎯 Determine What to Harvest').first().json;\nconst phase = state.current_run.phase;\n\nlet harvested_data = [];\nlet items_processed = 0;\n\nif (phase === 'notion') {\n  const notionPages = $('📖 Harvest Notion Pages').all();\n  harvested_data = notionPages.map(item => ({\n    source: 'notion',\n    type: 'page',\n    id: item.json.page_id,\n    title: item.json.title,\n    content: item.json.content,\n    url: item.json.url,\n    metadata: {\n      parent_type: item.json.parent_type,\n      created_time: item.json.created_time,\n      last_edited_time: item.json.last_edited_time\n    }\n  }));\n  items_processed = notionPages.length;\n} else {\n  const postgresData = $('📊 Sample Table Data').all();\n  harvested_data = postgresData.map(item => ({\n    source: 'postgres',\n    type: 'table',\n    name: item.json.source_table,\n    sample_data: item.json.sample_data,\n    sample_size: item.json.sample_size\n  }));\n  items_processed = postgresData.length;\n}\n\nreturn [{\n  json: {\n    ...state,\n    harvested_data,\n    items_processed,\n    batch_summary: {\n      phase,\n      items_count: harvested_data.length,\n      batch_number: state.current_run.batch_number\n    }\n  }\n}];"
+      },
+      "id": "code-2",
+      "name": "🤝 Merge Harvested Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1560,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "learning-prompt",
+              "name": "learning_prompt",
+              "value": "=You are an AI knowledge extraction system analyzing organizational data.\n\nPHASE: {{ $json.batch_summary.phase }}\nBATCH: {{ $json.batch_summary.batch_number }}\nITEMS: {{ $json.batch_summary.items_count }}\n\nDATA:\n{{ JSON.stringify($json.harvested_data, null, 2) }}\n\nYour task:\n1. Extract patterns, best practices, and learnings from this data\n2. Identify business rules and procedures\n3. Recognize common workflows and processes\n4. Note relationships between different pieces of information\n5. Categorize learnings into topics (e.g., \"HubSpot\", \"Enrichment\", \"Communication\", \"Sales\", etc.)\n\nReturn structured JSON:\n{\n  \"topics\": [\n    {\n      \"name\": \"Topic Name\",\n      \"category\": \"Category\",\n      \"learnings\": [\n        \"Learning 1\",\n        \"Learning 2\"\n      ],\n      \"best_practices\": [\n        \"Best practice 1\"\n      ],\n      \"business_rules\": [\n        \"Rule 1\"\n      ],\n      \"related_data\": [\n        \"Reference to source data\"\n      ]\n    }\n  ],\n  \"cross_references\": [\n    {\n      \"topic1\": \"Topic A\",\n      \"topic2\": \"Topic B\",\n      \"relationship\": \"How they relate\"\n    }\n  ]\n}\n\nBe thorough but concise. Focus on actionable insights.",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-1",
+      "name": "📋 Build Learning Prompt",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1780,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "model": "gpt-4o",
+        "options": {
+          "temperature": 0.3,
+          "maxTokens": 4000
+        },
+        "text": "={{ $json.learning_prompt }}"
+      },
+      "id": "openai-1",
+      "name": "🤖 Extract Learnings (GPT-4o)",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1,
+      "position": [
+        2000,
+        400
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "OPENAI_CRED_ID",
+          "name": "OpenAI API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse AI learnings\nconst response = $input.first().json.response || $input.first().json.text || '';\n\nlet learnings;\ntry {\n  const jsonMatch = response.match(/\\{[\\s\\S]*\\}/);\n  learnings = JSON.parse(jsonMatch ? jsonMatch[0] : response);\n} catch (e) {\n  learnings = {\n    topics: [],\n    cross_references: [],\n    error: e.message\n  };\n}\n\nconst base = $('🤝 Merge Harvested Data').first().json;\n\nreturn [{\n  json: {\n    ...base,\n    learnings,\n    extracted_topics: learnings.topics || [],\n    cross_references: learnings.cross_references || []\n  }\n}];"
+      },
+      "id": "code-3",
+      "name": "📊 Parse Learnings",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2220,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Load existing master documents to update\nSELECT \n  topic_name,\n  document_id,\n  document_url,\n  content,\n  last_updated,\n  learning_count\nFROM knowledge_master_documents\nORDER BY topic_name;",
+        "options": {}
+      },
+      "id": "postgres-5",
+      "name": "📚 Load Existing Master Docs",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        2440,
+        400
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CRED_ID",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Merge new learnings with existing documents\nconst base = $('📊 Parse Learnings').first().json;\nconst existingDocs = $('📚 Load Existing Master Docs').all().map(item => item.json);\nconst newTopics = base.extracted_topics || [];\n\n// Create map of existing docs by topic\nconst existingDocsMap = {};\nexistingDocs.forEach(doc => {\n  existingDocsMap[doc.topic_name] = doc;\n});\n\n// Merge new learnings with existing\nconst updatedDocs = [];\nconst newDocs = [];\n\nnewTopics.forEach(topic => {\n  const topicName = topic.name;\n  const existing = existingDocsMap[topicName];\n  \n  if (existing) {\n    // Update existing document\n    updatedDocs.push({\n      topic_name: topicName,\n      category: topic.category,\n      existing_document_id: existing.document_id,\n      existing_content: existing.content,\n      new_learnings: topic.learnings || [],\n      new_best_practices: topic.best_practices || [],\n      new_business_rules: topic.business_rules || [],\n      operation: 'update'\n    });\n  } else {\n    // Create new document\n    newDocs.push({\n      topic_name: topicName,\n      category: topic.category,\n      learnings: topic.learnings || [],\n      best_practices: topic.best_practices || [],\n      business_rules: topic.business_rules || [],\n      operation: 'create'\n    });\n  }\n});\n\nreturn [{\n  json: {\n    ...base,\n    documents_to_update: updatedDocs,\n    documents_to_create: newDocs,\n    update_count: updatedDocs.length,\n    create_count: newDocs.length\n  }\n}];"
+      },
+      "id": "code-4",
+      "name": "🔄 Merge with Existing Docs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2660,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "documents_to_create",
+        "options": {}
+      },
+      "id": "split-1",
+      "name": "Split: New Docs",
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [
+        2880,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "documents_to_update",
+        "options": {}
+      },
+      "id": "split-2",
+      "name": "Split: Update Docs",
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [
+        2880,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "new-doc-prompt",
+              "name": "doc_content",
+              "value": "=# {{ $json.topic_name }}\n\n**Category:** {{ $json.category }}\n**Last Updated:** {{ $now.toISO() }}\n**Auto-generated by Knowledge Harvester**\n\n---\n\n## Overview\n\nThis document contains learnings, best practices, and business rules for {{ $json.topic_name }}.\n\n## Learnings\n\n{{ $json.learnings.map((l, i) => `${i + 1}. ${l}`).join('\\n') }}\n\n## Best Practices\n\n{{ $json.best_practices.map((bp, i) => `${i + 1}. ${bp}`).join('\\n') }}\n\n## Business Rules\n\n{{ $json.business_rules.map((br, i) => `${i + 1}. ${br}`).join('\\n') }}\n\n---\n\n*This document is continuously updated as new information is discovered.*",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-2",
+      "name": "📝 Generate New Doc Content",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        3100,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "update-prompt",
+              "name": "update_prompt",
+              "value": "=You are updating an existing knowledge document with new learnings.\n\nTOPIC: {{ $json.topic_name }}\n\nEXISTING CONTENT:\n{{ $json.existing_content }}\n\nNEW LEARNINGS:\n{{ JSON.stringify($json.new_learnings) }}\n\nNEW BEST PRACTICES:\n{{ JSON.stringify($json.new_best_practices) }}\n\nNEW BUSINESS RULES:\n{{ JSON.stringify($json.new_business_rules) }}\n\nMerge the new information into the existing document:\n1. Add new unique learnings (avoid duplicates)\n2. Update or expand existing sections\n3. Maintain the document structure\n4. Note what changed at the bottom\n\nReturn the complete updated document in markdown.",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-3",
+      "name": "📝 Generate Update Prompt",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        3100,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "model": "gpt-4o",
+        "options": {
+          "temperature": 0.3
+        },
+        "text": "={{ $json.update_prompt }}"
+      },
+      "id": "openai-2",
+      "name": "🤖 Generate Updated Content",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1,
+      "position": [
+        3320,
+        500
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "OPENAI_CRED_ID",
+          "name": "OpenAI API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "document",
+        "operation": "create",
+        "title": "={{ $json.topic_name }} - Master SOP",
+        "content": "={{ $json.doc_content }}",
+        "folderId": "={{ $env.GOOGLE_DOCS_KNOWLEDGE_FOLDER_ID }}",
+        "additionalFields": {}
+      },
+      "id": "gdocs-1",
+      "name": "💾 Create New Google Doc",
+      "type": "n8n-nodes-base.googleDocs",
+      "typeVersion": 2,
+      "position": [
+        3320,
+        300
+      ],
+      "credentials": {}
+    },
+    {
+      "parameters": {
+        "resource": "document",
+        "operation": "update",
+        "documentId": "={{ $json.existing_document_id }}",
+        "simple": false,
+        "updateFields": {
+          "content": "={{ $json.response || $json.text }}"
+        }
+      },
+      "id": "gdocs-2",
+      "name": "💾 Update Existing Google Doc",
+      "type": "n8n-nodes-base.googleDocs",
+      "typeVersion": 2,
+      "position": [
+        3540,
+        500
+      ],
+      "credentials": {}
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "=INSERT INTO knowledge_master_documents (\n  topic_name,\n  category,\n  document_id,\n  document_url,\n  content,\n  learning_count,\n  last_updated\n) VALUES (\n  $1, $2, $3, $4, $5, $6, NOW()\n)\nRETURNING *;",
+        "options": {
+          "queryParameters": "={{ $json.topic_name }},{{ $json.category }},{{ $('💾 Create New Google Doc').first().json.documentId }},{{ $('💾 Create New Google Doc').first().json.documentUrl }},{{ $json.doc_content }},{{ $json.learnings.length }}"
+        }
+      },
+      "id": "postgres-6",
+      "name": "💾 Log New Document",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        3540,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CRED_ID",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "=UPDATE knowledge_master_documents\nSET \n  content = $1,\n  learning_count = learning_count + $2,\n  last_updated = NOW()\nWHERE topic_name = $3\nRETURNING *;",
+        "options": {
+          "queryParameters": "={{ $('🤖 Generate Updated Content').first().json.response }},{{ $json.new_learnings.length }},{{ $json.topic_name }}"
+        }
+      },
+      "id": "postgres-7",
+      "name": "💾 Update Document Record",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        3760,
+        500
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CRED_ID",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {},
+      "id": "merge-1",
+      "name": "🤝 Merge Results",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 2.1,
+      "position": [
+        3980,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "=-- Update harvester state\nUPDATE knowledge_harvester_state\nSET \n  current_phase = $1,\n  notion_pages_processed = CASE \n    WHEN $1 = 'notion' THEN notion_pages_processed + $2\n    ELSE notion_pages_processed\n  END,\n  postgres_tables_processed = CASE \n    WHEN $1 = 'postgres' THEN postgres_tables_processed + $2\n    ELSE postgres_tables_processed\n  END,\n  documents_created = documents_created + $3,\n  last_run_at = NOW()\nWHERE id = 'main'\nRETURNING *;",
+        "options": {
+          "queryReplacement": "={{ [$('🤝 Merge Harvested Data').first().json.batch_summary.phase ,  $('🤝 Merge Harvested Data').first().json.items_processed ,  $('🔄 Merge with Existing Docs').first().json.create_count] }}"
+        }
+      },
+      "id": "postgres-8",
+      "name": "💾 Update Harvester State",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        4200,
+        400
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CRED_ID",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build completion summary\nconst finalState = $input.first().json;\nconst base = $('🔄 Merge with Existing Docs').first().json;\n\nreturn [{\n  json: {\n    success: true,\n    run_summary: {\n      phase: base.batch_summary.phase,\n      batch_number: base.batch_summary.batch_number,\n      items_processed: base.items_processed,\n      documents_created: base.create_count,\n      documents_updated: base.update_count,\n      total_documents: base.create_count + base.update_count\n    },\n    progress: base.progress,\n    state: finalState,\n    message: `Processed ${base.items_processed} items from ${base.batch_summary.phase}. Created ${base.create_count} new docs, updated ${base.update_count} existing docs.`\n  }\n}];"
+      },
+      "id": "code-5",
+      "name": "📊 Build Summary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4420,
+        400
+      ]
+    }
+  ],
+  "connections": {
+    "⏰ Every 30 Minutes": {
+      "main": [
+        [
+          {
+            "node": "📊 Load Harvester State",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📊 Load Harvester State": {
+      "main": [
+        [
+          {
+            "node": "🎯 Determine What to Harvest",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🎯 Determine What to Harvest": {
+      "main": [
+        [
+          {
+            "node": "Phase: Notion or Postgres?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Phase: Notion or Postgres?": {
+      "main": [
+        [
+          {
+            "node": "📖 Harvest Notion Pages",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "🗄️ Get Postgres Tables Batch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📖 Harvest Notion Pages": {
+      "main": [
+        [
+          {
+            "node": "🤝 Merge Harvested Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🗄️ Get Postgres Tables Batch": {
+      "main": [
+        [
+          {
+            "node": "📊 Sample Table Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📊 Sample Table Data": {
+      "main": [
+        [
+          {
+            "node": "🤝 Merge Harvested Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🤝 Merge Harvested Data": {
+      "main": [
+        [
+          {
+            "node": "📋 Build Learning Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📋 Build Learning Prompt": {
+      "main": [
+        [
+          {
+            "node": "🤖 Extract Learnings (GPT-4o)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🤖 Extract Learnings (GPT-4o)": {
+      "main": [
+        [
+          {
+            "node": "📊 Parse Learnings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📊 Parse Learnings": {
+      "main": [
+        [
+          {
+            "node": "📚 Load Existing Master Docs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📚 Load Existing Master Docs": {
+      "main": [
+        [
+          {
+            "node": "🔄 Merge with Existing Docs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔄 Merge with Existing Docs": {
+      "main": [
+        [
+          {
+            "node": "Split: New Docs",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Split: Update Docs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split: New Docs": {
+      "main": [
+        [
+          {
+            "node": "📝 Generate New Doc Content",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split: Update Docs": {
+      "main": [
+        [
+          {
+            "node": "📝 Generate Update Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📝 Generate New Doc Content": {
+      "main": [
+        [
+          {
+            "node": "💾 Create New Google Doc",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📝 Generate Update Prompt": {
+      "main": [
+        [
+          {
+            "node": "🤖 Generate Updated Content",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🤖 Generate Updated Content": {
+      "main": [
+        [
+          {
+            "node": "💾 Update Existing Google Doc",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "💾 Create New Google Doc": {
+      "main": [
+        [
+          {
+            "node": "💾 Log New Document",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "💾 Update Existing Google Doc": {
+      "main": [
+        [
+          {
+            "node": "💾 Update Document Record",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "💾 Log New Document": {
+      "main": [
+        [
+          {
+            "node": "🤝 Merge Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "💾 Update Document Record": {
+      "main": [
+        [
+          {
+            "node": "🤝 Merge Results",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "🤝 Merge Results": {
+      "main": [
+        [
+          {
+            "node": "💾 Update Harvester State",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "💾 Update Harvester State": {
+      "main": [
+        [
+          {
+            "node": "📊 Build Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 1,
+  "updatedAt": "2026-01-19T00:00:00.000Z",
+  "versionId": "1"
+}

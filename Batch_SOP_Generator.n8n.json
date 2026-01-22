@@ -1,0 +1,91 @@
+{
+  "name": "Batch SOP Generator",
+  "nodes": [
+    {
+      "id": "trigger-001",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [240, 300]
+    },
+    {
+      "id": "list-workflows-001",
+      "name": "List Key Workflows",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [460, 300],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "workflows",
+              "name": "workflows",
+              "type": "json",
+              "value": "={{ [\n  {\n    sopName: 'Lead Enrichment Orchestrator v8',\n    sopId: 'SOP-ENRICHMENT-ORCHESTRATOR',\n    category: 'Enrichment',\n    status: 'Active',\n    priority: 'High',\n    quickSummary: 'Master orchestrator for 11-tool lead enrichment pipeline using parallel execution across 3 tiers',\n    purpose: 'Transform raw prospect data from Airtable into sales-ready leads with DCS scores, contact info, and actionable intel',\n    scope: 'All automotive service businesses entering the enrichment pipeline',\n    prerequisites: '- Airtable base with prospects\\n- API keys: SerpAPI, Hunter.io, Firecrawl, Apify, OpenAI\\n- Supabase database with research_runs, enrichment_results, enriched_leads tables\\n- All 11 sub-workflows deployed',\n    steps: '1. Receive company from Airtable webhook or manual trigger\\n2. Create research_run record\\n3. Execute Tier 1 tools in parallel (Google Info, Website Scrape, Reviews, Jobs, LinkedIn)\\n4. Execute Tier 2 tools in parallel (Contact Hunt, Email Discovery, News/Press)\\n5. Execute Tier 3 analysis (Intel Analyst, Outreach Compiler)\\n6. Risk Officer runs alongside Tier 1\\n7. Calculate DCS score from all data points\\n8. Write final record to enriched_leads table\\n9. Mark outreach_ready = true',\n    expectedOutcome: 'Enriched lead with: DCS score/tier, verified contact info, intel summary, pain points, buying signals, recommended outreach channel',\n    troubleshooting: '- Timeout errors: Increase timeout on Firecrawl nodes\\n- Rate limits: Add delays between batches\\n- Missing data: Check Continue on Fail is enabled\\n- DCS score 0: Verify enrichment_results are being written',\n    relatedWorkflows: 'Firecrawl Website Enrichment, Hunter Email Discovery, Apify Reviews, SerpAPI Jobs, Intel Analyst, Outreach Compiler, Risk Officer',\n    owner: 'Jonah',\n    version: '8.0',\n    tags: 'enrichment, orchestrator, dcs, parallel, lead-gen'\n  },\n  {\n    sopName: 'HubSpot Lead Sync',\n    sopId: 'SOP-HUBSPOT-SYNC',\n    category: 'HubSpot',\n    status: 'Active',\n    priority: 'High',\n    quickSummary: 'Syncs enriched leads from Postgres to HubSpot CRM, creating/updating companies and contacts',\n    purpose: 'Bridge enrichment pipeline output to HubSpot for sales team to work leads',\n    scope: 'All leads in enriched_leads table with outreach_ready=true and outreach_status=pending',\n    prerequisites: '- HubSpot OAuth2 credentials\\n- Custom properties created in HubSpot (dcs_score, dcs_tier, intel_summary, etc.)\\n- enriched_leads table populated\\n- Supabase connection',\n    steps: '1. Schedule trigger every 5 minutes\\n2. Query enriched_leads WHERE outreach_ready=true AND outreach_status=pending\\n3. For each lead: search HubSpot for company by domain\\n4. If exists: update company properties\\n5. If not: create new company\\n6. Search for contact by email\\n7. If exists: update contact\\n8. If not: create contact\\n9. Associate contact to company\\n10. Update enriched_leads: outreach_status=synced, store HubSpot IDs',\n    expectedOutcome: 'Company and Contact records in HubSpot with all enrichment data, associated together, status updated in Postgres',\n    troubleshooting: '- Property not found: Ensure custom properties exist in HubSpot\\n- Duplicate contacts: Check email uniqueness\\n- Association fails: Verify company created first',\n    relatedWorkflows: 'Lead Enrichment Orchestrator, Outreach Sequence Initiator',\n    owner: 'Jonah',\n    version: '1.0',\n    tags: 'hubspot, sync, crm, companies, contacts'\n  },\n  {\n    sopName: 'Firecrawl Website Enrichment',\n    sopId: 'SOP-FIRECRAWL-WEBSITE',\n    category: 'Enrichment',\n    status: 'Active',\n    priority: 'Medium',\n    quickSummary: 'Scrapes company websites using Firecrawl to extract about pages, services, team info, and contact details',\n    purpose: 'Gather website intelligence for DCS scoring and personalization',\n    scope: 'Companies with valid domain URLs',\n    prerequisites: '- Firecrawl API key\\n- Valid company domain\\n- research_run_id for logging',\n    steps: '1. Receive domain and research_run_id\\n2. Use Firecrawl MAP to discover site pages\\n3. Identify key pages (about, contact, services, team)\\n4. Scrape each page with Firecrawl\\n5. Extract structured data\\n6. Log results to enrichment_results table\\n7. Return extracted data',\n    expectedOutcome: 'Structured website data including: services offered, team members, about text, contact forms, technology stack',\n    troubleshooting: '- Timeout: Some sites are slow, increase timeout to 60s\\n- Blocked: Site may block scrapers, mark as failed\\n- No pages found: Domain may be invalid or parked',\n    relatedWorkflows: 'Lead Enrichment Orchestrator, Contact Form Hunter',\n    owner: 'Jonah',\n    version: '2.0',\n    tags: 'firecrawl, scraping, website, enrichment'\n  },\n  {\n    sopName: 'Outreach Orchestrator',\n    sopId: 'SOP-OUTREACH-ORCHESTRATOR',\n    category: 'Outreach',\n    status: 'Draft',\n    priority: 'High',\n    quickSummary: 'Executes multi-touch outreach sequences via SMS, voicemail, and AI calls',\n    purpose: 'Automate sales outreach cadence for enriched leads',\n    scope: 'Leads synced to HubSpot with status ready_for_outreach',\n    prerequisites: '- Salesmsg API credentials\\n- Retell AI agent configured\\n- Outreach sequence templates\\n- Lead synced to HubSpot',\n    steps: '1. Schedule checks for leads due for next touch\\n2. Determine touch type (sms_1, call_1, voicemail_1, etc.)\\n3. For SMS: Send via Salesmsg API\\n4. For Call: Initiate via Retell AI\\n5. For Voicemail: Drop ringless voicemail\\n6. Log outcome\\n7. Schedule next touch or mark sequence complete',\n    expectedOutcome: 'Leads receive personalized multi-channel outreach, responses are captured and routed',\n    troubleshooting: '- SMS not sending: Check Salesmsg balance\\n- Call fails: Verify Retell agent ID\\n- Wrong timing: Check sequence step timing',\n    relatedWorkflows: 'HubSpot Lead Sync, Salesmsg Inbound Handler, Retell Call Results Handler',\n    owner: 'Jonah',\n    version: '1.0',\n    tags: 'outreach, sms, calls, sequences, salesmsg, retell'\n  },\n  {\n    sopName: 'Error Auto-Fixer',\n    sopId: 'SOP-ERROR-AUTOFIXER',\n    category: 'Infrastructure',\n    status: 'Active',\n    priority: 'Medium',\n    quickSummary: 'Monitors workflow execution errors and attempts automatic fixes based on known patterns',\n    purpose: 'Reduce manual intervention for common workflow failures',\n    scope: 'All workflow executions logged to workflow_execution_errors table',\n    prerequisites: '- Error patterns defined\\n- workflow_execution_errors table\\n- Agent with fix capabilities',\n    steps: '1. Poll for new errors every 5 minutes\\n2. Categorize error by type\\n3. Match to known fix patterns\\n4. If fixable: execute auto-fix\\n5. If not: escalate to human\\n6. Log fix attempt result',\n    expectedOutcome: 'Common errors auto-resolved, unknown errors escalated with context',\n    troubleshooting: '- Fix fails repeatedly: Add to known patterns\\n- Unknown error: Review and add category',\n    relatedWorkflows: 'System Health Monitor, Emergency Escalation',\n    owner: 'System',\n    version: '1.0',\n    tags: 'infrastructure, errors, auto-fix, monitoring'\n  }\n] }}"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "split-001",
+      "name": "Split Into Items",
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [680, 300],
+      "parameters": {
+        "fieldToSplitOut": "workflows",
+        "options": {}
+      }
+    },
+    {
+      "id": "call-publisher-001",
+      "name": "Call SOP Publisher",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [900, 300],
+      "parameters": {
+        "mode": "each",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $env.SOP_PUBLISHER_WORKFLOW_ID || '' }}"
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      }
+    },
+    {
+      "id": "summary-001",
+      "name": "Generate Summary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1120, 300],
+      "parameters": {
+        "jsCode": "// Summarize batch SOP generation\nconst results = $input.all();\n\nconst created = results.filter(r => r.json?.result?.action === 'create').length;\nconst updated = results.filter(r => r.json?.result?.action === 'update').length;\nconst failed = results.filter(r => !r.json?.result?.success).length;\n\nreturn [{\n  json: {\n    summary: {\n      total: results.length,\n      created,\n      updated,\n      failed,\n      timestamp: new Date().toISOString()\n    },\n    details: results.map(r => ({\n      sopName: r.json?.result?.sopName,\n      action: r.json?.result?.action,\n      success: r.json?.result?.success,\n      url: r.json?.result?.googleDocUrl\n    }))\n  }\n}];"
+      }
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [[{ "node": "List Key Workflows", "type": "main", "index": 0 }]]
+    },
+    "List Key Workflows": {
+      "main": [[{ "node": "Split Into Items", "type": "main", "index": 0 }]]
+    },
+    "Split Into Items": {
+      "main": [[{ "node": "Call SOP Publisher", "type": "main", "index": 0 }]]
+    },
+    "Call SOP Publisher": {
+      "main": [[{ "node": "Generate Summary", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "saveManualExecutions": true
+  }
+}

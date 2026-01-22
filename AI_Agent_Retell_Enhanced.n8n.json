@@ -1,0 +1,433 @@
+{
+  "name": "🕵️ AI Agent: Retell AI Voice Operations",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "agent/retell",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "🌐 Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -400,
+        300
+      ],
+      "webhookId": "retell-agent-webhook"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ═══════════════════════════════════════════════════════════════════\n// 📋 Normalize Input + Build Parameterized SQL for Retell AI Agent\n// ═══════════════════════════════════════════════════════════════════\n\nconst raw = $input.first().json;\nconst body = raw.body || raw;\n\n// Helper to safely quote values for params array\nconst q = (v) => (v === undefined || v === null) ? null : String(v);\n\n// ───────────────────────────────────────────────────────────────────\n// Extract input fields\n// ───────────────────────────────────────────────────────────────────\nconst input = {\n  action: (body.action || body.tool || 'help').toLowerCase().trim(),\n  phone_number: body.phone_number || body.to || body.to_number || null,\n  from_number: body.from_number || body.from || null,\n  contact_id: body.contact_id || body.hubspot_contact_id || null,\n  company_id: body.company_id || body.hubspot_company_id || null,\n  contact_name: body.contact_name || body.name || null,\n  company_name: body.company_name || null,\n  agent_id: body.agent_id || body.retell_agent_id || null,\n  call_id: body.call_id || body.retell_call_id || null,\n  call_script: body.script || body.call_script || body.prompt || null,\n  call_objective: body.objective || body.goal || 'qualification',\n  dynamic_variables: body.variables || body.dynamic_variables || {},\n  metadata: body.metadata || {},\n  dry_run: body.dry_run === true || body.preview === true,\n  user_id: body.user_id || body.agent_user_id || 'system',\n  session_id: body.session_id || body.conversation_id || `retell_${Date.now()}`\n};\n\n// ───────────────────────────────────────────────────────────────────\n// Action routing map\n// ───────────────────────────────────────────────────────────────────\nconst ACTIONS = {\n  initiate_call: 'Start an outbound AI voice call',\n  get_call_status: 'Check status of an active or completed call',\n  get_call_transcript: 'Get full transcript of a completed call',\n  get_call_recording: 'Get recording URL for a completed call',\n  end_call: 'Terminate an active call',\n  list_agents: 'List available Retell AI agents',\n  get_agent: 'Get details of a specific agent',\n  create_agent: 'Create a new Retell AI agent with custom prompt',\n  update_agent: 'Update an existing agent configuration',\n  list_calls: 'List recent calls with filters',\n  get_call_analytics: 'Get aggregate call analytics',\n  list_phone_numbers: 'List available phone numbers',\n  build_call_script: 'Generate a call script using AI',\n  schedule_call: 'Schedule a call for future execution',\n  help: 'List available Retell AI operations'\n};\n\nconst tool_name = `retell_${input.action}`;\nconst action_description = ACTIONS[input.action] || 'Unknown action';\n\n// ───────────────────────────────────────────────────────────────────\n// Build payload for logging\n// ───────────────────────────────────────────────────────────────────\nconst payload_for_log = {\n  action: input.action,\n  phone_number: input.phone_number,\n  contact_id: input.contact_id,\n  company_id: input.company_id,\n  agent_id: input.agent_id,\n  call_id: input.call_id,\n  call_objective: input.call_objective,\n  dry_run: input.dry_run\n};\n\n// ───────────────────────────────────────────────────────────────────\n// Build parameterized SQL for log_start\n// ───────────────────────────────────────────────────────────────────\nconst log_start_sql = `\nINSERT INTO tool_execution_log (\n  tool_name, input_data, success, conversation_id, user_id, required_approval\n)\nVALUES ($1, $2::jsonb, false, $3, $4, $5)\nRETURNING id;\n`;\n\nconst log_start_params = [\n  tool_name,\n  JSON.stringify(payload_for_log),\n  q(input.session_id),\n  q(input.user_id),\n  !input.dry_run && ['initiate_call', 'end_call', 'create_agent', 'update_agent', 'schedule_call'].includes(input.action)\n];\n\n// ───────────────────────────────────────────────────────────────────\n// Build parameterized SQL for context loading\n// ───────────────────────────────────────────────────────────────────\nconst note_scope = input.company_id ? 'company' : (input.contact_id ? 'contact' : 'global');\nconst note_key = input.company_id || input.contact_id || 'retell_general';\n\nconst ctx_sql = `\nSELECT jsonb_build_object(\n  'recent_calls', (\n    SELECT COALESCE(jsonb_agg(m ORDER BY m.sent_at DESC), '[]'::jsonb)\n    FROM outreach_messages m \n    WHERE (m.company_id::text = $1 OR $1 IS NULL)\n    AND m.channel = 'ai_call'\n    LIMIT 10\n  ),\n  'contact_from_hubspot', (\n    SELECT to_jsonb(c) FROM hubspot_contacts c \n    WHERE c.id = $2 OR c.attrs->'properties'->>'phone' = $3\n    LIMIT 1\n  ),\n  'company_from_hubspot', (\n    SELECT to_jsonb(co) FROM hubspot_companies co \n    WHERE co.id = $4\n    LIMIT 1\n  ),\n  'company_context', (\n    SELECT ctx.context_jsonb FROM company_contexts ctx\n    WHERE ctx.company_id::text = $1\n    LIMIT 1\n  ),\n  'call_scripts', (\n    SELECT COALESCE(jsonb_agg(jsonb_build_object(\n      'name', t.key,\n      'script', t.value->>'script',\n      'objective', t.value->>'objective',\n      'industry', t.value->>'industry'\n    )), '[]'::jsonb)\n    FROM memory_items t\n    WHERE t.key LIKE 'call_script_%'\n    AND t.status = 'active'\n    LIMIT 20\n  ),\n  'agent_notes', (\n    SELECT COALESCE(jsonb_agg(n ORDER BY n.updated_at DESC), '[]'::jsonb)\n    FROM agent_notes n \n    WHERE n.scope = $5 AND n.note_key = $6\n    LIMIT 10\n  ),\n  'outreach_sequence', (\n    SELECT to_jsonb(s) FROM outreach_sequences s\n    WHERE s.company_id::text = $1\n    AND s.status IN ('active', 'paused')\n    ORDER BY s.updated_at DESC\n    LIMIT 1\n  ),\n  'call_stats', (\n    SELECT jsonb_build_object(\n      'total_calls', COUNT(*),\n      'total_answered', COUNT(*) FILTER (WHERE call_status IN ('completed', 'answered')),\n      'total_voicemail', COUNT(*) FILTER (WHERE call_status = 'voicemail'),\n      'total_no_answer', COUNT(*) FILTER (WHERE call_status IN ('no_answer', 'busy')),\n      'avg_duration_sec', AVG(EXTRACT(EPOCH FROM (delivered_at - sent_at))) FILTER (WHERE delivered_at IS NOT NULL)\n    )\n    FROM outreach_messages\n    WHERE channel = 'ai_call'\n    AND sent_at > NOW() - INTERVAL '30 days'\n  ),\n  'retell_agents', (\n    SELECT COALESCE(jsonb_agg(jsonb_build_object(\n      'id', a.key,\n      'name', a.value->>'name',\n      'description', a.value->>'description',\n      'voice', a.value->>'voice'\n    )), '[]'::jsonb)\n    FROM memory_items a\n    WHERE a.key LIKE 'retell_agent_%'\n    AND a.status = 'active'\n    LIMIT 10\n  )\n) AS context;\n`;\n\nconst ctx_params = [\n  q(input.company_id),\n  q(input.contact_id),\n  q(input.phone_number),\n  q(input.company_id),\n  note_scope,\n  note_key\n];\n\n// ───────────────────────────────────────────────────────────────────\n// Output\n// ───────────────────────────────────────────────────────────────────\nreturn [{\n  json: {\n    input,\n    tool_name,\n    action_description,\n    available_actions: ACTIONS,\n    log_start_sql,\n    log_start_params,\n    ctx_sql,\n    ctx_params\n  }\n}];"
+      },
+      "id": "normalize-input",
+      "name": "📋 Normalize + Build SQL",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -160,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ $json.log_start_sql }}",
+        "options": {
+          "queryReplacement": "={{ $json.log_start_params }}"
+        }
+      },
+      "id": "log-start",
+      "name": "🗄️ Log Start",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        80,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CRED_ID",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ $('📋 Normalize + Build SQL').item.json.ctx_sql }}",
+        "options": {
+          "queryReplacement": "={{ $('📋 Normalize + Build SQL').item.json.ctx_params }}"
+        }
+      },
+      "id": "load-context",
+      "name": "📥 Load Context",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        320,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CRED_ID",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "options": {
+          "systemMessage": "You are the Retell AI Voice Operations Agent for Auto Shop Media. You help manage AI-powered outbound voice calls for sales and lead qualification.\n\n## Your Capabilities\n- Initiate AI voice calls to prospects\n- Monitor call status and get transcripts\n- Manage Retell AI agents and their configurations\n- Build and customize call scripts\n- Track call analytics and outcomes\n- Schedule future calls\n\n## Current Context\n{{$json.context}}\n\n## Available Actions\n- initiate_call: Start an outbound AI voice call\n- get_call_status: Check status of a call\n- get_call_transcript: Get transcript after call ends\n- get_call_recording: Get recording URL\n- end_call: Terminate an active call\n- list_agents: See available AI agents\n- get_agent: Get agent details\n- create_agent: Create new AI agent\n- update_agent: Modify agent config\n- list_calls: View recent calls\n- get_call_analytics: View call metrics\n- list_phone_numbers: See available numbers\n- build_call_script: Generate AI call script\n- schedule_call: Schedule future call\n\n## Retell AI API Reference\nBase URL: https://api.retellai.com/v1\nAuthentication: Bearer token in header\n\n### Create Phone Call\nPOST /create-phone-call\n{\n  \"agent_id\": \"agent_xxx\",\n  \"from_number\": \"+1XXXXXXXXXX\",\n  \"to_number\": \"+1XXXXXXXXXX\",\n  \"override_agent_prompt\": \"Optional custom instructions\",\n  \"metadata\": { \"company_id\": \"xxx\" },\n  \"dynamic_variables\": {\n    \"contact_name\": \"John\",\n    \"company_name\": \"ABC Auto\"\n  }\n}\n\n### Get Call\nGET /get-call/{call_id}\nReturns: call status, transcript, recording_url, duration, etc.\n\n### List Calls\nGET /list-calls?limit=10&filter_criteria=...\n\n## Call Script Guidelines\nWhen building scripts, follow this structure:\n1. Opening: Friendly greeting, introduce yourself\n2. Hook: Reference something specific about their business\n3. Value Prop: Brief benefit statement\n4. Qualification: Ask 2-3 key questions\n5. Close: Book follow-up or handle objection\n6. Graceful Exit: Thank them for their time\n\n## Rules\n1. ALWAYS verify phone number format (E.164)\n2. Check DNC/opt-out lists before calling\n3. Respect business hours (9am-6pm local)\n4. Use appropriate agent based on call objective\n5. Include metadata for tracking\n6. Log all call attempts and outcomes\n7. If dry_run=true, build config but don't initiate\n\n## Voice Personalities Available\n- Professional: Formal, clear, authoritative\n- Friendly: Warm, conversational, approachable  \n- Energetic: Enthusiastic, upbeat, persuasive\n\nAlways optimize for natural conversation and respect prospect time."
+        }
+      },
+      "id": "ai-agent",
+      "name": "🕵️ Retell AI Agent",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.7,
+      "position": [
+        560,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "model": "gpt-4o",
+        "options": {
+          "temperature": 0.3
+        }
+      },
+      "id": "openai-chat",
+      "name": "🧠 OpenAI Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.2,
+      "position": [
+        560,
+        520
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "OPENAI_CRED_ID",
+          "name": "OpenAI API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "name": "initiate_retell_call",
+        "description": "Start an AI voice call via Retell. Requires 'to_number', 'agent_id'. Optional: 'from_number', 'override_prompt', 'dynamic_variables', 'metadata'.",
+        "workflowId": "={{ $env.RETELL_INITIATE_CALL_WORKFLOW_ID }}",
+        "responsePropertyName": "call_result"
+      },
+      "id": "tool-initiate-call",
+      "name": "☎️ Tool: Initiate Call",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2,
+      "position": [
+        360,
+        520
+      ]
+    },
+    {
+      "parameters": {
+        "name": "get_retell_call",
+        "description": "Get status, transcript, and recording for a call. Requires 'call_id'.",
+        "workflowId": "={{ $env.RETELL_GET_CALL_WORKFLOW_ID }}",
+        "responsePropertyName": "call_details"
+      },
+      "id": "tool-get-call",
+      "name": "📋 Tool: Get Call Details",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2,
+      "position": [
+        360,
+        640
+      ]
+    },
+    {
+      "parameters": {
+        "name": "list_retell_agents",
+        "description": "List all available Retell AI agents. No parameters required.",
+        "workflowId": "={{ $env.RETELL_LIST_AGENTS_WORKFLOW_ID }}",
+        "responsePropertyName": "agents"
+      },
+      "id": "tool-list-agents",
+      "name": "🤖 Tool: List Agents",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2,
+      "position": [
+        560,
+        640
+      ]
+    },
+    {
+      "parameters": {
+        "name": "search_postgres",
+        "description": "Query Postgres database for contact info, company context, call history, or scripts. Input: SQL query string.",
+        "workflowId": "={{ $env.POSTGRES_QUERY_TOOL_WORKFLOW_ID }}",
+        "responsePropertyName": "query_result"
+      },
+      "id": "tool-postgres",
+      "name": "🗄️ Tool: Query Database",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2,
+      "position": [
+        760,
+        520
+      ]
+    },
+    {
+      "parameters": {
+        "name": "build_call_script",
+        "description": "Generate a customized call script using AI. Input: 'objective', 'company_info', 'contact_info', 'industry'.",
+        "workflowId": "={{ $env.BUILD_CALL_SCRIPT_WORKFLOW_ID }}",
+        "responsePropertyName": "script"
+      },
+      "id": "tool-build-script",
+      "name": "📝 Tool: Build Script",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2,
+      "position": [
+        760,
+        640
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ═══════════════════════════════════════════════════════════════════\n// 📤 Parse Agent Output + Build Parameterized SQL for Log End\n// ═══════════════════════════════════════════════════════════════════\n\nconst agentOutput = $input.first().json;\nconst inputData = $('📋 Normalize + Build SQL').first().json.input;\nconst logStartResult = $('🗄️ Log Start').first().json;\n\nconst tool_execution_id = logStartResult?.id || null;\n\n// ───────────────────────────────────────────────────────────────────\n// Determine success and extract key results\n// ───────────────────────────────────────────────────────────────────\nconst output_text = agentOutput.output || agentOutput.text || JSON.stringify(agentOutput);\nconst success = !output_text.toLowerCase().includes('error') && \n                !output_text.toLowerCase().includes('failed') &&\n                !output_text.toLowerCase().includes('unable to');\n\n// Extract call ID from response\nconst call_id_match = output_text.match(/call[_\\s]?id[\"']?\\s*[:\\s]\\s*[\"']?([a-zA-Z0-9_-]+)/i);\nconst call_id = call_id_match ? call_id_match[1] : inputData.call_id;\n\n// Build output payload\nconst output_payload = {\n  action: inputData.action,\n  result: output_text.substring(0, 2000),\n  success: success,\n  call_id: call_id,\n  dry_run: inputData.dry_run,\n  phone_number: inputData.phone_number,\n  timestamp: new Date().toISOString()\n};\n\n// ───────────────────────────────────────────────────────────────────\n// Build parameterized SQL for log_end\n// ───────────────────────────────────────────────────────────────────\nconst log_end_sql = `\nUPDATE tool_execution_log\nSET \n  success = $1,\n  output_data = $2::jsonb,\n  completed_at = NOW(),\n  duration_ms = EXTRACT(EPOCH FROM (NOW() - started_at)) * 1000\nWHERE id = $3\nRETURNING *;\n`;\n\nconst log_end_params = [\n  success,\n  JSON.stringify(output_payload),\n  tool_execution_id\n];\n\n// ───────────────────────────────────────────────────────────────────\n// Build webhook response\n// ───────────────────────────────────────────────────────────────────\nconst webhook_response = {\n  success: success,\n  action: inputData.action,\n  message: output_text,\n  call_id: call_id,\n  dry_run: inputData.dry_run,\n  execution_id: tool_execution_id\n};\n\nreturn [{\n  json: {\n    log_end_sql,\n    log_end_params,\n    webhook_response,\n    agent_output: agentOutput\n  }\n}];"
+      },
+      "id": "parse-output",
+      "name": "📤 Parse + Finalize Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        800,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ $json.log_end_sql }}",
+        "options": {
+          "queryReplacement": "={{ $json.log_end_params }}"
+        }
+      },
+      "id": "log-end",
+      "name": "🗄️ Log End",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1040,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CRED_ID",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "options": {},
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($('📤 Parse + Finalize Output').item.json.webhook_response) }}"
+      },
+      "id": "respond-webhook",
+      "name": "📤 Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1280,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "🌐 Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "📋 Normalize + Build SQL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📋 Normalize + Build SQL": {
+      "main": [
+        [
+          {
+            "node": "🗄️ Log Start",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🗄️ Log Start": {
+      "main": [
+        [
+          {
+            "node": "📥 Load Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📥 Load Context": {
+      "main": [
+        [
+          {
+            "node": "🕵️ Retell AI Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🕵️ Retell AI Agent": {
+      "main": [
+        [
+          {
+            "node": "📤 Parse + Finalize Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🧠 OpenAI Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "🕵️ Retell AI Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "☎️ Tool: Initiate Call": {
+      "ai_tool": [
+        [
+          {
+            "node": "🕵️ Retell AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📋 Tool: Get Call Details": {
+      "ai_tool": [
+        [
+          {
+            "node": "🕵️ Retell AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🤖 Tool: List Agents": {
+      "ai_tool": [
+        [
+          {
+            "node": "🕵️ Retell AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🗄️ Tool: Query Database": {
+      "ai_tool": [
+        [
+          {
+            "node": "🕵️ Retell AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📝 Tool: Build Script": {
+      "ai_tool": [
+        [
+          {
+            "node": "🕵️ Retell AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📤 Parse + Finalize Output": {
+      "main": [
+        [
+          {
+            "node": "🗄️ Log End",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🗄️ Log End": {
+      "main": [
+        [
+          {
+            "node": "📤 Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "name": "ai-agent"
+    },
+    {
+      "name": "retell"
+    },
+    {
+      "name": "voice-ai"
+    },
+    {
+      "name": "outbound-calling"
+    },
+    {
+      "name": "sales"
+    }
+  ],
+  "triggerCount": 1,
+  "pinData": {},
+  "versionId": "1",
+  "meta": {
+    "description": "AI Agent for managing Retell AI voice operations. Supports initiating calls, managing agents, building scripts, and tracking call analytics.",
+    "category": "ai-agent",
+    "triggers": [
+      "webhook"
+    ],
+    "outputs": [
+      "webhook_response",
+      "postgres_log"
+    ],
+    "requiredCredentials": [
+      "Supabase Postgres",
+      "OpenAI API",
+      "Retell AI API (httpHeaderAuth)"
+    ]
+  }
+}

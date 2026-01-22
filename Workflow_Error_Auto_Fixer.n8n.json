@@ -1,0 +1,832 @@
+{
+  "name": "🔧 Workflow Error Auto-Fixer",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 30
+            }
+          ]
+        }
+      },
+      "id": "schedule-trigger",
+      "name": "⏰ Every 30 Minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -1000,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "errors/autofix",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "🌐 Manual Fix",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -1000,
+        600
+      ],
+      "webhookId": "error-autofix"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Get recent errors with patterns AND circuit breaker status\nWITH workflow_failure_rates AS (\n  SELECT \n    workflow_id,\n    COUNT(*) as failure_count,\n    COUNT(DISTINCT execution_id) as failed_executions,\n    MAX(created_at) as last_failure\n  FROM workflow_execution_errors\n  WHERE created_at > NOW() - INTERVAL '1 hour'\n  GROUP BY workflow_id\n),\ncircuit_breaker_status AS (\n  SELECT \n    workflow_id,\n    CASE \n      WHEN failure_count >= 3 AND failed_executions >= 3 THEN 'OPEN'\n      WHEN failure_count >= 2 THEN 'HALF_OPEN'\n      ELSE 'CLOSED'\n    END as circuit_status,\n    failure_count\n  FROM workflow_failure_rates\n)\nSELECT \n  e.id,\n  e.execution_id,\n  e.workflow_id,\n  e.error_message,\n  e.error_stack,\n  e.last_node,\n  e.error_category,\n  e.created_at,\n  w.name as workflow_name,\n  -- Circuit breaker info\n  COALESCE(cb.circuit_status, 'CLOSED') as circuit_status,\n  COALESCE(cb.failure_count, 0) as recent_failures,\n  -- Retry tracking\n  COALESCE((e.suggested_fixes->0->>'retry_count')::int, 0) as retry_count,\n  -- Count similar errors\n  (SELECT COUNT(*) FROM workflow_execution_errors e2 \n   WHERE e2.error_message = e.error_message \n   AND e2.created_at > NOW() - INTERVAL '24 hours') as similar_error_count\nFROM workflow_execution_errors e\nLEFT JOIN workflows w ON w.workflow_id = e.workflow_id\nLEFT JOIN circuit_breaker_status cb ON cb.workflow_id = e.workflow_id\nWHERE e.created_at > NOW() - INTERVAL '6 hours'\nAND (e.error_category IS NULL OR e.error_category NOT IN ('auto_fixed', 'circuit_breaker_open'))\nORDER BY e.created_at DESC\nLIMIT 20;",
+        "options": {}
+      },
+      "id": "get-recent-errors",
+      "name": "🔍 Get Recent Errors",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        -760,
+        500
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CRED_ID",
+          "name": "Postgres account"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "has-errors",
+              "leftValue": "={{ $json.id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "exists",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "has-errors",
+      "name": "🔀 Has Errors?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.1,
+      "position": [
+        -520,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ═══════════════════════════════════════════════════════════════════\n// 🔍 Analyze Error with Circuit Breaker Logic\n// ═══════════════════════════════════════════════════════════════════\n\nconst items = $input.all();\nconst results = [];\n\n// Common error patterns and their fixes\nconst errorPatterns = [\n  {\n    pattern: /timeout|ETIMEDOUT|ECONNRESET/i,\n    category: 'network_timeout',\n    autoFixable: true,\n    fix: 'retry_with_backoff',\n    maxRetries: 3,\n    description: 'Network timeout - can retry with exponential backoff'\n  },\n  {\n    pattern: /rate limit|429|too many requests/i,\n    category: 'rate_limit',\n    autoFixable: true,\n    fix: 'delay_and_retry',\n    maxRetries: 2,\n    description: 'Rate limited - delay and retry'\n  },\n  {\n    pattern: /authentication|401|unauthorized|invalid.*token/i,\n    category: 'auth_failure',\n    autoFixable: false,\n    fix: 'alert_credential_issue',\n    maxRetries: 0,\n    description: 'Authentication failure - needs credential refresh'\n  },\n  {\n    pattern: /not found|404/i,\n    category: 'resource_not_found',\n    autoFixable: false,\n    fix: 'skip_and_log',\n    maxRetries: 0,\n    description: 'Resource not found - skip item'\n  },\n  {\n    pattern: /duplicate|unique.*constraint|already exists/i,\n    category: 'duplicate_entry',\n    autoFixable: true,\n    fix: 'upsert_instead',\n    maxRetries: 1,\n    description: 'Duplicate entry - use upsert logic'\n  },\n  {\n    pattern: /null|undefined.*property|cannot read/i,\n    category: 'null_reference',\n    autoFixable: true,\n    fix: 'add_null_check',\n    maxRetries: 1,\n    description: 'Null reference - add defensive coding'\n  },\n  {\n    pattern: /json|parse|unexpected token/i,\n    category: 'json_parse_error',\n    autoFixable: true,\n    fix: 'validate_json_input',\n    maxRetries: 1,\n    description: 'JSON parse error - validate input format'\n  },\n  {\n    pattern: /connection refused|ECONNREFUSED/i,\n    category: 'service_unavailable',\n    autoFixable: true,\n    fix: 'retry_with_backoff',\n    maxRetries: 3,\n    description: 'Service unavailable - retry later'\n  },\n  {\n    pattern: /quota|limit exceeded|billing/i,\n    category: 'quota_exceeded',\n    autoFixable: false,\n    fix: 'alert_quota_issue',\n    maxRetries: 0,\n    description: 'Quota exceeded - needs billing attention'\n  },\n  {\n    pattern: /validation|invalid.*format|schema/i,\n    category: 'validation_error',\n    autoFixable: true,\n    fix: 'sanitize_input',\n    maxRetries: 1,\n    description: 'Validation error - sanitize input data'\n  }\n];\n\nfor (const item of items) {\n  const error = item.json;\n  const errorMsg = (error.error_message || '') + ' ' + (error.error_stack || '');\n  \n  // Find matching pattern\n  let matchedPattern = null;\n  for (const pattern of errorPatterns) {\n    if (pattern.pattern.test(errorMsg)) {\n      matchedPattern = pattern;\n      break;\n    }\n  }\n  \n  // Default pattern if no match\n  if (!matchedPattern) {\n    matchedPattern = {\n      category: 'unknown',\n      autoFixable: false,\n      fix: 'manual_review',\n      maxRetries: 0,\n      description: 'Unknown error pattern - needs manual review'\n    };\n  }\n  \n  // ═══════════════════════════════════════════════════════════════════\n  // CIRCUIT BREAKER LOGIC\n  // ═══════════════════════════════════════════════════════════════════\n  const circuitStatus = error.circuit_status || 'CLOSED';\n  const retryCount = parseInt(error.retry_count) || 0;\n  const recentFailures = parseInt(error.recent_failures) || 0;\n  \n  // Circuit breaker decisions\n  let shouldRetry = false;\n  let circuitAction = 'none';\n  \n  if (circuitStatus === 'OPEN') {\n    // Circuit is OPEN - DO NOT retry, workflow is unstable\n    shouldRetry = false;\n    circuitAction = 'circuit_open_skip';\n    matchedPattern.autoFixable = false; // Override - don't auto-fix when circuit is open\n  } else if (circuitStatus === 'HALF_OPEN') {\n    // Circuit is HALF_OPEN - allow ONE retry to test recovery\n    shouldRetry = retryCount < 1 && matchedPattern.autoFixable;\n    circuitAction = shouldRetry ? 'half_open_test' : 'half_open_skip';\n  } else {\n    // Circuit is CLOSED - normal operation\n    shouldRetry = retryCount < matchedPattern.maxRetries && matchedPattern.autoFixable;\n    circuitAction = 'normal';\n  }\n  \n  // Calculate priority based on frequency and impact\n  let priority = 'low';\n  if (error.similar_error_count > 10 || circuitStatus === 'OPEN') priority = 'critical';\n  else if (error.similar_error_count > 5 || circuitStatus === 'HALF_OPEN') priority = 'high';\n  else if (error.similar_error_count > 2) priority = 'medium';\n  \n  results.push({\n    json: {\n      error_id: error.id,\n      execution_id: error.execution_id,\n      workflow_id: error.workflow_id,\n      workflow_name: error.workflow_name,\n      last_node: error.last_node,\n      error_message: error.error_message,\n      created_at: error.created_at,\n      \n      // Analysis\n      category: matchedPattern.category,\n      auto_fixable: matchedPattern.autoFixable && shouldRetry,\n      fix_strategy: matchedPattern.fix,\n      fix_description: matchedPattern.description,\n      max_retries: matchedPattern.maxRetries,\n      \n      // Circuit breaker state\n      circuit_status: circuitStatus,\n      circuit_action: circuitAction,\n      retry_count: retryCount,\n      recent_failures: recentFailures,\n      should_retry: shouldRetry,\n      \n      // Priority\n      similar_count: error.similar_error_count,\n      priority: priority,\n      \n      // For AI analysis\n      needs_ai_analysis: !matchedPattern.autoFixable || matchedPattern.category === 'unknown'\n    }\n  });\n}\n\nreturn results;"
+      },
+      "id": "analyze-errors",
+      "name": "🔍 Analyze Error Patterns",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -280,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "circuit-open",
+              "leftValue": "={{ $json.circuit_status }}",
+              "rightValue": "OPEN",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-circuit-breaker",
+      "name": "🔀 Circuit Open?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.1,
+      "position": [
+        -40,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Mark error with circuit breaker open status and pause workflow\nUPDATE workflow_execution_errors\nSET \n  error_category = 'circuit_breaker_open',\n  suggested_fixes = COALESCE(suggested_fixes, '[]'::jsonb) || $1::jsonb\nWHERE id = $2::uuid;\n\n-- Log circuit breaker action\nINSERT INTO agent_audit_log (\n  action, action_type, success, output_data\n) VALUES (\n  'circuit_breaker_opened',\n  'self_healing',\n  true,\n  $3::jsonb\n);",
+        "options": {
+          "queryReplacement": "={{ [JSON.stringify({action: 'circuit_breaker_open', workflow_id: $json.workflow_id, failures: $json.recent_failures, timestamp: new Date().toISOString()}), $json.error_id, JSON.stringify({workflow_id: $json.workflow_id, workflow_name: $json.workflow_name, failures_in_hour: $json.recent_failures, action: 'paused_workflow'})] }}"
+        }
+      },
+      "id": "handle-circuit-open",
+      "name": "🛑 Handle Circuit Open",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        200,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CRED_ID",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.salesmessage.com/pub/v2.2/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"to\": \"+13204064600\",\n  \"message\": \"🛑 CIRCUIT BREAKER OPEN\\n\\nWorkflow: {{ $json.workflow_name }}\\n\\n{{ $json.recent_failures }} failures in last hour.\\n\\nWorkflow has been PAUSED.\\n\\nLast error: {{ $json.error_message.substring(0, 100) }}...\\n\\nAction required: Fix and reset circuit breaker.\"\n}",
+        "options": {}
+      },
+      "id": "alert-circuit-open",
+      "name": "🚨 Alert Circuit Open",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        440,
+        300
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "HTTP_AUTH_CRED_ID",
+          "name": "Salesmsg API"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "auto-fixable",
+              "leftValue": "={{ $json.auto_fixable }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "should-retry",
+              "leftValue": "={{ $json.should_retry }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "is-auto-fixable",
+      "name": "🔀 Auto-Fixable?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.1,
+      "position": [
+        200,
+        700
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "retry-fix",
+              "leftValue": "={{ $json.fix_strategy }}",
+              "rightValue": "retry_with_backoff",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "delay-fix",
+              "leftValue": "={{ $json.fix_strategy }}",
+              "rightValue": "delay_and_retry",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "or"
+        },
+        "options": {}
+      },
+      "id": "route-fix-strategy",
+      "name": "🔀 Route Fix Strategy",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.1,
+      "position": [
+        440,
+        600
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.N8N_API_URL + '/executions/' + $json.execution_id + '/retry' }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "id": "retry-execution",
+      "name": "🔄 Retry Execution",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        680,
+        500
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "HTTP_AUTH_CRED_ID",
+          "name": "n8n API"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Mark error as auto-fixed attempt with retry count increment\nUPDATE workflow_execution_errors\nSET \n  error_category = 'auto_fixed',\n  suggested_fixes = COALESCE(suggested_fixes, '[]'::jsonb) || $1::jsonb\nWHERE id = $2::uuid;",
+        "options": {
+          "queryReplacement": "={{ [JSON.stringify({strategy: $json.fix_strategy, attempted_at: new Date().toISOString(), retry_count: ($json.retry_count || 0) + 1, result: 'retry_triggered'}), $json.error_id] }}"
+        }
+      },
+      "id": "mark-fix-attempted",
+      "name": "🗄️ Mark Fix Attempted",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        920,
+        500
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CRED_ID",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Update error with category and fix suggestion\nUPDATE workflow_execution_errors\nSET \n  error_category = $1,\n  suggested_fixes = $2::jsonb\nWHERE id = $3::uuid;",
+        "options": {
+          "queryReplacement": "={{ [$json.category, JSON.stringify([{strategy: $json.fix_strategy, description: $json.fix_description, auto_fixable: $json.auto_fixable, retry_count: $json.retry_count, max_retries: $json.max_retries}]), $json.error_id] }}"
+        }
+      },
+      "id": "update-error-category",
+      "name": "🗄️ Update Error Category",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        680,
+        700
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CRED_ID",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "needs-ai",
+              "leftValue": "={{ $('🔍 Analyze Error Patterns').first().json.needs_ai_analysis }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "needs-ai-analysis",
+      "name": "🔀 Needs AI?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.1,
+      "position": [
+        440,
+        900
+      ]
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "gpt-4o",
+          "mode": "list"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "={{ 'Analyze this n8n workflow error and provide a fix recommendation:\\n\\nWorkflow: ' + $('🔍 Analyze Error Patterns').first().json.workflow_name + '\\nFailed Node: ' + $('🔍 Analyze Error Patterns').first().json.last_node + '\\nError: ' + $('🔍 Analyze Error Patterns').first().json.error_message + '\\nOccurrences: ' + $('🔍 Analyze Error Patterns').first().json.similar_count + ' times in 24h\\nCircuit Status: ' + $('🔍 Analyze Error Patterns').first().json.circuit_status + '\\nRecent Failures: ' + $('🔍 Analyze Error Patterns').first().json.recent_failures + '\\n\\nProvide:\\n1. Root cause analysis\\n2. Specific fix recommendation\\n3. Code snippet if applicable\\n4. Prevention strategy\\n\\nRespond in JSON format with keys: root_cause, fix_recommendation, code_snippet, prevention_strategy' }}"
+            }
+          ]
+        },
+        "jsonOutput": true,
+        "options": {
+          "temperature": 0.3
+        }
+      },
+      "id": "ai-analyze-error",
+      "name": "🧠 AI Analyze Error",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1.8,
+      "position": [
+        680,
+        900
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "OPENAI_CRED_ID",
+          "name": "OpenAI API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Create proposal for error fix\nINSERT INTO proposals (\n  title, description, proposal_type, confidence, priority, status,\n  evidence, implementation_steps, created_by, tags\n) VALUES (\n  $1, $2, 'fix', 0.8, $3, 'pending',\n  $4::jsonb, $5::jsonb, 'workflow_error_auto_fixer',\n  ARRAY['auto-generated', 'error-fix']\n);",
+        "options": {
+          "queryReplacement": "={{ ['Fix: ' + $('🔍 Analyze Error Patterns').first().json.workflow_name + ' - ' + $('🔍 Analyze Error Patterns').first().json.category, $('🔍 Analyze Error Patterns').first().json.fix_description + '. Error occurred ' + $('🔍 Analyze Error Patterns').first().json.similar_count + ' times. Circuit status: ' + $('🔍 Analyze Error Patterns').first().json.circuit_status, $('🔍 Analyze Error Patterns').first().json.priority, JSON.stringify({error_id: $('🔍 Analyze Error Patterns').first().json.error_id, error_message: $('🔍 Analyze Error Patterns').first().json.error_message, occurrences: $('🔍 Analyze Error Patterns').first().json.similar_count, circuit_status: $('🔍 Analyze Error Patterns').first().json.circuit_status}), JSON.stringify([{step: 1, action: $('🔍 Analyze Error Patterns').first().json.fix_description}])] }}"
+        }
+      },
+      "id": "create-fix-proposal",
+      "name": "🗄️ Create Fix Proposal",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        920,
+        900
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CRED_ID",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "is-critical",
+              "leftValue": "={{ $('🔍 Analyze Error Patterns').first().json.priority }}",
+              "rightValue": "critical",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "is-critical",
+      "name": "🔀 Is Critical?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.1,
+      "position": [
+        1160,
+        700
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.salesmessage.com/pub/v2.2/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"to\": \"+13204064600\",\n  \"message\": \"🚨 CRITICAL ERROR ALERT\\n\\nWorkflow: {{ $('🔍 Analyze Error Patterns').first().json.workflow_name }}\\nNode: {{ $('🔍 Analyze Error Patterns').first().json.last_node }}\\n\\nError: {{ $('🔍 Analyze Error Patterns').first().json.error_message.substring(0, 100) }}...\\n\\nOccurred {{ $('🔍 Analyze Error Patterns').first().json.similar_count }}x in 24h\\n\\nCircuit: {{ $('🔍 Analyze Error Patterns').first().json.circuit_status }}\\nFix: {{ $('🔍 Analyze Error Patterns').first().json.fix_strategy }}\"\n}",
+        "options": {}
+      },
+      "id": "alert-critical-error",
+      "name": "🚨 Alert Critical Error",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1400,
+        600
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "HTTP_AUTH_CRED_ID",
+          "name": "Salesmsg API"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Log auto-fix action with circuit breaker stats\nINSERT INTO agent_audit_log (\n  action, action_type, success, output_data\n) VALUES (\n  'error_auto_fix_processed',\n  'self_healing',\n  true,\n  $1::jsonb\n);",
+        "options": {
+          "queryReplacement": "={{ [JSON.stringify({errors_processed: $('🔍 Analyze Error Patterns').all().length, auto_fixed: $('🔍 Analyze Error Patterns').all().filter(e => e.json.auto_fixable && e.json.should_retry).length, circuit_breakers_opened: $('🔍 Analyze Error Patterns').all().filter(e => e.json.circuit_status === 'OPEN').length, proposals_created: $('🔍 Analyze Error Patterns').all().filter(e => !e.json.auto_fixable).length})] }}"
+        }
+      },
+      "id": "log-autofix",
+      "name": "🗄️ Log Auto-Fix",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1400,
+        800
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CRED_ID",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "no-errors",
+              "name": "message",
+              "value": "No recent errors to process",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "no-errors",
+      "name": "📋 No Errors",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -280,
+        700
+      ]
+    }
+  ],
+  "connections": {
+    "⏰ Every 30 Minutes": {
+      "main": [
+        [
+          {
+            "node": "🔍 Get Recent Errors",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🌐 Manual Fix": {
+      "main": [
+        [
+          {
+            "node": "🔍 Get Recent Errors",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔍 Get Recent Errors": {
+      "main": [
+        [
+          {
+            "node": "🔀 Has Errors?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔀 Has Errors?": {
+      "main": [
+        [
+          {
+            "node": "🔍 Analyze Error Patterns",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "📋 No Errors",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔍 Analyze Error Patterns": {
+      "main": [
+        [
+          {
+            "node": "🔀 Circuit Open?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔀 Circuit Open?": {
+      "main": [
+        [
+          {
+            "node": "🛑 Handle Circuit Open",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "🔀 Auto-Fixable?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🛑 Handle Circuit Open": {
+      "main": [
+        [
+          {
+            "node": "🚨 Alert Circuit Open",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🚨 Alert Circuit Open": {
+      "main": [
+        [
+          {
+            "node": "🗄️ Log Auto-Fix",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔀 Auto-Fixable?": {
+      "main": [
+        [
+          {
+            "node": "🔀 Route Fix Strategy",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "🔀 Needs AI?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔀 Route Fix Strategy": {
+      "main": [
+        [
+          {
+            "node": "🔄 Retry Execution",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "🗄️ Update Error Category",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔄 Retry Execution": {
+      "main": [
+        [
+          {
+            "node": "🗄️ Mark Fix Attempted",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🗄️ Mark Fix Attempted": {
+      "main": [
+        [
+          {
+            "node": "🔀 Is Critical?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🗄️ Update Error Category": {
+      "main": [
+        [
+          {
+            "node": "🔀 Is Critical?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔀 Needs AI?": {
+      "main": [
+        [
+          {
+            "node": "🧠 AI Analyze Error",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "🗄️ Create Fix Proposal",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🧠 AI Analyze Error": {
+      "main": [
+        [
+          {
+            "node": "🗄️ Create Fix Proposal",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🗄️ Create Fix Proposal": {
+      "main": [
+        [
+          {
+            "node": "🔀 Is Critical?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔀 Is Critical?": {
+      "main": [
+        [
+          {
+            "node": "🚨 Alert Critical Error",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "🗄️ Log Auto-Fix",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🚨 Alert Critical Error": {
+      "main": [
+        [
+          {
+            "node": "🗄️ Log Auto-Fix",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "name": "maintenance"
+    },
+    {
+      "name": "error-handling"
+    },
+    {
+      "name": "auto-fix"
+    },
+    {
+      "name": "background-agent"
+    },
+    {
+      "name": "self-healing"
+    },
+    {
+      "name": "circuit-breaker"
+    }
+  ],
+  "triggerCount": 2,
+  "pinData": {},
+  "versionId": "2",
+  "meta": {
+    "description": "Self-healing error management with circuit breaker pattern. Automatically analyzes workflow errors, tracks retry attempts, opens circuit breaker after 3 consecutive failures to prevent cascade failures. Uses GPT-4o for unknown error analysis and creates proposals for complex fixes.",
+    "category": "infrastructure",
+    "triggers": [
+      "schedule",
+      "webhook"
+    ],
+    "outputs": [
+      "workflow_execution_errors",
+      "proposals",
+      "agent_audit_log",
+      "sms_alert"
+    ],
+    "requiredCredentials": [
+      "Supabase Postgres",
+      "n8n API",
+      "OpenAI API",
+      "Salesmessage API"
+    ],
+    "features": [
+      "circuit_breaker",
+      "retry_tracking",
+      "auto_pause_unstable_workflows",
+      "ai_error_analysis"
+    ]
+  }
+}

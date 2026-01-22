@@ -1,0 +1,44 @@
+{
+  "id": "smart-memory-recall-tool",
+  "name": "Tool: Smart Memory Recall",
+  "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+  "typeVersion": 2,
+  "position": [1200, 700],
+  "parameters": {
+    "name": "recall_memory",
+    "description": "Searches your memory system for relevant lessons, patterns, and knowledge from past interactions. Use this tool when:\n- You need context about how similar tasks were handled before\n- You're unsure which tool or approach to use\n- The user references something that might have been discussed previously\n- You want to check if there's an established pattern for a task type\n\nThe tool searches:\n1. Vector similarity on past lessons (semantic search)\n2. Keyword matching on patterns and details\n3. Persistent knowledge items (facts, preferences, configurations)\n\nReturns: { context_summary, lessons[], persistent_knowledge[] }",
+    "workflowId": {
+      "__rl": true,
+      "mode": "id",
+      "value": "REPLACE_WITH_WORKFLOW_ID"
+    },
+    "fields": {
+      "values": [
+        {
+          "name": "query",
+          "description": "What to search for. Be specific - include task type, tool names, or error messages. Example: 'workflow building with HTTP Request node' or 'fixing connection errors in Auto-Fixer'",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "category_filter",
+          "description": "Optional: Filter by category. Options: workflow_building, debugging, data_processing, integration, communication, other",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "limit",
+          "description": "Maximum number of lessons to return. Default: 5",
+          "type": "number",
+          "required": false
+        },
+        {
+          "name": "include_failures",
+          "description": "Whether to include lessons from failed attempts. Default: true (failures often have valuable insights)",
+          "type": "boolean",
+          "required": false
+        }
+      ]
+    }
+  }
+}

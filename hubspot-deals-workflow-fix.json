@@ -1,0 +1,109 @@
+{
+  "workflowId": "4J19cZdd4aLVDxOZCwmKB",
+  "workflowName": "AI Agent - HubSpot Deals",
+  "intent": "Fix HTTP Request Tool nodes to properly send body and query parameters",
+  "operations": [
+    {
+      "type": "updateNode",
+      "nodeName": "List All Deals",
+      "nodeId": "14db2de5-b528-4e1b-b790-ebbcb484a13a",
+      "description": "Add sendQuery for GET with query params (limit, after, properties)",
+      "updates": {
+        "parameters": {
+          "sendQuery": true,
+          "specifyQuery": "json"
+        }
+      }
+    },
+    {
+      "type": "updateNode",
+      "nodeName": "Get Deal by ID",
+      "nodeId": "f02db20b-4fc2-4248-a9cd-1cd940bbfece",
+      "description": "Add sendQuery for GET with properties param",
+      "updates": {
+        "parameters": {
+          "sendQuery": true,
+          "specifyQuery": "json"
+        }
+      }
+    },
+    {
+      "type": "updateNode",
+      "nodeName": "Search Deals",
+      "nodeId": "1ebbb94c-fae8-4359-bbc4-4513c7367ebc",
+      "description": "Add sendBody for POST request body",
+      "updates": {
+        "parameters": {
+          "sendBody": true,
+          "specifyBody": "json",
+          "contentType": "json"
+        }
+      }
+    },
+    {
+      "type": "updateNode",
+      "nodeName": "Get Deal Associations",
+      "nodeId": "6652d82d-0432-4b08-bf79-87b3c2ded181",
+      "description": "Add sendQuery for pagination params",
+      "updates": {
+        "parameters": {
+          "sendQuery": true,
+          "specifyQuery": "json"
+        }
+      }
+    },
+    {
+      "type": "updateNode",
+      "nodeName": "Create Deal",
+      "nodeId": "44e62ab2-6a2f-409f-920f-994c7b3ed551",
+      "description": "Add sendBody for POST request body",
+      "updates": {
+        "parameters": {
+          "sendBody": true,
+          "specifyBody": "json",
+          "contentType": "json"
+        }
+      }
+    },
+    {
+      "type": "updateNode",
+      "nodeName": "Update Deal",
+      "nodeId": "354d79ee-9796-48da-8ea8-93b60b81c09e",
+      "description": "Add sendBody for PATCH request body",
+      "updates": {
+        "parameters": {
+          "sendBody": true,
+          "specifyBody": "json",
+          "contentType": "json"
+        }
+      }
+    },
+    {
+      "type": "updateNode",
+      "nodeName": "Associate Deal to Contact/Company",
+      "nodeId": "913c16f8-6466-4498-ab89-a727648342b7",
+      "description": "Add sendBody for PUT request body",
+      "updates": {
+        "parameters": {
+          "sendBody": true,
+          "specifyBody": "json",
+          "contentType": "json"
+        }
+      }
+    }
+  ],
+  "mcpCommand": "n8n_update_partial_workflow",
+  "mcpPayload": {
+    "id": "4J19cZdd4aLVDxOZCwmKB",
+    "intent": "Fix HTTP Request Tool nodes to properly send body and query parameters",
+    "operations": [
+      {"type": "updateNode", "nodeName": "List All Deals", "updates": {"parameters": {"sendQuery": true, "specifyQuery": "json"}}},
+      {"type": "updateNode", "nodeName": "Get Deal by ID", "updates": {"parameters": {"sendQuery": true, "specifyQuery": "json"}}},
+      {"type": "updateNode", "nodeName": "Search Deals", "updates": {"parameters": {"sendBody": true, "specifyBody": "json", "contentType": "json"}}},
+      {"type": "updateNode", "nodeName": "Get Deal Associations", "updates": {"parameters": {"sendQuery": true, "specifyQuery": "json"}}},
+      {"type": "updateNode", "nodeName": "Create Deal", "updates": {"parameters": {"sendBody": true, "specifyBody": "json", "contentType": "json"}}},
+      {"type": "updateNode", "nodeName": "Update Deal", "updates": {"parameters": {"sendBody": true, "specifyBody": "json", "contentType": "json"}}},
+      {"type": "updateNode", "nodeName": "Associate Deal to Contact/Company", "updates": {"parameters": {"sendBody": true, "specifyBody": "json", "contentType": "json"}}}
+    ]
+  }
+}

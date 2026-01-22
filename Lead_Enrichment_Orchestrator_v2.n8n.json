@@ -1,0 +1,806 @@
+{
+  "nodes": [
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        -1808,
+        -432
+      ],
+      "id": "73a1d09e-28a2-4ae2-ac41-05b1547da050",
+      "name": "When Executed by Another Workflow"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -1808,
+        -256
+      ],
+      "id": "46591f13-7d1e-446f-b8d1-68e35e8a7b58",
+      "name": "When clicking 'Execute workflow'"
+    },
+    {
+      "parameters": {
+        "operation": "search",
+        "base": {
+          "__rl": true,
+          "value": "appUmr7c5VACTjiJj",
+          "mode": "list",
+          "cachedResultName": "ASM Lead Intelligence Hub (Copy)",
+          "cachedResultUrl": "https://airtable.com/appUmr7c5VACTjiJj"
+        },
+        "table": {
+          "__rl": true,
+          "value": "tblLxOBg1zHfLYyUJ",
+          "mode": "list",
+          "cachedResultName": "Companies (Canonical)",
+          "cachedResultUrl": "https://airtable.com/appUmr7c5VACTjiJj/tblLxOBg1zHfLYyUJ"
+        },
+        "filterByFormula": "AND({research_status}=BLANK())",
+        "returnAll": false,
+        "limit": 1,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2.1,
+      "position": [
+        -1584,
+        -352
+      ],
+      "id": "90442022-641b-4e7d-a1e8-85ea18cc648b",
+      "name": "Search records",
+      "credentials": {
+        "airtableTokenApi": {
+          "id": "mP0iHEaWU9UB0y9B",
+          "name": "Jonah's n8n Personal Access Token Confirmed"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "airtable_id",
+              "name": "airtable_id",
+              "type": "string",
+              "value": "={{ $json.airtable_id }}"
+            },
+            {
+              "id": "company_name",
+              "name": "company_name",
+              "type": "string",
+              "value": "={{ $json.company_name }}"
+            },
+            {
+              "id": "location",
+              "name": "location",
+              "type": "string",
+              "value": "={{ $json.location }}"
+            },
+            {
+              "id": "city",
+              "name": "city",
+              "type": "string",
+              "value": "={{ $json.city }}"
+            },
+            {
+              "id": "state",
+              "name": "state",
+              "type": "string",
+              "value": "={{ $json.state }}"
+            },
+            {
+              "id": "domain",
+              "name": "domain",
+              "type": "string",
+              "value": "={{ $json.domain }}"
+            },
+            {
+              "id": "search_domain",
+              "name": "search_domain",
+              "type": "string",
+              "value": "={{ $json.search_domain }}"
+            },
+            {
+              "id": "phone",
+              "name": "phone",
+              "type": "string",
+              "value": "={{ $json.phone }}"
+            },
+            {
+              "id": "timestamp",
+              "name": "timestamp",
+              "type": "string",
+              "value": "={{ $json.timestamp }}"
+            },
+            {
+              "id": "enrichment_id",
+              "name": "enrichment_id",
+              "type": "string",
+              "value": "={{ $json.enrichment_id }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -656,
+        -336
+      ],
+      "id": "58e73fdf-e8a0-48d9-b37f-48ae9ce700be",
+      "name": "📋 Input Validation & Prep"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Normalizes Airtable output whether fields are nested ($json.fields) or flattened ($json)\n// Produces consistent keys: company_name, location, domain, search_domain, phone, city, state, enrichment_id, airtable_id\n\nconst item = $input.first();\nconst j = item.json;\n\n// Detect Airtable shape\nconst f = (j.fields && typeof j.fields === 'object') ? j.fields : j;\n\n// Helpers\nconst safe = (v) => (v === null || v === undefined) ? '' : String(v);\nconst normalizeDomain = (urlOrDomain) =>\n  safe(urlOrDomain)\n    .replace(/^https?:\\/\\//i, '')\n    .replace(/^www\\./i, '')\n    .split('/')[0]\n    .trim();\n\nconst hq = safe(f['HQ Address'] || f['Address'] || f['Location'] || '');\n\n// City/state parse (best-effort)\nconst parts = hq.split(',').map(s => s.trim());\nconst city = parts[1] || '';\nconst state = (parts[2] || '').split(' ')[0] || '';\n\nconst companyName = safe(f['Company Name'] || f['company_name'] || f['name'] || '');\nconst website = safe(f['Website'] || f['website'] || f['domain'] || '');\nconst phone = safe(f['Phone'] || f['phone'] || '');\n\nconst out = {\n  airtable_id: safe(j.id || f.id || ''),\n  company_name: companyName,\n  location: hq,\n  city,\n  state,\n  domain: website,                 // keep raw\n  search_domain: normalizeDomain(website),\n  phone,\n  timestamp: new Date().toISOString(),\n  enrichment_id: `${new Date().toISOString().replace(/[:.]/g,'')}-${companyName.replace(/[^a-zA-Z0-9]/g,'') || 'unknown'}`,\n  _debug_airtable_shape: j.fields ? 'nested_fields' : 'flattened',\n  _debug_keys: Object.keys(f)\n};\n\nreturn [{ json: out }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1408,
+        -352
+      ],
+      "id": "502fad57-fdb1-42ef-9992-919429eadf15",
+      "name": "🧱 Normalize Airtable Record"
+    },
+    {
+      "parameters": {
+        "jsCode": "// 1. Get the existing data\nconst inputData = $json;\n\n// 2. Return everything plus the new tracking IDs\nreturn {\n  ...inputData, // This \"spreads\" all original fields so nothing is dropped\n  research_run_id: $execution.id.toString(),\n  company_id: inputData.airtable_id || 'unknown_id',\n  workflow_version: 'lead_enrichment_orchestrator_v1'\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1216,
+        -352
+      ],
+      "id": "e8e8ce5c-1893-4e18-9c57-e12586cbdea4",
+      "name": "🧾 Init Run Context (GLOBAL)"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO public.research_runs (id, company_id, status) VALUES ($1, $2, 'processing');",
+        "options": {
+          "queryReplacement": "={{ [$json.research_run_id, $json.company_id] }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -1008,
+        -256
+      ],
+      "id": "fa32f761-bfef-4f74-97bd-064413ebb13e",
+      "name": "🗄️ DB — Register Run",
+      "credentials": {
+        "postgres": {
+          "id": "xogKD739Qe4gqWBU",
+          "name": "Postgres account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "mode": "chooseBranch"
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        -832,
+        -336
+      ],
+      "id": "fb60c079-f632-4eb6-98c6-1174195b554e",
+      "name": "🤝 Merge — Run Registered"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "DVDTaG8QlJkivPVgFDx8Z",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/DVDTaG8QlJkivPVgFDx8Z",
+          "cachedResultName": "Firecrawl - Enrichment Tool (About, Services, Pricing, Contact, & Careers)"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "airtable_id": "={{ $json.airtable_id }}",
+            "company_name": "={{ $json.company_name }}",
+            "location": "={{ $json.location }}",
+            "city": "={{ $json.city }}",
+            "state": "={{ $json.state }}",
+            "domain": "={{ $json.domain }}",
+            "search_domain": "={{ $json.search_domain }}",
+            "phone": "={{ $json.phone }}",
+            "timestamp": "={{ $json.timestamp }}",
+            "enrichment_id": "={{ $json.enrichment_id }}",
+            "research_run_id": "={{ $('🤝 Merge — Run Registered').item.json.research_run_id }}",
+            "company_id": "={{ $('🤝 Merge — Run Registered').item.json.company_id }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "airtable_id",
+              "displayName": "airtable_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "company_id",
+              "displayName": "company_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "company_name",
+              "displayName": "company_name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "location",
+              "displayName": "location",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "city",
+              "displayName": "city",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "state",
+              "displayName": "state",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "domain",
+              "displayName": "domain",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "search_domain",
+              "displayName": "search_domain",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "phone",
+              "displayName": "phone",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "timestamp",
+              "displayName": "timestamp",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "enrichment_id",
+              "displayName": "enrichment_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "research_run_id",
+              "displayName": "research_run_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "meta",
+              "displayName": "meta",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        1056,
+        -176
+      ],
+      "id": "8b10d227-4f02-4e90-bc03-db19737800a4",
+      "name": "Call 'Firecrawl - Enrichment Tool (About, Services, Pricing, Contact, & Careers)'"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "Hl9aGZsO2GRt4eWGIkvxs",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/Hl9aGZsO2GRt4eWGIkvxs",
+          "cachedResultName": "Firmographics Enrichment Tool (Apollo)"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "airtable_id": "={{ $json.airtable_id }}",
+            "company_name": "={{ $json.company_name }}",
+            "location": "={{ $json.location }}",
+            "city": "={{ $json.city }}",
+            "state": "={{ $json.state }}",
+            "domain": "={{ $json.domain }}",
+            "search_domain": "={{ $json.search_domain }}",
+            "phone": "={{ $json.phone }}",
+            "timestamp": "={{ $json.timestamp }}",
+            "enrichment_id": "={{ $json.enrichment_id }}",
+            "research_run_id": "={{ $('🤝 Merge — Run Registered').item.json.research_run_id }}",
+            "company_id": "={{ $('🤝 Merge — Run Registered').item.json.company_id }}"
+          },
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        432,
+        -528
+      ],
+      "id": "3e1dffe0-ffe5-4f36-a31c-0dd7a0968889",
+      "name": "Call Firmographics Tool (Apollo)"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "cBgvPOUFnifjaXHPyLPrS",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/cBgvPOUFnifjaXHPyLPrS",
+          "cachedResultName": "SerpAPI Enrichment"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "airtable_id": "={{ $json.airtable_id }}",
+            "company_name": "={{ $json.company_name }}",
+            "location": "={{ $json.location }}",
+            "city": "={{ $json.city }}",
+            "state": "={{ $json.state }}",
+            "domain": "={{ $json.domain }}",
+            "search_domain": "={{ $json.search_domain }}",
+            "phone": "={{ $json.phone }}",
+            "timestamp": "={{ $json.timestamp }}",
+            "enrichment_id": "={{ $json.enrichment_id }}",
+            "research_run_id": "={{ $('🤝 Merge — Run Registered').item.json.research_run_id }}",
+            "company_id": "={{ $('🤝 Merge — Run Registered').item.json.company_id }}"
+          },
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        1056,
+        -352
+      ],
+      "id": "01507066-d82c-43a3-b41e-7691c013b8ed",
+      "name": "Call SerpAPI Enrichment Tool"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "tXwn7885AIqxLaccUdvu6",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/tXwn7885AIqxLaccUdvu6",
+          "cachedResultName": "Lead Enrichment Tool - Hunter.io Agent (FULL CAPABILITES)"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "airtable_id": "={{ $json.airtable_id }}",
+            "company_name": "={{ $json.company_name }}",
+            "location": "={{ $json.location }}",
+            "city": "={{ $json.city }}",
+            "state": "={{ $json.state }}",
+            "domain": "={{ $json.domain }}",
+            "search_domain": "={{ $json.search_domain }}",
+            "phone": "={{ $json.phone }}",
+            "timestamp": "={{ $json.timestamp }}",
+            "enrichment_id": "={{ $json.enrichment_id }}",
+            "research_run_id": "={{ $('🤝 Merge — Run Registered').item.json.research_run_id }}",
+            "company_id": "={{ $('🤝 Merge — Run Registered').item.json.company_id }}"
+          },
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        640,
+        -528
+      ],
+      "id": "7eefbddf-7e79-4fc8-9c0a-cd8a2c2d89c2",
+      "name": "Call Hunter.io Agent (Full Capabilites)"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "IBw7IpH80m0TMa45KCJF5",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/IBw7IpH80m0TMa45KCJF5",
+          "cachedResultName": "Enrichment Tool - Headhunter Agent"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "airtable_id": "={{ $json.airtable_id }}",
+            "company_name": "={{ $json.company_name }}",
+            "location": "={{ $json.location }}",
+            "city": "={{ $json.city }}",
+            "state": "={{ $json.state }}",
+            "domain": "={{ $json.domain }}",
+            "search_domain": "={{ $json.search_domain }}",
+            "phone": "={{ $json.phone }}",
+            "timestamp": "={{ $json.timestamp }}",
+            "enrichment_id": "={{ $json.enrichment_id }}",
+            "research_run_id": "={{ $('🤝 Merge — Run Registered').item.json.research_run_id }}",
+            "company_id": "={{ $('🤝 Merge — Run Registered').item.json.company_id }}"
+          },
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        848,
+        -528
+      ],
+      "id": "a66c50f6-0c31-4930-b56b-c0a321b21b26",
+      "name": "Call Enrichment Tool - Headhunter Agent"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "LIhNhNsPemc-merLoqThs",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/LIhNhNsPemc-merLoqThs",
+          "cachedResultName": "Enrichment Tool - Intel Analyst Agent"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "airtable_id": "={{ $json.airtable_id }}",
+            "company_name": "={{ $json.company_name }}",
+            "location": "={{ $json.location }}",
+            "city": "={{ $json.city }}",
+            "state": "={{ $json.state }}",
+            "domain": "={{ $json.domain }}",
+            "search_domain": "={{ $json.search_domain }}",
+            "phone": "={{ $json.phone }}",
+            "timestamp": "={{ $json.timestamp }}",
+            "enrichment_id": "={{ $json.enrichment_id }}",
+            "research_run_id": "={{ $('🤝 Merge — Run Registered').item.json.research_run_id }}",
+            "company_id": "={{ $('🤝 Merge — Run Registered').item.json.company_id }}"
+          },
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        1248,
+        -528
+      ],
+      "id": "b144ad7d-ef8a-4329-987a-c85f7067dccb",
+      "name": "Call Enrichment Tool - Intel Analyst Agent"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "Ww4urX7vW-Vah_mU6bKLb",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/Ww4urX7vW-Vah_mU6bKLb",
+          "cachedResultName": "My workflow 23"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "airtable_id": "={{ $json.airtable_id }}",
+            "company_name": "={{ $json.company_name }}",
+            "location": "={{ $json.location }}",
+            "city": "={{ $json.city }}",
+            "state": "={{ $json.state }}",
+            "domain": "={{ $json.domain }}",
+            "search_domain": "={{ $json.search_domain }}",
+            "phone": "={{ $json.phone }}",
+            "timestamp": "={{ $json.timestamp }}",
+            "enrichment_id": "={{ $json.enrichment_id }}",
+            "research_run_id": "={{ $('🤝 Merge — Run Registered').item.json.research_run_id }}",
+            "company_id": "={{ $('🤝 Merge — Run Registered').item.json.company_id }}"
+          },
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        1056,
+        -528
+      ],
+      "id": "d9e0f872-c437-4e6a-a81c-b87cf1ccdc09",
+      "name": "Call Enrichment Tool - Risk Officer Agent"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "I039785tdTuohF_CqRlIB",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/I039785tdTuohF_CqRlIB",
+          "cachedResultName": "Apify Review Scraper (Social Proof)"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "airtable_id": "={{ $json.airtable_id }}",
+            "company_name": "={{ $json.company_name }}",
+            "location": "={{ $json.location }}",
+            "city": "={{ $json.city }}",
+            "state": "={{ $json.state }}",
+            "domain": "={{ $json.domain }}",
+            "search_domain": "={{ $json.search_domain }}",
+            "phone": "={{ $json.phone }}",
+            "timestamp": "={{ $json.timestamp }}",
+            "enrichment_id": "={{ $json.enrichment_id }}",
+            "research_run_id": "={{ $('🤝 Merge — Run Registered').item.json.research_run_id }}",
+            "company_id": "={{ $('🤝 Merge — Run Registered').item.json.company_id }}"
+          },
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        1456,
+        -528
+      ],
+      "id": "f8c68ee8-5e8a-4e9b-9e1a-3c4f5d6e7a8b",
+      "name": "Call Apify Review Scraper (Social Proof)"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "SmartEntryRouterWorkflowId",
+          "mode": "list",
+          "cachedResultName": "Smart Entry Router"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "airtable_id": "={{ $json.airtable_id }}",
+            "company_name": "={{ $json.company_name }}",
+            "location": "={{ $json.location }}",
+            "city": "={{ $json.city }}",
+            "state": "={{ $json.state }}",
+            "domain": "={{ $json.domain }}",
+            "search_domain": "={{ $json.search_domain }}",
+            "phone": "={{ $json.phone }}",
+            "timestamp": "={{ $json.timestamp }}",
+            "enrichment_id": "={{ $json.enrichment_id }}",
+            "research_run_id": "={{ $json.research_run_id }}",
+            "company_id": "={{ $json.company_id }}"
+          },
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        -432,
+        -336
+      ],
+      "id": "smart-entry-router-001",
+      "name": "🚦 Call Smart Entry Router"
+    }
+  ],
+  "connections": {
+    "When Executed by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "🧱 Normalize Airtable Record",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "When clicking 'Execute workflow'": {
+      "main": [
+        [
+          {
+            "node": "Search records",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Search records": {
+      "main": [
+        [
+          {
+            "node": "🧱 Normalize Airtable Record",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🧱 Normalize Airtable Record": {
+      "main": [
+        [
+          {
+            "node": "🧾 Init Run Context (GLOBAL)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🧾 Init Run Context (GLOBAL)": {
+      "main": [
+        [
+          {
+            "node": "🗄️ DB — Register Run",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "🤝 Merge — Run Registered",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🗄️ DB — Register Run": {
+      "main": [
+        [
+          {
+            "node": "🤝 Merge — Run Registered",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "🤝 Merge — Run Registered": {
+      "main": [
+        [
+          {
+            "node": "📋 Input Validation & Prep",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📋 Input Validation & Prep": {
+      "main": [
+        [
+          {
+            "node": "🚦 Call Smart Entry Router",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "meta": {
+    "description": "Lead Enrichment Orchestrator v2 - Multi-stage enrichment pipeline with Smart Entry Router",
+    "category": "lead_enrichment"
+  }
+}

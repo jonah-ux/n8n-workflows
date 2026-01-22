@@ -1,0 +1,91 @@
+{
+  "name": "Batch All Docs Generator",
+  "nodes": [
+    {
+      "id": "trigger-001",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [240, 300]
+    },
+    {
+      "id": "list-docs-001",
+      "name": "List All Documents",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [460, 300],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "documents",
+              "name": "documents",
+              "type": "json",
+              "value": "={{ [\n  // MASTER DOCUMENTS\n  {\n    sopName: 'Master System Truth',\n    sopId: 'SOP-MASTER-001',\n    category: 'Master',\n    status: 'Active',\n    priority: 'Critical',\n    quickSummary: 'Single source of truth for all Auto Shop Media systems, workflows, and infrastructure',\n    purpose: 'Provide definitive documentation of what systems exist, how they connect, and current operational status',\n    scope: 'All n8n workflows, databases, external APIs, CRM configuration, and data flows',\n    prerequisites: 'Access to n8n, Supabase, HubSpot, and all integrated systems',\n    steps: '1. Reference for any system questions\\n2. Update when adding new systems\\n3. Verify accuracy monthly\\n4. Use as onboarding document',\n    expectedOutcome: 'Anyone can understand the full system architecture by reading this document',\n    troubleshooting: 'If something is missing, add it immediately and update version',\n    relatedWorkflows: 'All workflows reference this document',\n    owner: 'Jonah',\n    version: '1.0',\n    tags: 'master, truth, systems, infrastructure'\n  },\n\n  // TARGET MARKET\n  {\n    sopName: 'Ideal Customer Profile (ICP)',\n    sopId: 'SOP-ICP-001',\n    category: 'Target Market',\n    status: 'Active',\n    priority: 'High',\n    quickSummary: 'Defines exactly who Auto Shop Media targets: automotive service businesses with 5-50 employees',\n    purpose: 'Ensure all lead generation and outreach targets the right businesses',\n    scope: 'Business types, qualifying criteria, geographic targeting, buyer personas, red flags',\n    prerequisites: 'Understanding of automotive service industry',\n    steps: '1. Use criteria to qualify leads during enrichment\\n2. Score leads against ICP fit\\n3. Route to appropriate outreach sequence\\n4. Update based on closed-won analysis',\n    expectedOutcome: 'Only high-fit leads enter the outreach pipeline',\n    troubleshooting: 'Low conversion rates may indicate ICP drift - review and update',\n    relatedWorkflows: 'Lead Enrichment Orchestrator, Outreach Compiler, HubSpot Lead Sync',\n    owner: 'Jonah',\n    version: '1.0',\n    tags: 'icp, targeting, automotive, qualification'\n  },\n\n  // STANDARDS\n  {\n    sopName: 'DCS Scoring Methodology',\n    sopId: 'SOP-DCS-001',\n    category: 'Standards',\n    status: 'Active',\n    priority: 'High',\n    quickSummary: 'Data Confidence Score methodology - measures data quality to determine outreach readiness',\n    purpose: 'Ensure outreach only happens when we have sufficient data for personalized, confident conversations',\n    scope: 'Scoring components, calculation logic, tier thresholds, outreach routing',\n    prerequisites: 'Enrichment pipeline must be operational',\n    steps: '1. Enrichment tools gather data points\\n2. Each data point contributes to score\\n3. Score determines tier (Platinum/Gold/Bronze)\\n4. Tier determines outreach strategy',\n    expectedOutcome: 'Every lead has accurate DCS score reflecting actual data quality',\n    troubleshooting: 'If high-DCS leads have poor response rates, recalibrate scoring weights',\n    relatedWorkflows: 'Outreach Compiler, Intel Analyst, HubSpot Lead Sync',\n    owner: 'Jonah',\n    version: '1.0',\n    tags: 'dcs, scoring, data-quality, methodology'\n  },\n\n  // OUTREACH\n  {\n    sopName: 'Outreach Sequences Standard',\n    sopId: 'SOP-OUTREACH-001',\n    category: 'Outreach',\n    status: 'Active',\n    priority: 'High',\n    quickSummary: 'Standard 7-touch outreach sequence with SMS, AI calls, voicemail, and email',\n    purpose: 'Systematic multi-channel outreach that converts enriched leads to conversations',\n    scope: 'Touch cadence, channel selection, message templates, response handling, compliance',\n    prerequisites: 'Lead must be synced to HubSpot with DCS tier assigned',\n    steps: '1. Day 0: SMS intro\\n2. Day 1: AI call\\n3. Day 2: Voicemail\\n4. Day 3: SMS follow-up\\n5. Day 5: Second call\\n6. Day 7: Final SMS\\n7. Day 10: Email',\n    expectedOutcome: 'Qualified responses from interested prospects, clean opt-out handling',\n    troubleshooting: 'Low response rates: check message personalization. High opt-outs: soften messaging',\n    relatedWorkflows: 'Outreach Orchestrator, Salesmsg Inbound Handler, Retell Call Results Handler',\n    owner: 'Jonah',\n    version: '1.0',\n    tags: 'outreach, sms, calls, sequences, salesmsg, retell'\n  },\n\n  // AGENT\n  {\n    sopName: 'AI Agent Operating Guidelines',\n    sopId: 'SOP-AGENT-001',\n    category: 'Agent',\n    status: 'Active',\n    priority: 'High',\n    quickSummary: 'Standards and guardrails for all AI agents operating within Auto Shop Media',\n    purpose: 'Ensure consistent, safe, and effective agent behavior across all automated systems',\n    scope: 'Kill switches, rate limits, logging requirements, tool usage, error handling, compliance',\n    prerequisites: 'agent_controls table must exist and be monitored',\n    steps: '1. Check kill switch before any action\\n2. Respect rate limits\\n3. Log all actions to audit table\\n4. Handle errors per category\\n5. Escalate when uncertain',\n    expectedOutcome: 'Agents operate safely within defined boundaries with full auditability',\n    troubleshooting: 'Agent misbehaving: check kill switch, review audit logs, verify guardrails',\n    relatedWorkflows: 'All AI Agent workflows, Error Auto-Fixer, System Health Monitor',\n    owner: 'Jonah',\n    version: '1.0',\n    tags: 'agent, ai, guardrails, safety, logging'\n  },\n\n  // ENRICHMENT\n  {\n    sopName: 'Lead Enrichment Pipeline',\n    sopId: 'SOP-ENRICHMENT-PIPELINE-001',\n    category: 'Enrichment',\n    status: 'Active',\n    priority: 'High',\n    quickSummary: '11-tool parallel enrichment pipeline using SerpAPI, Firecrawl, Hunter, Apify, and OpenAI',\n    purpose: 'Transform raw prospect data into sales-ready leads with comprehensive intel',\n    scope: 'Data collection, validation, DCS scoring, intel summarization',\n    prerequisites: 'API keys for all enrichment services, Supabase tables created',\n    steps: '1. Receive company from Airtable\\n2. Tier 1: Google info, website scrape, reviews, jobs, LinkedIn (parallel)\\n3. Risk Officer runs alongside\\n4. Tier 2: Contact hunt, email discovery, news (parallel)\\n5. Tier 3: Intel Analyst, Outreach Compiler (sequential)\\n6. Calculate DCS, write to enriched_leads',\n    expectedOutcome: 'Enriched lead with DCS score, verified contact, intel summary, and outreach recommendations',\n    troubleshooting: 'Timeouts: increase Firecrawl timeout. Rate limits: add delays. Missing data: check API keys',\n    relatedWorkflows: 'All Tier 1/2/3 sub-workflows, HubSpot Lead Sync',\n    owner: 'Jonah',\n    version: '8.0',\n    tags: 'enrichment, pipeline, serpapi, firecrawl, hunter, apify'\n  },\n\n  // HUBSPOT\n  {\n    sopName: 'HubSpot CRM Configuration',\n    sopId: 'SOP-HUBSPOT-CONFIG-001',\n    category: 'HubSpot',\n    status: 'Active',\n    priority: 'High',\n    quickSummary: 'HubSpot CRM setup including custom properties, pipelines, and automation integration',\n    purpose: 'Centralize all customer data and enable sales team to work enriched leads',\n    scope: 'Custom properties, company/contact setup, associations, HubSpot sync workflow',\n    prerequisites: 'HubSpot Sales + Marketing Pro subscription, OAuth2 credentials',\n    steps: '1. Custom properties created for DCS, intel, signals\\n2. Companies created/updated from enriched_leads\\n3. Contacts created with verified email/phone\\n4. Associations link contacts to companies\\n5. Bidirectional sync keeps data current',\n    expectedOutcome: 'HubSpot contains complete, current data for all enriched leads',\n    troubleshooting: 'Property not found: verify creation. Duplicates: check domain/email matching',\n    relatedWorkflows: 'HubSpot Lead Sync, All HubSpot Agents, Bidirectional Sync',\n    owner: 'Jonah',\n    version: '1.0',\n    tags: 'hubspot, crm, properties, sync'\n  },\n\n  // VOICE AI\n  {\n    sopName: 'Voice AI (Retell) Operations',\n    sopId: 'SOP-VOICE-AI-001',\n    category: 'Voice AI',\n    status: 'Draft',\n    priority: 'High',\n    quickSummary: 'Retell AI agent configuration for automated outbound calls',\n    purpose: 'Enable scalable, personalized voice outreach with AI-powered conversations',\n    scope: 'Agent configuration, call scripts, objection handling, result processing',\n    prerequisites: 'Retell AI account, agent configured, webhook handlers deployed',\n    steps: '1. Agent receives call request with lead data\\n2. Initiates call via Retell API\\n3. AI conducts conversation per script\\n4. Results posted to webhook\\n5. Outcomes logged and sequence updated',\n    expectedOutcome: 'Natural conversations that qualify interest and book follow-ups',\n    troubleshooting: 'Call failures: check Retell agent ID. Poor conversations: refine script',\n    relatedWorkflows: 'Retell Call Results Handler, Outreach Orchestrator, AI_Agent_Retell',\n    owner: 'Jonah',\n    version: '1.0',\n    tags: 'retell, voice, ai, calls, conversations'\n  },\n\n  // INFRASTRUCTURE\n  {\n    sopName: 'Error Handling and Monitoring',\n    sopId: 'SOP-ERROR-MONITORING-001',\n    category: 'Infrastructure',\n    status: 'Active',\n    priority: 'Medium',\n    quickSummary: 'System for detecting, logging, and auto-fixing workflow errors',\n    purpose: 'Maintain system reliability and reduce manual intervention for common failures',\n    scope: 'Error detection, categorization, auto-fix patterns, escalation, monitoring dashboards',\n    prerequisites: 'workflow_execution_errors table, Error Workflow configured',\n    steps: '1. Workflow fails, triggers Error Workflow\\n2. Error categorized and logged\\n3. Auto-fixer checks for known patterns\\n4. If fixable: auto-remediate\\n5. If not: escalate with context',\n    expectedOutcome: 'Most common errors auto-resolved, unknown errors properly escalated',\n    troubleshooting: 'Repeated failures: add to known patterns. Unknown errors: review and categorize',\n    relatedWorkflows: 'Error Auto-Fixer, System Health Monitor, Emergency Escalation',\n    owner: 'System',\n    version: '1.0',\n    tags: 'errors, monitoring, auto-fix, infrastructure'\n  },\n\n  // INTEGRATIONS\n  {\n    sopName: 'External API Integrations',\n    sopId: 'SOP-INTEGRATIONS-001',\n    category: 'Integration',\n    status: 'Active',\n    priority: 'Medium',\n    quickSummary: 'Configuration and usage guidelines for all external APIs',\n    purpose: 'Document API configurations, rate limits, and best practices for external services',\n    scope: 'SerpAPI, Hunter.io, Firecrawl, Apify, Salesmsg, Retell, OpenAI',\n    prerequisites: 'Valid API keys for each service, credentials in n8n',\n    steps: '1. Reference API documentation\\n2. Configure credentials in n8n\\n3. Use HTTP Request with proper auth\\n4. Handle rate limits with delays\\n5. Log all responses',\n    expectedOutcome: 'Reliable API integrations with proper error handling',\n    troubleshooting: 'Auth failures: verify API key. Rate limits: implement backoff. Timeouts: increase timeout',\n    relatedWorkflows: 'All enrichment sub-workflows, communication agents',\n    owner: 'Jonah',\n    version: '1.0',\n    tags: 'api, integrations, serpapi, hunter, firecrawl, apify'\n  }\n] }}"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "split-001",
+      "name": "Split Into Items",
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [680, 300],
+      "parameters": {
+        "fieldToSplitOut": "documents",
+        "options": {}
+      }
+    },
+    {
+      "id": "call-publisher-001",
+      "name": "Call SOP Publisher",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [900, 300],
+      "parameters": {
+        "mode": "each",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $env.SOP_PUBLISHER_WORKFLOW_ID || '' }}"
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      }
+    },
+    {
+      "id": "summary-001",
+      "name": "Generate Summary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1120, 300],
+      "parameters": {
+        "jsCode": "// Summarize batch document generation\nconst results = $input.all();\n\nconst byCategory = {};\nresults.forEach(r => {\n  const cat = r.json?.result?.category || 'Unknown';\n  if (!byCategory[cat]) byCategory[cat] = [];\n  byCategory[cat].push({\n    sopName: r.json?.result?.sopName,\n    action: r.json?.result?.action,\n    success: r.json?.result?.success,\n    url: r.json?.result?.googleDocUrl\n  });\n});\n\nconst created = results.filter(r => r.json?.result?.action === 'create').length;\nconst updated = results.filter(r => r.json?.result?.action === 'update').length;\nconst failed = results.filter(r => !r.json?.result?.success).length;\n\nreturn [{\n  json: {\n    summary: {\n      total: results.length,\n      created,\n      updated,\n      failed,\n      timestamp: new Date().toISOString()\n    },\n    byCategory,\n    allDocs: results.map(r => ({\n      sopName: r.json?.result?.sopName,\n      category: r.json?.result?.category,\n      action: r.json?.result?.action,\n      success: r.json?.result?.success,\n      url: r.json?.result?.googleDocUrl\n    }))\n  }\n}];"
+      }
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [[{ "node": "List All Documents", "type": "main", "index": 0 }]]
+    },
+    "List All Documents": {
+      "main": [[{ "node": "Split Into Items", "type": "main", "index": 0 }]]
+    },
+    "Split Into Items": {
+      "main": [[{ "node": "Call SOP Publisher", "type": "main", "index": 0 }]]
+    },
+    "Call SOP Publisher": {
+      "main": [[{ "node": "Generate Summary", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "saveManualExecutions": true
+  }
+}

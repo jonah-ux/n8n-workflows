@@ -1,0 +1,465 @@
+{
+  "name": "Smart Lesson Extractor",
+  "nodes": [
+    {
+      "id": "trigger-001",
+      "name": "When Executed by Another Workflow",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        240,
+        300
+      ],
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "user_input",
+              "type": "string"
+            },
+            {
+              "name": "agent_plan",
+              "type": "string"
+            },
+            {
+              "name": "tools_used",
+              "type": "string"
+            },
+            {
+              "name": "agent_output",
+              "type": "string"
+            },
+            {
+              "name": "was_successful",
+              "type": "boolean"
+            },
+            {
+              "name": "session_id",
+              "type": "string"
+            },
+            {
+              "name": "task_type",
+              "type": "string"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "filter-001",
+      "name": "IF Worth Learning",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        460,
+        300
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "has-input",
+              "leftValue": "={{ $json.user_input?.length }}",
+              "rightValue": "5",
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            },
+            {
+              "id": "has-output",
+              "leftValue": "={{ $json.agent_output?.length }}",
+              "rightValue": "20",
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            },
+            {
+              "id": "not-garbage",
+              "leftValue": "={{ $json.user_input?.toLowerCase() }}",
+              "rightValue": "={{ ['a', 'ok', 'yes', 'no', 'hi', 'hello', 'thanks', 'thank you', 'bye'].includes($json.user_input?.toLowerCase()?.trim()) }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "false"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "extract-001",
+      "name": "Extract Lesson (LLM)",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.4,
+      "position": [
+        680,
+        200
+      ],
+      "parameters": {
+        "promptType": "define",
+        "text": "=You are a LEARNING EXTRACTION module. Your job is to identify actionable lessons from agent interactions.\n\n## Interaction Data\n**User Request:** {{ $json.user_input }}\n\n**Agent Plan:** {{ $json.agent_plan }}\n\n**Tools Used:** {{ $json.tools_used }}\n\n**Agent Output:** {{ $json.agent_output?.substring(0, 1000) }}\n\n**Was Successful:** {{ $json.was_successful }}\n\n**Task Type:** {{ $json.task_type }}\n\n## Your Analysis Task\n\nExtract a lesson ONLY if there's something genuinely useful to learn. Not every interaction needs a lesson.\n\nAsk yourself:\n1. Did the agent discover something new about how to handle this type of request?\n2. Was there a pattern that could help with similar future requests?\n3. Did a particular tool or approach work especially well (or poorly)?\n\n## Output Format (JSON only):\n```json\n{\n  \"should_save\": true/false,\n  \"lesson_summary\": \"One sentence actionable lesson (or empty if should_save=false)\",\n  \"detailed_lesson\": \"2-3 sentences with specifics (or empty)\",\n  \"pattern_trigger\": \"When user asks about X... (the trigger condition)\",\n  \"recommended_action\": \"Use tool Y with params Z... (the recommended response)\",\n  \"category\": \"workflow_building|debugging|data_processing|integration|communication|other\",\n  \"tags\": [\"relevant\", \"tags\", \"max-5\"],\n  \"confidence\": 0.5-1.0\n}\n```\n\nIf the interaction is too simple, unclear, or doesn't contain a reusable lesson, set should_save=false and leave other fields empty."
+      }
+    },
+    {
+      "id": "llm-001",
+      "name": "GPT-4o-mini",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.2,
+      "position": [
+        500,
+        80
+      ],
+      "parameters": {
+        "model": "gpt-4o-mini",
+        "options": {
+          "temperature": 0.3,
+          "maxTokens": 500
+        }
+      },
+      "credentials": {
+        "openAiApi": {
+          "id": "OPENAI_CRED_ID",
+          "name": "OpenAI API"
+        }
+      }
+    },
+    {
+      "id": "parse-001",
+      "name": "Parse Lesson JSON",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        900,
+        200
+      ],
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst triggerData = $('IF Worth Learning').first().json;\n\nlet lesson = {};\ntry {\n  let jsonStr = input.text || input.response || '';\n  \n  // Extract JSON from markdown code block if present\n  const jsonMatch = jsonStr.match(/```json\\n?([\\s\\S]*?)\\n?```/);\n  if (jsonMatch) {\n    jsonStr = jsonMatch[1];\n  }\n  \n  lesson = JSON.parse(jsonStr);\n} catch (e) {\n  lesson = { should_save: false };\n}\n\nif (!lesson.should_save) {\n  return [{ json: { skipped: true, reason: 'LLM determined not worth saving' } }];\n}\n\n// Prepare the lesson record\nconst record = {\n  user_input: triggerData.user_input,\n  expected_behavior: lesson.pattern_trigger || '',\n  actual_behavior: lesson.recommended_action || '',\n  lesson_summary: lesson.lesson_summary || 'No lesson generated',\n  example_type: triggerData.was_successful ? 'success' : 'failure',\n  category: lesson.category || 'other',\n  tags: lesson.tags || [],\n  confidence: lesson.confidence || 0.7,\n  session_id: triggerData.session_id,\n  detailed_lesson: lesson.detailed_lesson || '',\n  needs_embedding: true\n};\n\nreturn [{ json: record }];"
+      }
+    },
+    {
+      "id": "check-save-001",
+      "name": "IF Should Save",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1120,
+        200
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "not-skipped",
+              "leftValue": "={{ $json.skipped }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "false"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "embed-001",
+      "name": "Create Embedding",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1340,
+        100
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/embeddings",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "openAiApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: 'text-embedding-3-small', input: $json.user_input + ' ' + $json.lesson_summary + ' ' + $json.expected_behavior }) }}"
+      },
+      "credentials": {},
+      "continueOnFail": true
+    },
+    {
+      "id": "prep-insert-001",
+      "name": "Prepare Insert Data",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1560,
+        100
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "user_input",
+              "name": "user_input",
+              "type": "string",
+              "value": "={{ $('Parse Lesson JSON').first().json.user_input }}"
+            },
+            {
+              "id": "expected_behavior",
+              "name": "expected_behavior",
+              "type": "string",
+              "value": "={{ $('Parse Lesson JSON').first().json.expected_behavior }}"
+            },
+            {
+              "id": "actual_behavior",
+              "name": "actual_behavior",
+              "type": "string",
+              "value": "={{ $('Parse Lesson JSON').first().json.actual_behavior }}"
+            },
+            {
+              "id": "lesson_summary",
+              "name": "lesson_summary",
+              "type": "string",
+              "value": "={{ $('Parse Lesson JSON').first().json.lesson_summary }}"
+            },
+            {
+              "id": "example_type",
+              "name": "example_type",
+              "type": "string",
+              "value": "={{ $('Parse Lesson JSON').first().json.example_type }}"
+            },
+            {
+              "id": "category",
+              "name": "category",
+              "type": "string",
+              "value": "={{ $('Parse Lesson JSON').first().json.category }}"
+            },
+            {
+              "id": "embedding",
+              "name": "embedding",
+              "type": "string",
+              "value": "={{ JSON.stringify($json.data[0].embedding) }}"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "save-001",
+      "name": "Save to learning_examples",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1780,
+        100
+      ],
+      "parameters": {
+        "operation": "insert",
+        "schema": "public",
+        "table": "learning_examples",
+        "columns": "user_input,expected_behavior,actual_behavior,lesson_summary,example_type,category,embedding",
+        "options": {
+          "returnFields": [
+            "id"
+          ]
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CRED_ID",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "id": "skip-001",
+      "name": "Skip - Not Worth Saving",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        1340,
+        300
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "skip-002",
+      "name": "Skip - Garbage Input",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        680,
+        400
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "return-001",
+      "name": "Return Result",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        2000,
+        200
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "result",
+              "name": "result",
+              "type": "object",
+              "value": "={{ { saved: true, lesson_id: $json.id, lesson_summary: $('Parse Lesson JSON').first().json.lesson_summary } }}"
+            }
+          ]
+        },
+        "options": {}
+      }
+    }
+  ],
+  "connections": {
+    "When Executed by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "IF Worth Learning",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF Worth Learning": {
+      "main": [
+        [
+          {
+            "node": "Extract Lesson (LLM)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Skip - Garbage Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Lesson (LLM)": {
+      "main": [
+        [
+          {
+            "node": "Parse Lesson JSON",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GPT-4o-mini": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Extract Lesson (LLM)",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Lesson JSON": {
+      "main": [
+        [
+          {
+            "node": "IF Should Save",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF Should Save": {
+      "main": [
+        [
+          {
+            "node": "Create Embedding",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Skip - Not Worth Saving",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Embedding": {
+      "main": [
+        [
+          {
+            "node": "Prepare Insert Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Insert Data": {
+      "main": [
+        [
+          {
+            "node": "Save to learning_examples",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save to learning_examples": {
+      "main": [
+        [
+          {
+            "node": "Return Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "saveManualExecutions": true,
+    "saveExecutionProgress": true,
+    "callerPolicy": "workflowsFromSameOwner"
+  }
+}

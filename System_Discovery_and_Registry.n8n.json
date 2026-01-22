@@ -1,0 +1,208 @@
+{
+  "name": "System Discovery & Registry Sync",
+  "nodes": [
+    {
+      "id": "trigger-001",
+      "name": "Manual or Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [240, 300],
+      "parameters": {
+        "rule": {
+          "interval": [{ "field": "hours", "hoursInterval": 6 }]
+        }
+      }
+    },
+    {
+      "id": "get-workflows-001",
+      "name": "Get All n8n Workflows",
+      "type": "n8n-nodes-base.n8n",
+      "typeVersion": 1,
+      "position": [460, 300],
+      "parameters": {
+        "resource": "workflow",
+        "operation": "getAll",
+        "returnAll": true
+      }
+    },
+    {
+      "id": "process-workflows-001",
+      "name": "Process & Categorize Workflows",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 300],
+      "parameters": {
+        "jsCode": "// Process all workflows and categorize them\nconst workflows = $input.all();\n\nconst categorizeWorkflow = (name, tags = []) => {\n  const nameLower = name.toLowerCase();\n  const tagStr = (tags || []).join(' ').toLowerCase();\n  const combined = nameLower + ' ' + tagStr;\n\n  // Category detection\n  if (combined.includes('enrichment') || combined.includes('scrape') || combined.includes('hunter') || combined.includes('firecrawl') || combined.includes('serpapi')) {\n    return { category: 'Enrichment', subcategory: combined.includes('orchestrat') ? 'Orchestrator' : 'Tool' };\n  }\n  if (combined.includes('hubspot')) {\n    return { category: 'HubSpot', subcategory: combined.includes('agent') ? 'Agent' : combined.includes('sync') ? 'Sync' : 'Operations' };\n  }\n  if (combined.includes('outreach') || combined.includes('salesmsg') || combined.includes('sms') || combined.includes('retell') || combined.includes('call')) {\n    return { category: 'Outreach', subcategory: combined.includes('handler') ? 'Handler' : 'Sequence' };\n  }\n  if (combined.includes('error') || combined.includes('health') || combined.includes('monitor') || combined.includes('fix')) {\n    return { category: 'Infrastructure', subcategory: 'Monitoring' };\n  }\n  if (combined.includes('agent') || combined.includes('ai ')) {\n    return { category: 'Agent', subcategory: 'AI Agent' };\n  }\n  if (combined.includes('memory') || combined.includes('learning') || combined.includes('sop') || combined.includes('knowledge')) {\n    return { category: 'Knowledge', subcategory: 'Memory' };\n  }\n  if (combined.includes('analytics') || combined.includes('report') || combined.includes('dashboard')) {\n    return { category: 'Analytics', subcategory: 'Reporting' };\n  }\n  if (combined.includes('monday') || combined.includes('zoho') || combined.includes('notion')) {\n    return { category: 'Integration', subcategory: 'External' };\n  }\n  return { category: 'General', subcategory: 'Other' };\n};\n\nconst detectTriggerType = (nodes) => {\n  if (!nodes) return 'unknown';\n  const triggerNode = nodes.find(n =>\n    n.type?.includes('Trigger') ||\n    n.type?.includes('webhook') ||\n    n.type?.includes('schedule') ||\n    n.type?.includes('executeWorkflowTrigger')\n  );\n  if (!triggerNode) return 'manual';\n  if (triggerNode.type?.includes('schedule')) return 'schedule';\n  if (triggerNode.type?.includes('webhook')) return 'webhook';\n  if (triggerNode.type?.includes('executeWorkflowTrigger')) return 'sub-workflow';\n  if (triggerNode.type?.includes('error')) return 'error';\n  return 'manual';\n};\n\nconst detectWorkflowType = (name, triggerType) => {\n  const nameLower = name.toLowerCase();\n  if (nameLower.includes('orchestrat')) return 'orchestrator';\n  if (nameLower.includes('tool:') || nameLower.includes('sub-workflow')) return 'tool';\n  if (nameLower.includes('agent')) return 'agent';\n  if (nameLower.includes('handler')) return 'webhook';\n  if (triggerType === 'schedule') return 'background';\n  if (triggerType === 'sub-workflow') return 'sub-workflow';\n  return 'standalone';\n};\n\nconst detectSystemsUsed = (nodes) => {\n  const systems = new Set();\n  if (!nodes) return [];\n\n  nodes.forEach(node => {\n    const type = (node.type || '').toLowerCase();\n    if (type.includes('hubspot')) systems.add('hubspot');\n    if (type.includes('postgres') || type.includes('supabase')) systems.add('supabase');\n    if (type.includes('openai') || type.includes('langchain')) systems.add('openai');\n    if (type.includes('googledocs')) systems.add('google_docs');\n    if (type.includes('googledrive')) systems.add('google_drive');\n    if (type.includes('notion')) systems.add('notion');\n    if (type.includes('airtable')) systems.add('airtable');\n    if (type.includes('slack')) systems.add('slack');\n    if (type.includes('http')) {\n      // Check URL in parameters for known APIs\n      const url = JSON.stringify(node.parameters || {}).toLowerCase();\n      if (url.includes('serpapi')) systems.add('serpapi');\n      if (url.includes('hunter')) systems.add('hunter');\n      if (url.includes('firecrawl')) systems.add('firecrawl');\n      if (url.includes('apify')) systems.add('apify');\n      if (url.includes('salesmsg') || url.includes('salesmessage')) systems.add('salesmsg');\n      if (url.includes('retell')) systems.add('retell');\n    }\n  });\n\n  return Array.from(systems);\n};\n\nconst processed = workflows.map(wf => {\n  const w = wf.json;\n  const { category, subcategory } = categorizeWorkflow(w.name, w.tags);\n  const triggerType = detectTriggerType(w.nodes);\n  const workflowType = detectWorkflowType(w.name, triggerType);\n  const systemsUsed = detectSystemsUsed(w.nodes);\n\n  return {\n    json: {\n      workflow_id: w.id,\n      workflow_name: w.name,\n      category,\n      subcategory,\n      workflow_type: workflowType,\n      trigger_type: triggerType,\n      status: w.active ? 'active' : 'inactive',\n      is_production: w.active && !w.name.toLowerCase().includes('test'),\n      version: '1.0',\n      description: w.meta?.description || '',\n      node_count: w.nodes?.length || 0,\n      systems_used: systemsUsed,\n      tags: w.tags || [],\n      created_at: w.createdAt,\n      updated_at: w.updatedAt\n    }\n  };\n});\n\nreturn processed;"
+      }
+    },
+    {
+      "id": "upsert-workflows-001",
+      "name": "Upsert to Workflow Registry",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [900, 300],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO workflow_registry (workflow_id, workflow_name, category, subcategory, workflow_type, trigger_type, status, is_production, version, description, node_count, systems_used, tags, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, NOW()) ON CONFLICT (workflow_id) DO UPDATE SET workflow_name = $2, category = $3, subcategory = $4, workflow_type = $5, trigger_type = $6, status = $7, is_production = $8, node_count = $11, systems_used = $12, tags = $13, updated_at = NOW() RETURNING *",
+        "options": {
+          "queryParameters": "={{ $json.workflow_id }},={{ $json.workflow_name }},={{ $json.category }},={{ $json.subcategory }},={{ $json.workflow_type }},={{ $json.trigger_type }},={{ $json.status }},={{ $json.is_production }},={{ $json.version }},={{ $json.description }},={{ $json.node_count }},={{ '{' + $json.systems_used.map(s => `\"${s}\"`).join(',') + '}' }},={{ '{' + $json.tags.map(t => `\"${t}\"`).join(',') + '}' }},={{ $json.created_at }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CREDENTIAL_ID",
+          "name": "Supabase Postgres"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "find-missing-sops-001",
+      "name": "Find Workflows Missing SOPs",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1120, 300],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT w.workflow_id, w.workflow_name, w.category, w.subcategory, w.workflow_type, w.trigger_type, w.description, w.systems_used, w.tags FROM workflow_registry w LEFT JOIN sops s ON w.workflow_id = ANY(s.related_workflows) WHERE s.id IS NULL AND w.status = 'active' ORDER BY CASE w.category WHEN 'Enrichment' THEN 1 WHEN 'HubSpot' THEN 2 WHEN 'Outreach' THEN 3 WHEN 'Infrastructure' THEN 4 ELSE 5 END LIMIT 20"
+      },
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CREDENTIAL_ID",
+          "name": "Supabase Postgres"
+        }
+      }
+    },
+    {
+      "id": "generate-sop-content-001",
+      "name": "Generate SOP Content via AI",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1.8,
+      "position": [1340, 300],
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "gpt-4o"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "You are an expert technical writer creating SOPs for Auto Shop Media's automation infrastructure. Create comprehensive, actionable documentation.\n\nGiven this workflow information:\n- Name: {{ $json.workflow_name }}\n- Category: {{ $json.category }}\n- Subcategory: {{ $json.subcategory }}\n- Type: {{ $json.workflow_type }}\n- Trigger: {{ $json.trigger_type }}\n- Systems Used: {{ $json.systems_used }}\n- Tags: {{ $json.tags }}\n- Description: {{ $json.description || 'No description provided' }}\n\nGenerate a comprehensive SOP in this exact JSON format:\n{\n  \"sop_id\": \"SOP-{{ $json.category.toUpperCase().replace(/\\s+/g, '-') }}-{{ $json.workflow_name.toUpperCase().replace(/[^A-Z0-9]+/g, '-').slice(0, 30) }}\",\n  \"sop_name\": \"<Clear descriptive name>\",\n  \"quick_summary\": \"<1-2 sentence overview>\",\n  \"purpose\": \"<Why this workflow exists and what problem it solves>\",\n  \"scope\": \"<What's included and excluded from this process>\",\n  \"prerequisites\": \"<Bullet list of requirements>\",\n  \"procedure_steps\": \"<Numbered step-by-step process>\",\n  \"expected_outcome\": \"<What success looks like>\",\n  \"troubleshooting\": \"<Common issues and solutions>\",\n  \"related_items\": \"<Related workflows, systems, or processes>\",\n  \"keywords\": [\"<relevant\", \"search\", \"terms\"]\n}\n\nBe specific and actionable. Reference the actual systems being used.",
+              "role": "user"
+            }
+          ]
+        },
+        "options": {
+          "temperature": 0.3,
+          "responseFormat": "json_object"
+        }
+      },
+      "credentials": {
+        "openAiApi": {
+          "id": "OPENAI_CREDENTIAL_ID",
+          "name": "OpenAi account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "parse-sop-001",
+      "name": "Parse SOP Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1560, 300],
+      "parameters": {
+        "jsCode": "// Parse the AI-generated SOP content\nconst workflow = $('Find Workflows Missing SOPs').item.json;\nconst aiResponse = $json;\n\nlet sopContent;\ntry {\n  // Handle both string and object responses\n  if (typeof aiResponse.message?.content === 'string') {\n    sopContent = JSON.parse(aiResponse.message.content);\n  } else if (typeof aiResponse === 'object' && aiResponse.sop_id) {\n    sopContent = aiResponse;\n  } else {\n    throw new Error('Unexpected response format');\n  }\n} catch (e) {\n  // Fallback SOP structure\n  sopContent = {\n    sop_id: `SOP-${workflow.category.toUpperCase()}-${Date.now()}`,\n    sop_name: workflow.workflow_name,\n    quick_summary: `Automated ${workflow.workflow_type} for ${workflow.category}`,\n    purpose: 'Purpose to be documented',\n    scope: 'Scope to be defined',\n    prerequisites: 'Prerequisites to be listed',\n    procedure_steps: 'Steps to be documented',\n    expected_outcome: 'Expected outcome to be defined',\n    troubleshooting: 'Troubleshooting to be added',\n    related_items: 'Related items to be identified',\n    keywords: [workflow.category.toLowerCase(), workflow.workflow_type]\n  };\n}\n\nreturn [{\n  json: {\n    ...sopContent,\n    workflow_id: workflow.workflow_id,\n    workflow_name: workflow.workflow_name,\n    category: workflow.category,\n    subcategory: workflow.subcategory,\n    systems_used: workflow.systems_used,\n    tags: workflow.tags,\n    status: 'draft',\n    version: '1.0',\n    owner: 'Auto Shop Media',\n    author: 'AI Generator'\n  }\n}];"
+      }
+    },
+    {
+      "id": "save-sop-001",
+      "name": "Save SOP to Database",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1780, 300],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO sops (sop_id, sop_name, category, subcategory, sop_type, status, version, owner, author, quick_summary, purpose, scope, prerequisites, procedure_steps, expected_outcome, troubleshooting, related_items, related_workflows, related_systems, tags, keywords, created_at, updated_at) VALUES ($1, $2, $3, $4, 'process', $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, NOW(), NOW()) ON CONFLICT (sop_id) DO UPDATE SET sop_name = $2, quick_summary = $9, purpose = $10, scope = $11, prerequisites = $12, procedure_steps = $13, expected_outcome = $14, troubleshooting = $15, related_items = $16, updated_at = NOW() RETURNING *",
+        "options": {
+          "queryParameters": "={{ $json.sop_id }},={{ $json.sop_name }},={{ $json.category }},={{ $json.subcategory }},={{ $json.status }},={{ $json.version }},={{ $json.owner }},={{ $json.author }},={{ $json.quick_summary }},={{ $json.purpose }},={{ $json.scope }},={{ $json.prerequisites }},={{ $json.procedure_steps }},={{ $json.expected_outcome }},={{ $json.troubleshooting }},={{ $json.related_items }},={{ '{\"' + $json.workflow_id + '\"}' }},={{ '{' + ($json.systems_used || []).map(s => `\"${s}\"`).join(',') + '}' }},={{ '{' + ($json.tags || []).map(t => `\"${t}\"`).join(',') + '}' }},={{ '{' + ($json.keywords || []).map(k => `\"${k}\"`).join(',') + '}' }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CREDENTIAL_ID",
+          "name": "Supabase Postgres"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "log-event-001",
+      "name": "Log Discovery Event",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [2000, 300],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT log_system_event('sop_generated', 'create', 'sop', $1, $2, 'workflow', 'System Discovery', $3)",
+        "options": {
+          "queryParameters": "={{ $json.sop_id }},={{ $json.sop_name }},={{ 'Auto-generated SOP for workflow: ' + $json.workflow_name }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CREDENTIAL_ID",
+          "name": "Supabase Postgres"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "summary-001",
+      "name": "Generate Summary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2220, 300],
+      "parameters": {
+        "jsCode": "// Generate execution summary\nconst items = $input.all();\n\nreturn [{\n  json: {\n    summary: {\n      timestamp: new Date().toISOString(),\n      workflows_processed: items.length,\n      sops_generated: items.filter(i => i.json?.sop_id).length,\n      status: 'completed'\n    },\n    details: items.map(i => ({\n      sop_id: i.json?.sop_id,\n      sop_name: i.json?.sop_name,\n      workflow_name: i.json?.workflow_name,\n      category: i.json?.category\n    }))\n  }\n}];"
+      }
+    }
+  ],
+  "connections": {
+    "Manual or Schedule Trigger": {
+      "main": [[{ "node": "Get All n8n Workflows", "type": "main", "index": 0 }]]
+    },
+    "Get All n8n Workflows": {
+      "main": [[{ "node": "Process & Categorize Workflows", "type": "main", "index": 0 }]]
+    },
+    "Process & Categorize Workflows": {
+      "main": [[{ "node": "Upsert to Workflow Registry", "type": "main", "index": 0 }]]
+    },
+    "Upsert to Workflow Registry": {
+      "main": [[{ "node": "Find Workflows Missing SOPs", "type": "main", "index": 0 }]]
+    },
+    "Find Workflows Missing SOPs": {
+      "main": [[{ "node": "Generate SOP Content via AI", "type": "main", "index": 0 }]]
+    },
+    "Generate SOP Content via AI": {
+      "main": [[{ "node": "Parse SOP Response", "type": "main", "index": 0 }]]
+    },
+    "Parse SOP Response": {
+      "main": [[{ "node": "Save SOP to Database", "type": "main", "index": 0 }]]
+    },
+    "Save SOP to Database": {
+      "main": [[{ "node": "Log Discovery Event", "type": "main", "index": 0 }]]
+    },
+    "Log Discovery Event": {
+      "main": [[{ "node": "Generate Summary", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "saveManualExecutions": true,
+    "executionTimeout": 1800
+  }
+}

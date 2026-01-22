@@ -1,0 +1,379 @@
+{
+  "name": "🕵️ AI Agent: Zoho CRM Operations",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "agent/zoho",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "🌐 Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -400,
+        300
+      ],
+      "webhookId": "zoho-agent-webhook"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ═══════════════════════════════════════════════════════════════════\n// 📋 Normalize Input + Build Parameterized SQL for Zoho CRM Agent\n// ═══════════════════════════════════════════════════════════════════\n\nconst raw = $input.first().json;\nconst body = raw.body || raw;\n\n// Helper to safely quote values for params array\nconst q = (v) => (v === undefined || v === null) ? null : String(v);\n\n// ───────────────────────────────────────────────────────────────────\n// Extract input fields\n// ───────────────────────────────────────────────────────────────────\nconst input = {\n  action: (body.action || body.tool || 'help').toLowerCase().trim(),\n  module: body.module || body.module_name || 'Leads', // Leads, Contacts, Accounts, Deals, etc.\n  record_id: body.record_id || body.id || body.zoho_id || null,\n  record_data: body.data || body.record_data || body.fields || {},\n  search_criteria: body.criteria || body.search || body.query || null,\n  email: body.email || null,\n  phone: body.phone || null,\n  company_name: body.company_name || body.account_name || null,\n  hubspot_id: body.hubspot_id || body.hubspot_contact_id || body.hubspot_company_id || null,\n  dry_run: body.dry_run === true || body.preview === true,\n  user_id: body.user_id || body.agent_user_id || 'system',\n  session_id: body.session_id || body.conversation_id || `zoho_${Date.now()}`\n};\n\n// ───────────────────────────────────────────────────────────────────\n// Action routing map\n// ───────────────────────────────────────────────────────────────────\nconst ACTIONS = {\n  get_record: 'Get a single record by ID',\n  search_records: 'Search records by criteria',\n  create_record: 'Create a new record (Lead, Contact, Account, Deal)',\n  update_record: 'Update an existing record',\n  delete_record: 'Delete a record',\n  list_records: 'List records with pagination',\n  get_modules: 'List available Zoho modules',\n  get_fields: 'Get field metadata for a module',\n  convert_lead: 'Convert a Lead to Contact/Account/Deal',\n  add_note: 'Add a note to a record',\n  get_notes: 'Get notes for a record',\n  get_activities: 'Get activities (calls, tasks, events) for a record',\n  create_task: 'Create a task linked to a record',\n  sync_from_hubspot: 'Sync record from HubSpot to Zoho',\n  sync_to_hubspot: 'Sync record from Zoho to HubSpot',\n  find_duplicates: 'Find duplicate records',\n  help: 'List available Zoho CRM operations'\n};\n\nconst tool_name = `zoho_${input.action}`;\nconst action_description = ACTIONS[input.action] || 'Unknown action';\n\n// ───────────────────────────────────────────────────────────────────\n// Build payload for logging\n// ───────────────────────────────────────────────────────────────────\nconst payload_for_log = {\n  action: input.action,\n  module: input.module,\n  record_id: input.record_id,\n  email: input.email,\n  company_name: input.company_name,\n  dry_run: input.dry_run\n};\n\n// ───────────────────────────────────────────────────────────────────\n// Build parameterized SQL for log_start\n// ───────────────────────────────────────────────────────────────────\nconst log_start_sql = `\nINSERT INTO tool_execution_log (\n  tool_name, input_data, success, conversation_id, user_id, required_approval\n)\nVALUES ($1, $2::jsonb, false, $3, $4, $5)\nRETURNING id;\n`;\n\nconst log_start_params = [\n  tool_name,\n  JSON.stringify(payload_for_log),\n  q(input.session_id),\n  q(input.user_id),\n  !input.dry_run && ['create_record', 'update_record', 'delete_record', 'convert_lead', 'add_note', 'create_task'].includes(input.action)\n];\n\n// ───────────────────────────────────────────────────────────────────\n// Build parameterized SQL for context loading\n// ───────────────────────────────────────────────────────────────────\nconst ctx_sql = `\nSELECT jsonb_build_object(\n  'zoho_config', (\n    SELECT COALESCE(jsonb_agg(jsonb_build_object(\n      'key', m.key,\n      'value', m.value\n    )), '[]'::jsonb)\n    FROM memory_items m\n    WHERE m.key LIKE 'zoho_%'\n    AND m.status = 'active'\n    LIMIT 10\n  ),\n  'hubspot_contact', (\n    SELECT to_jsonb(hc) FROM hubspot_contacts hc\n    WHERE hc.id = $1 OR hc.attrs->'properties'->>'email' = $2\n    LIMIT 1\n  ),\n  'hubspot_company', (\n    SELECT to_jsonb(hco) FROM hubspot_companies hco\n    WHERE hco.id = $3 OR hco.attrs->'properties'->>'name' = $4\n    LIMIT 1\n  ),\n  'recent_zoho_actions', (\n    SELECT COALESCE(jsonb_agg(t ORDER BY t.started_at DESC), '[]'::jsonb)\n    FROM tool_execution_log t\n    WHERE t.tool_name LIKE 'zoho_%'\n    AND t.started_at > NOW() - INTERVAL '7 days'\n    LIMIT 20\n  ),\n  'agent_notes', (\n    SELECT COALESCE(jsonb_agg(n ORDER BY n.updated_at DESC), '[]'::jsonb)\n    FROM agent_notes n \n    WHERE n.scope = 'integration' AND n.note_key = 'zoho'\n    LIMIT 10\n  )\n) AS context;\n`;\n\nconst ctx_params = [\n  q(input.hubspot_id),\n  q(input.email),\n  q(input.hubspot_id),\n  q(input.company_name)\n];\n\n// ───────────────────────────────────────────────────────────────────\n// Output\n// ───────────────────────────────────────────────────────────────────\nreturn [{\n  json: {\n    input,\n    tool_name,\n    action_description,\n    available_actions: ACTIONS,\n    log_start_sql,\n    log_start_params,\n    ctx_sql,\n    ctx_params\n  }\n}];"
+      },
+      "id": "normalize-input",
+      "name": "📋 Normalize + Build SQL",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -160,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ $json.log_start_sql }}",
+        "options": {
+          "queryReplacement": "={{ $json.log_start_params }}"
+        }
+      },
+      "id": "log-start",
+      "name": "🗄️ Log Start",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        80,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CRED_ID",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ $('📋 Normalize + Build SQL').item.json.ctx_sql }}",
+        "options": {
+          "queryReplacement": "={{ $('📋 Normalize + Build SQL').item.json.ctx_params }}"
+        }
+      },
+      "id": "load-context",
+      "name": "📥 Load Context",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        320,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CRED_ID",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "options": {
+          "systemMessage": "You are the Zoho CRM Operations Agent for Auto Shop Media. You help manage leads, contacts, accounts, and deals in Zoho CRM, and sync data with HubSpot.\n\n## Your Capabilities\n- CRUD operations on all Zoho modules\n- Search and filter records\n- Lead conversion\n- Notes and activities management\n- Two-way sync with HubSpot\n- Duplicate detection\n\n## Current Context\n{{$json.context}}\n\n## Available Actions\n- get_record: Get record by ID\n- search_records: Search by criteria\n- create_record: Create new record\n- update_record: Update existing record\n- delete_record: Delete record\n- list_records: List with pagination\n- get_modules: List Zoho modules\n- get_fields: Get module field metadata\n- convert_lead: Convert Lead → Contact/Account/Deal\n- add_note: Add note to record\n- get_notes: Get record notes\n- get_activities: Get calls/tasks/events\n- create_task: Create linked task\n- sync_from_hubspot: Sync HubSpot → Zoho\n- sync_to_hubspot: Sync Zoho → HubSpot\n- find_duplicates: Find duplicate records\n\n## Zoho CRM API Reference\nBase URL: https://www.zohoapis.com/crm/v2\nAuth: OAuth2 Bearer token\n\n### Get Record\nGET /crm/v2/{module}/{record_id}\n\n### Search Records\nGET /crm/v2/{module}/search?criteria=(Email:equals:{email})\nGET /crm/v2/{module}/search?criteria=(Phone:contains:{phone})\nGET /crm/v2/{module}/search?criteria=((Company:equals:{name})and(Lead_Status:equals:Open))\n\n### Create Record\nPOST /crm/v2/{module}\n```json\n{\n  \"data\": [\n    {\n      \"Last_Name\": \"Smith\",\n      \"First_Name\": \"John\",\n      \"Email\": \"john@example.com\",\n      \"Company\": \"ABC Auto\",\n      \"Phone\": \"+1234567890\"\n    }\n  ]\n}\n```\n\n### Update Record\nPUT /crm/v2/{module}/{record_id}\n```json\n{\n  \"data\": [\n    {\n      \"Lead_Status\": \"Contacted\",\n      \"Description\": \"Updated via API\"\n    }\n  ]\n}\n```\n\n### Convert Lead\nPOST /crm/v2/Leads/{record_id}/actions/convert\n```json\n{\n  \"data\": [\n    {\n      \"overwrite\": true,\n      \"notify_lead_owner\": true,\n      \"notify_new_entity_owner\": true,\n      \"Accounts\": \"existing_account_id\",\n      \"Deals\": {\n        \"Deal_Name\": \"New Deal\",\n        \"Closing_Date\": \"2026-02-15\",\n        \"Stage\": \"Qualification\"\n      },\n      \"carry_over_tags\": true\n    }\n  ]\n}\n```\n\n## Common Zoho Modules\n- Leads: Potential customers\n- Contacts: Individuals\n- Accounts: Companies/organizations\n- Deals: Sales opportunities\n- Tasks: To-do items\n- Calls: Phone call logs\n- Events: Calendar events\n- Notes: Record notes\n\n## Field Mapping: Zoho ↔ HubSpot\n| Zoho Field | HubSpot Field |\n|------------|---------------|\n| First_Name | firstname |\n| Last_Name | lastname |\n| Email | email |\n| Phone | phone |\n| Company | company |\n| Lead_Status | lifecyclestage |\n| Annual_Revenue | annualrevenue |\n| Industry | industry |\n| Website | website |\n\n## Rules\n1. Always validate module name before API calls\n2. Use search to find existing records before creating\n3. Handle pagination for list operations\n4. Log all sync operations for audit trail\n5. If dry_run=true, show what would change but don't execute\n6. Check for duplicates before creating new records\n7. Preserve data integrity during syncs\n\nBe helpful and accurate with Zoho CRM operations."
+        }
+      },
+      "id": "ai-agent",
+      "name": "🕵️ Zoho CRM Agent",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.7,
+      "position": [
+        560,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "model": "gpt-4o",
+        "options": {
+          "temperature": 0.3
+        }
+      },
+      "id": "openai-chat",
+      "name": "🧠 OpenAI Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.2,
+      "position": [
+        560,
+        520
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "OPENAI_CRED_ID",
+          "name": "OpenAI API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "name": "zoho_api",
+        "description": "Execute a Zoho CRM API request. Input: JSON with 'method' (GET/POST/PUT/DELETE), 'endpoint' (e.g., '/Leads'), and optional 'body' object.",
+        "workflowId": "={{ $env.ZOHO_API_WORKFLOW_ID }}",
+        "responsePropertyName": "zoho_result"
+      },
+      "id": "tool-zoho-api",
+      "name": "🔌 Tool: Zoho API",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2,
+      "position": [
+        360,
+        520
+      ]
+    },
+    {
+      "parameters": {
+        "name": "search_postgres",
+        "description": "Query Postgres database for HubSpot records, Zoho configs, or sync history. Input: SQL query string.",
+        "workflowId": "={{ $env.POSTGRES_QUERY_TOOL_WORKFLOW_ID }}",
+        "responsePropertyName": "query_result"
+      },
+      "id": "tool-postgres",
+      "name": "🗄️ Tool: Query Database",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2,
+      "position": [
+        560,
+        640
+      ]
+    },
+    {
+      "parameters": {
+        "name": "hubspot_api",
+        "description": "Execute HubSpot API operations for syncing. Input: JSON with 'object_type', 'operation', 'id', 'properties'.",
+        "workflowId": "={{ $env.HUBSPOT_API_WORKFLOW_ID }}",
+        "responsePropertyName": "hubspot_result"
+      },
+      "id": "tool-hubspot",
+      "name": "🔄 Tool: HubSpot API",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2,
+      "position": [
+        760,
+        520
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ═══════════════════════════════════════════════════════════════════\n// 📤 Parse Agent Output + Build Parameterized SQL for Log End\n// ═══════════════════════════════════════════════════════════════════\n\nconst agentOutput = $input.first().json;\nconst inputData = $('📋 Normalize + Build SQL').first().json.input;\nconst logStartResult = $('🗄️ Log Start').first().json;\n\nconst tool_execution_id = logStartResult?.id || null;\n\n// ───────────────────────────────────────────────────────────────────\n// Determine success and extract key results\n// ───────────────────────────────────────────────────────────────────\nconst output_text = agentOutput.output || agentOutput.text || JSON.stringify(agentOutput);\nconst success = !output_text.toLowerCase().includes('error') && \n                !output_text.toLowerCase().includes('failed') &&\n                !output_text.toLowerCase().includes('unable to');\n\n// Extract record ID from response\nconst record_id_match = output_text.match(/(?:record[_\\s]?id|id)[\"']?\\s*[:\\s]\\s*[\"']?(\\d+)/i);\nconst record_id = record_id_match ? record_id_match[1] : inputData.record_id;\n\n// Build output payload\nconst output_payload = {\n  action: inputData.action,\n  module: inputData.module,\n  result: output_text.substring(0, 2000),\n  success: success,\n  record_id: record_id,\n  dry_run: inputData.dry_run,\n  timestamp: new Date().toISOString()\n};\n\n// ───────────────────────────────────────────────────────────────────\n// Build parameterized SQL for log_end\n// ───────────────────────────────────────────────────────────────────\nconst log_end_sql = `\nUPDATE tool_execution_log\nSET \n  success = $1,\n  output_data = $2::jsonb,\n  completed_at = NOW(),\n  duration_ms = EXTRACT(EPOCH FROM (NOW() - started_at)) * 1000\nWHERE id = $3\nRETURNING *;\n`;\n\nconst log_end_params = [\n  success,\n  JSON.stringify(output_payload),\n  tool_execution_id\n];\n\n// ───────────────────────────────────────────────────────────────────\n// Build webhook response\n// ───────────────────────────────────────────────────────────────────\nconst webhook_response = {\n  success: success,\n  action: inputData.action,\n  module: inputData.module,\n  message: output_text,\n  record_id: record_id,\n  dry_run: inputData.dry_run,\n  execution_id: tool_execution_id\n};\n\nreturn [{\n  json: {\n    log_end_sql,\n    log_end_params,\n    webhook_response,\n    agent_output: agentOutput\n  }\n}];"
+      },
+      "id": "parse-output",
+      "name": "📤 Parse + Finalize Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        800,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ $json.log_end_sql }}",
+        "options": {
+          "queryReplacement": "={{ $json.log_end_params }}"
+        }
+      },
+      "id": "log-end",
+      "name": "🗄️ Log End",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1040,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CRED_ID",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "options": {},
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($('📤 Parse + Finalize Output').item.json.webhook_response) }}"
+      },
+      "id": "respond-webhook",
+      "name": "📤 Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1280,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "🌐 Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "📋 Normalize + Build SQL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📋 Normalize + Build SQL": {
+      "main": [
+        [
+          {
+            "node": "🗄️ Log Start",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🗄️ Log Start": {
+      "main": [
+        [
+          {
+            "node": "📥 Load Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📥 Load Context": {
+      "main": [
+        [
+          {
+            "node": "🕵️ Zoho CRM Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🕵️ Zoho CRM Agent": {
+      "main": [
+        [
+          {
+            "node": "📤 Parse + Finalize Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🧠 OpenAI Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "🕵️ Zoho CRM Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔌 Tool: Zoho API": {
+      "ai_tool": [
+        [
+          {
+            "node": "🕵️ Zoho CRM Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🗄️ Tool: Query Database": {
+      "ai_tool": [
+        [
+          {
+            "node": "🕵️ Zoho CRM Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔄 Tool: HubSpot API": {
+      "ai_tool": [
+        [
+          {
+            "node": "🕵️ Zoho CRM Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📤 Parse + Finalize Output": {
+      "main": [
+        [
+          {
+            "node": "🗄️ Log End",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🗄️ Log End": {
+      "main": [
+        [
+          {
+            "node": "📤 Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "name": "ai-agent"
+    },
+    {
+      "name": "zoho"
+    },
+    {
+      "name": "crm"
+    },
+    {
+      "name": "integration"
+    },
+    {
+      "name": "hubspot-sync"
+    }
+  ],
+  "triggerCount": 1,
+  "pinData": {},
+  "versionId": "1",
+  "meta": {
+    "description": "AI Agent for managing Zoho CRM operations. Supports all modules, lead conversion, and two-way HubSpot sync.",
+    "category": "ai-agent",
+    "triggers": [
+      "webhook"
+    ],
+    "outputs": [
+      "webhook_response",
+      "postgres_log"
+    ],
+    "requiredCredentials": [
+      "Supabase Postgres",
+      "OpenAI API",
+      "Zoho CRM OAuth2"
+    ]
+  }
+}

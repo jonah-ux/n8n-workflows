@@ -1,0 +1,224 @@
+{
+  "name": "Tool: SOP Search",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "trigger-001",
+      "name": "When Executed by Another Workflow",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "query",
+              "name": "query",
+              "type": "string",
+              "value": "={{ $json.query || $json.search || $json.searchTerm || '' }}"
+            },
+            {
+              "id": "category",
+              "name": "category",
+              "type": "string",
+              "value": "={{ $json.category || '' }}"
+            },
+            {
+              "id": "limit",
+              "name": "limit",
+              "type": "number",
+              "value": "={{ $json.limit || 5 }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "normalize-001",
+      "name": "📋 Normalize Input",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "check-query",
+              "leftValue": "={{ $json.query }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-query-001",
+      "name": "IF Empty Query",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT sop_id, sop_name, category, status, priority, version, quick_summary, google_doc_url, tags, created_at FROM sops WHERE status != 'archived' ORDER BY created_at DESC LIMIT $1",
+        "options": {
+          "queryParameters": "={{ $json.limit }}"
+        }
+      },
+      "id": "list-recent-001",
+      "name": "🗄️ List Recent SOPs",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [900, 420],
+      "credentials": {
+        "postgres": {
+          "id": "BwXy2JHETe47vH1I",
+          "name": "Postgres account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "check-category",
+              "leftValue": "={{ $json.category }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-category-001",
+      "name": "IF Has Category Filter",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [900, 180]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT sop_id, sop_name, category, status, priority, version, quick_summary, google_doc_url, tags, created_at FROM sops WHERE (sop_name ILIKE '%' || $1 || '%' OR quick_summary ILIKE '%' || $1 || '%' OR tags ILIKE '%' || $1 || '%') AND category ILIKE '%' || $2 || '%' AND status != 'archived' ORDER BY CASE WHEN sop_name ILIKE '%' || $1 || '%' THEN 1 WHEN quick_summary ILIKE '%' || $1 || '%' THEN 2 ELSE 3 END, created_at DESC LIMIT $3",
+        "options": {
+          "queryParameters": "={{ $('📋 Normalize Input').item.json.query }},={{ $('📋 Normalize Input').item.json.category }},={{ $('📋 Normalize Input').item.json.limit }}"
+        }
+      },
+      "id": "search-with-category-001",
+      "name": "🔍 Search with Category",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1120, 80],
+      "credentials": {
+        "postgres": {
+          "id": "BwXy2JHETe47vH1I",
+          "name": "Postgres account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT sop_id, sop_name, category, status, priority, version, quick_summary, google_doc_url, tags, created_at FROM sops WHERE (sop_name ILIKE '%' || $1 || '%' OR quick_summary ILIKE '%' || $1 || '%' OR tags ILIKE '%' || $1 || '%' OR category ILIKE '%' || $1 || '%') AND status != 'archived' ORDER BY CASE WHEN sop_name ILIKE '%' || $1 || '%' THEN 1 WHEN category ILIKE '%' || $1 || '%' THEN 2 WHEN quick_summary ILIKE '%' || $1 || '%' THEN 3 ELSE 4 END, created_at DESC LIMIT $2",
+        "options": {
+          "queryParameters": "={{ $('📋 Normalize Input').item.json.query }},={{ $('📋 Normalize Input').item.json.limit }}"
+        }
+      },
+      "id": "search-all-001",
+      "name": "🔍 Search All SOPs",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1120, 280],
+      "credentials": {
+        "postgres": {
+          "id": "BwXy2JHETe47vH1I",
+          "name": "Postgres account 2"
+        }
+      }
+    },
+    {
+      "parameters": {},
+      "id": "merge-001",
+      "name": "🤝 Merge Results",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.1,
+      "position": [1340, 180]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Format SOP results for agent consumption\nconst items = $input.all();\n\nif (!items || items.length === 0) {\n  return [{\n    json: {\n      success: true,\n      count: 0,\n      message: 'No SOPs found matching your search criteria.',\n      results: [],\n      suggestion: 'Try broader search terms or check available categories: HubSpot_CRM, Analytics_Reports, AI_Agents, Integrations, Services_Products, Enrichment_Pipeline, Business_Operations, Knowledge_Base, Target_Market, Infrastructure, Voice_AI, Outreach, Standards_Guidelines'\n    }\n  }];\n}\n\nconst results = items.map(item => {\n  const sop = item.json;\n  return {\n    sop_id: sop.sop_id,\n    name: sop.sop_name,\n    category: sop.category,\n    status: sop.status,\n    priority: sop.priority,\n    version: sop.version,\n    summary: sop.quick_summary || 'No summary available',\n    google_doc_url: sop.google_doc_url,\n    tags: sop.tags,\n    created: sop.created_at\n  };\n});\n\nreturn [{\n  json: {\n    success: true,\n    count: results.length,\n    message: `Found ${results.length} SOP(s) matching your search.`,\n    results: results,\n    tip: 'Use the google_doc_url to access the full SOP document. You can also filter by category for more specific results.'\n  }\n}];"
+      },
+      "id": "format-001",
+      "name": "⚙️ Format Results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1560, 300]
+    }
+  ],
+  "connections": {
+    "When Executed by Another Workflow": {
+      "main": [[{ "node": "📋 Normalize Input", "type": "main", "index": 0 }]]
+    },
+    "📋 Normalize Input": {
+      "main": [[{ "node": "IF Empty Query", "type": "main", "index": 0 }]]
+    },
+    "IF Empty Query": {
+      "main": [
+        [{ "node": "🗄️ List Recent SOPs", "type": "main", "index": 0 }],
+        [{ "node": "IF Has Category Filter", "type": "main", "index": 0 }]
+      ]
+    },
+    "🗄️ List Recent SOPs": {
+      "main": [[{ "node": "⚙️ Format Results", "type": "main", "index": 0 }]]
+    },
+    "IF Has Category Filter": {
+      "main": [
+        [{ "node": "🔍 Search with Category", "type": "main", "index": 0 }],
+        [{ "node": "🔍 Search All SOPs", "type": "main", "index": 0 }]
+      ]
+    },
+    "🔍 Search with Category": {
+      "main": [[{ "node": "🤝 Merge Results", "type": "main", "index": 0 }]]
+    },
+    "🔍 Search All SOPs": {
+      "main": [[{ "node": "🤝 Merge Results", "type": "main", "index": 0 }]]
+    },
+    "🤝 Merge Results": {
+      "main": [[{ "node": "⚙️ Format Results", "type": "main", "index": 0 }]]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "meta": {
+    "templateCredsSetupCompleted": true
+  }
+}

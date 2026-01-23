@@ -331,15 +331,143 @@
     },
     {
       "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-has-contact-id",
+              "leftValue": "={{ $json.hubspot_contact_id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "exists"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [2520, 260],
+      "id": "if-should-create-notes",
+      "name": "Should Create Notes?"
+    },
+    {
+      "parameters": {
+        "jsCode": "// 📝 Prepare 3 HubSpot Notes with Enrichment Intel\n\nconst data = $json;\nconst prepData = $('🤝 Merge Search Results').item.json;\n\n// Helper to safely parse arrays\nconst safeJson = (v) => {\n  if (!v) return [];\n  if (Array.isArray(v)) return v;\n  if (typeof v === 'string') {\n    try { return JSON.parse(v); } catch { return []; }\n  }\n  return [];\n};\n\nconst hubspot_contact_id = data.hubspot_contact_id;\nconst timestamp = new Date().getTime();\n\n// Extract data\nconst personalization_hooks = safeJson(prepData.personalization_hooks);\nconst pain_points = safeJson(prepData.pain_points);\nconst buying_signals = safeJson(prepData.buying_signals);\nconst red_flags = safeJson(prepData.red_flags);\nconst talking_points = safeJson(prepData.talking_points);\nconst company_specialties = safeJson(prepData.company_specialties);\n\n// ==========================================\n// NOTE 1: Lead Intelligence & Scoring\n// ==========================================\nconst note1_parts = [];\nnote1_parts.push('🎯 **LEAD INTELLIGENCE**\\n');\nnote1_parts.push(`**DCS Tier:** ${prepData.dcs_tier || 'Unknown'}`);\nif (prepData.dcs_score) note1_parts.push(`**DCS Score:** ${prepData.dcs_score}/100`);\nif (prepData.contact_confidence) note1_parts.push(`**Contact Confidence:** ${prepData.contact_confidence}%`);\n\nif (buying_signals.length > 0) {\n  note1_parts.push('\\n**🚀 BUYING SIGNALS:**');\n  buying_signals.slice(0, 5).forEach(signal => note1_parts.push(`• ${signal}`));\n}\n\nif (pain_points.length > 0) {\n  note1_parts.push('\\n**⚠️ PAIN POINTS:**');\n  pain_points.slice(0, 5).forEach(point => note1_parts.push(`• ${point}`));\n}\n\nif (red_flags.length > 0) {\n  note1_parts.push('\\n**🚩 RED FLAGS:**');\n  red_flags.slice(0, 3).forEach(flag => note1_parts.push(`• ${flag}`));\n}\n\nconst note1 = note1_parts.join('\\n');\n\n// ==========================================\n// NOTE 2: Outreach Strategy & Talking Points\n// ==========================================\nconst note2_parts = [];\nnote2_parts.push('📞 **OUTREACH STRATEGY**\\n');\n\nif (prepData.recommended_channel) {\n  note2_parts.push(`**Channel:** ${prepData.recommended_channel.toUpperCase()}`);\n}\n\nif (prepData.best_time_to_contact) {\n  note2_parts.push(`**Best Time:** ${prepData.best_time_to_contact}`);\n}\n\nif (prepData.hours_of_operation) {\n  note2_parts.push(`**Hours:** ${prepData.hours_of_operation}`);\n}\n\nif (personalization_hooks.length > 0) {\n  note2_parts.push('\\n**💡 PERSONALIZATION HOOKS:**');\n  personalization_hooks.slice(0, 3).forEach(hook => note2_parts.push(`• ${hook}`));\n}\n\nif (talking_points.length > 0) {\n  note2_parts.push('\\n**🗣️ TALKING POINTS:**');\n  talking_points.slice(0, 5).forEach(point => note2_parts.push(`• ${point}`));\n}\n\nconst note2 = note2_parts.join('\\n');\n\n// ==========================================\n// NOTE 3: Company Context & Services\n// ==========================================\nconst note3_parts = [];\nnote3_parts.push('🏢 **COMPANY CONTEXT**\\n');\n\nif (prepData.intel_summary) {\n  note3_parts.push(`**Summary:** ${prepData.intel_summary}`);\n}\n\nif (company_specialties.length > 0) {\n  note3_parts.push('\\n**Services Offered:**');\n  company_specialties.slice(0, 10).forEach(service => note3_parts.push(`• ${service}`));\n}\n\nif (prepData.google_rating) {\n  note3_parts.push(`\\n**Google Rating:** ⭐ ${prepData.google_rating}/5 (${prepData.google_review_count || 0} reviews)`);\n}\n\nif (prepData.company_employee_count) {\n  note3_parts.push(`**Team Size:** ~${prepData.company_employee_count} employees`);\n}\n\nconst note3 = note3_parts.join('\\n');\n\n// Return all 3 notes\nreturn [{\n  json: {\n    ...data,\n    notes: [\n      {\n        title: 'Lead Intelligence & Scoring',\n        body: note1,\n        timestamp: timestamp\n      },\n      {\n        title: 'Outreach Strategy',\n        body: note2,\n        timestamp: timestamp + 1000\n      },\n      {\n        title: 'Company Context',\n        body: note3,\n        timestamp: timestamp + 2000\n      }\n    ]\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2760, 180],
+      "id": "code-prep-notes",
+      "name": "📝 Prep 3 Notes"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.hubapi.com/crm/v3/objects/notes",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "hubSpotOAuth2Api",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"properties\": {\n    \"hs_note_body\": \"{{ $json.notes[0].body }}\",\n    \"hs_timestamp\": \"{{ $json.notes[0].timestamp }}\"\n  },\n  \"associations\": [\n    {\n      \"to\": { \"id\": \"{{ $json.hubspot_contact_id }}\" },\n      \"types\": [{ \"associationCategory\": \"HUBSPOT_DEFINED\", \"associationTypeId\": 202 }]\n    }\n  ]\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [3000, 100],
+      "id": "http-create-note-1",
+      "name": "📝 Note 1: Intelligence",
+      "credentials": {
+        "hubSpotOAuth2Api": {
+          "id": "lYfPDbXeRJyLf4I3",
+          "name": "HubSpot OAuth account"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.hubapi.com/crm/v3/objects/notes",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "hubSpotOAuth2Api",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"properties\": {\n    \"hs_note_body\": \"{{ $('📝 Prep 3 Notes').item.json.notes[1].body }}\",\n    \"hs_timestamp\": \"{{ $('📝 Prep 3 Notes').item.json.notes[1].timestamp }}\"\n  },\n  \"associations\": [\n    {\n      \"to\": { \"id\": \"{{ $('📝 Prep 3 Notes').item.json.hubspot_contact_id }}\" },\n      \"types\": [{ \"associationCategory\": \"HUBSPOT_DEFINED\", \"associationTypeId\": 202 }]\n    }\n  ]\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [3000, 200],
+      "id": "http-create-note-2",
+      "name": "📝 Note 2: Outreach",
+      "credentials": {
+        "hubSpotOAuth2Api": {
+          "id": "lYfPDbXeRJyLf4I3",
+          "name": "HubSpot OAuth account"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.hubapi.com/crm/v3/objects/notes",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "hubSpotOAuth2Api",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"properties\": {\n    \"hs_note_body\": \"{{ $('📝 Prep 3 Notes').item.json.notes[2].body }}\",\n    \"hs_timestamp\": \"{{ $('📝 Prep 3 Notes').item.json.notes[2].timestamp }}\"\n  },\n  \"associations\": [\n    {\n      \"to\": { \"id\": \"{{ $('📝 Prep 3 Notes').item.json.hubspot_contact_id }}\" },\n      \"types\": [{ \"associationCategory\": \"HUBSPOT_DEFINED\", \"associationTypeId\": 202 }]\n    }\n  ]\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [3000, 300],
+      "id": "http-create-note-3",
+      "name": "📝 Note 3: Company",
+      "credentials": {
+        "hubSpotOAuth2Api": {
+          "id": "lYfPDbXeRJyLf4I3",
+          "name": "HubSpot OAuth account"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {
+          "includeUnpaired": true
+        }
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [3240, 180],
+      "id": "merge-notes-created",
+      "name": "🤝 Merge Notes"
+    },
+    {
+      "parameters": {
         "operation": "executeQuery",
         "query": "-- Update enriched_leads with HubSpot sync status\nUPDATE public.enriched_leads \nSET \n  hubspot_contact_id = $2,\n  outreach_status = $3,\n  outreach_started_at = CASE WHEN $3 = 'synced' THEN NOW() ELSE outreach_started_at END,\n  updated_at = NOW()\nWHERE research_run_id = $1\nRETURNING id, research_run_id, hubspot_contact_id, outreach_status;",
         "options": {
-          "queryReplacement": "={{ [$json.research_run_id, $json.hubspot_contact_id, $json.outreach_status] }}"
+          "queryReplacement": "={{ [$('⚙️ Extract Final Contact ID').item.json.research_run_id, $('⚙️ Extract Final Contact ID').item.json.hubspot_contact_id, $('⚙️ Extract Final Contact ID').item.json.outreach_status] }}"
         }
       },
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
-      "position": [2520, 260],
+      "position": [3480, 260],
       "id": "db-update-enriched-leads",
       "name": "🗄️ Update enriched_leads",
       "credentials": {
@@ -360,7 +488,7 @@
       },
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
-      "position": [2760, 260],
+      "position": [3720, 260],
       "id": "db-track-sync",
       "name": "📊 Track in hubspot_syncs",
       "credentials": {
@@ -377,12 +505,12 @@
         "operation": "executeQuery",
         "query": "-- Upsert into hubspot_contacts tracking table\nINSERT INTO public.hubspot_contacts (\n  id,\n  email,\n  firstname,\n  lastname,\n  phone,\n  company,\n  jobtitle,\n  lifecyclestage,\n  hs_lead_status,\n  properties,\n  created_at,\n  updated_at,\n  last_synced_at,\n  archived\n)\nVALUES (\n  $1,\n  $2,\n  $3,\n  $4,\n  $5,\n  $6,\n  $7,\n  'lead',\n  'NEW',\n  $8::jsonb,\n  NOW(),\n  NOW(),\n  NOW(),\n  false\n)\nON CONFLICT (id) DO UPDATE SET\n  email = EXCLUDED.email,\n  firstname = EXCLUDED.firstname,\n  lastname = EXCLUDED.lastname,\n  phone = EXCLUDED.phone,\n  company = EXCLUDED.company,\n  jobtitle = EXCLUDED.jobtitle,\n  properties = EXCLUDED.properties,\n  updated_at = NOW(),\n  last_synced_at = NOW()\nRETURNING id;",
         "options": {
-          "queryReplacement": "={{ [$json.hubspot_contact_id, $json.contact_email, $('⚙️ Extract Final Contact ID').item.json.contact_firstname || 'Contact', $('⚙️ Extract Final Contact ID').item.json.contact_lastname || 'Unknown', $json.contact_phone, $('⚙️ Extract Final Contact ID').item.json.company_name, $('⚙️ Extract Final Contact ID').item.json.contact_title, JSON.stringify($('⚙️ Extract Final Contact ID').item.json.hubspot_properties || {})] }}"
+          "queryReplacement": "={{ [$('⚙️ Extract Final Contact ID').item.json.hubspot_contact_id, $('⚙️ Extract Final Contact ID').item.json.contact_email, $('🤝 Merge Search Results').item.json.contact_firstname || 'Contact', $('🤝 Merge Search Results').item.json.contact_lastname || 'Unknown', $('⚙️ Extract Final Contact ID').item.json.contact_phone, $('🤝 Merge Search Results').item.json.company_name, $('🤝 Merge Search Results').item.json.contact_title, JSON.stringify($('🤝 Merge Search Results').item.json.hubspot_properties || {})] }}"
         }
       },
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
-      "position": [3000, 260],
+      "position": [3960, 260],
       "id": "db-upsert-hubspot-contacts",
       "name": "📇 Upsert to hubspot_contacts",
       "credentials": {
@@ -400,7 +528,7 @@
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [3240, 260],
+      "position": [4200, 260],
       "id": "code-summary",
       "name": "📊 Sync Summary"
     },
@@ -532,6 +660,41 @@
       ]
     },
     "⚙️ Extract Final Contact ID": {
+      "main": [
+        [{ "node": "Should Create Notes?", "type": "main", "index": 0 }]
+      ]
+    },
+    "Should Create Notes?": {
+      "main": [
+        [{ "node": "📝 Prep 3 Notes", "type": "main", "index": 0 }],
+        [{ "node": "🗄️ Update enriched_leads", "type": "main", "index": 0 }]
+      ]
+    },
+    "📝 Prep 3 Notes": {
+      "main": [
+        [
+          { "node": "📝 Note 1: Intelligence", "type": "main", "index": 0 },
+          { "node": "📝 Note 2: Outreach", "type": "main", "index": 0 },
+          { "node": "📝 Note 3: Company", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "📝 Note 1: Intelligence": {
+      "main": [
+        [{ "node": "🤝 Merge Notes", "type": "main", "index": 0 }]
+      ]
+    },
+    "📝 Note 2: Outreach": {
+      "main": [
+        [{ "node": "🤝 Merge Notes", "type": "main", "index": 1 }]
+      ]
+    },
+    "📝 Note 3: Company": {
+      "main": [
+        [{ "node": "🤝 Merge Notes", "type": "main", "index": 2 }]
+      ]
+    },
+    "🤝 Merge Notes": {
       "main": [
         [{ "node": "🗄️ Update enriched_leads", "type": "main", "index": 0 }]
       ]

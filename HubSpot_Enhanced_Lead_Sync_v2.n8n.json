@@ -1,0 +1,727 @@
+{
+  "name": "🚀 HubSpot Enhanced Lead Sync v2 — Full Enrichment",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 5
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [-1200, 300],
+      "id": "schedule-trigger",
+      "name": "⏱️ Every 5 Minutes"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [-1200, 480],
+      "id": "manual-trigger",
+      "name": "When clicking 'Execute workflow'"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Get pending leads with full enrichment data + company context\nSELECT \n  el.*,\n  cc.context_jsonb,\n  cc.context_summary,\n  cc.last_research_run_id\nFROM public.enriched_leads el\nLEFT JOIN public.company_contexts cc ON el.company_id = cc.company_id\nWHERE el.outreach_ready = true \n  AND el.outreach_status = 'pending'\n  AND el.hubspot_contact_id IS NULL\nORDER BY el.dcs_score DESC\nLIMIT 20;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [-920, 380],
+      "id": "db-get-pending",
+      "name": "📥 Get Pending Enriched Leads",
+      "credentials": {
+        "postgres": {
+          "id": "xogKD739Qe4gqWBU",
+          "name": "Postgres account"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-has-leads",
+              "leftValue": "={{ $json.id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "exists"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [-680, 380],
+      "id": "if-has-leads",
+      "name": "Has Leads?"
+    },
+    {
+      "parameters": {
+        "jsCode": "// 📋 Prepare HubSpot Contact Payload - COMPREHENSIVE MAPPING\n// Maps ALL enrichment data including company_specialties, tech_stack, certifications, etc.\n\nconst lead = $json;\n\n// ========================================\n// HELPER FUNCTIONS\n// ========================================\n\nconst safeJson = (v) => {\n  if (!v) return null;\n  if (typeof v === 'object') return v;\n  try { return JSON.parse(v); } catch { return null; }\n};\n\nconst arrayToString = (arr, delimiter = '; ', max = 10) => {\n  if (!arr) return null;\n  if (typeof arr === 'string') {\n    try { arr = JSON.parse(arr); } catch { return arr; }\n  }\n  if (!Array.isArray(arr)) return null;\n  return arr.slice(0, max).join(delimiter);\n};\n\nconst truncate = (str, maxLen = 65536) => {\n  if (!str) return null;\n  return String(str).substring(0, maxLen);\n};\n\n// ========================================\n// EXTRACT & PARSE DATA\n// ========================================\n\nconst context_jsonb = safeJson(lead.context_jsonb) || {};\nconst dcs_breakdown = safeJson(lead.dcs_breakdown) || {};\nconst personalization_hooks = safeJson(lead.personalization_hooks) || [];\nconst pain_points = safeJson(lead.pain_points) || [];\nconst buying_signals = safeJson(lead.buying_signals) || [];\nconst red_flags = safeJson(lead.red_flags) || [];\nconst talking_points = safeJson(lead.talking_points) || [];\nconst company_specialties = safeJson(lead.company_specialties) || [];\n\n// Extract from ai_candidates if present\nconst ai_candidates = safeJson(lead.ai_candidates) || {};\nconst raw_input = ai_candidates.raw_input || {};\nconst tech_stack = raw_input.tech_stack || [];\nconst certifications = raw_input.certifications || [];\nconst hours_of_operation = raw_input.hours_of_operation || lead.hours_of_operation || null;\nconst years_in_business = raw_input.years_in_business || lead.years_in_business || null;\nconst priority_score = raw_input.priority_score || lead.priority_score || null;\n\n// Extract shop type from context\nconst shop_type = context_jsonb?.tech_and_metrics?.shop_type || null;\n\n// ========================================\n// BUILD HUBSPOT CONTACT PROPERTIES\n// ========================================\n\nconst properties = {};\n\n// --- STANDARD HUBSPOT FIELDS ---\nproperties.email = lead.contact_email || null;\nproperties.firstname = lead.contact_firstname || null;\nproperties.lastname = lead.contact_lastname || null;\nproperties.phone = lead.contact_phone || lead.company_phone || null;\nproperties.jobtitle = lead.contact_title || null;\nproperties.company = lead.company_name || null;\nproperties.website = lead.company_domain || null;\nproperties.address = lead.company_address || null;\nproperties.city = lead.company_city || null;\nproperties.state = lead.company_state || null;\nproperties.zip = lead.company_zip || null;\n\n// LinkedIn - use linkedinbio\nproperties.linkedinbio = lead.contact_linkedin || null;\n\n// Lead Status\nproperties.hs_lead_status = 'NEW';\nproperties.lifecyclestage = 'lead';\n\n// --- YOUR EXISTING CUSTOM PROPERTIES (✅ = exists in your HubSpot) ---\n\n// ✅ DCS Tier (you have dcs_tier as select)\nproperties.dcs_tier = lead.dcs_tier || null;\n\n// DCS Score (optional - will sync if you create it)\nif (lead.dcs_score) properties.dcs_score = String(lead.dcs_score);\n\n// ✅ Contact Tracking (you have both)\nproperties.contact_source = lead.contact_source || null;\nproperties.contact_confidence = lead.contact_confidence ? String(lead.contact_confidence) : null;\n\n// Company Size & Employees (using your existing fields)\nproperties.company_size = lead.company_size || null;\nproperties.numemployees = lead.company_employee_count ? String(lead.company_employee_count) : null;\nproperties.annualrevenue = lead.company_revenue || null;\n\n// Company year founded (optional - will sync if you create it)\nif (lead.company_year_founded) properties.company_year_founded = String(lead.company_year_founded);\n\n// ✅ Google Business Data (using your existing properties)\nproperties.asm_place_id = lead.google_place_id || null;  // Using asm_place_id for Google Place ID\nproperties.google_review_rating = lead.google_rating ? String(lead.google_rating) : null;\nproperties.google_reviews = lead.google_review_count ? String(lead.google_review_count) : null;\n\n// ✅ ASM Geo Market (YOU HAVE THIS!) - Format: \"City, ST\"\nif (lead.company_city && lead.company_state) {\n  properties.asm_geo_market = `${lead.company_city}, ${lead.company_state}`;\n}\n\n// Social Proof (optional properties)\nif (lead.yelp_rating) properties.yelp_rating = String(lead.yelp_rating);\nif (lead.facebook_url) properties.facebook_url = lead.facebook_url;\n\n// ✅ Company Specialties/Services → asm_services_summary (YOU HAVE THIS!)\nif (company_specialties && company_specialties.length > 0) {\n  properties.asm_services_summary = truncate(arrayToString(company_specialties, ', ', 20), 65536);\n} else if (context_jsonb?.tech_and_metrics?.services) {\n  // Fallback to services from context\n  properties.asm_services_summary = truncate(arrayToString(context_jsonb.tech_and_metrics.services, ', ', 20), 65536);\n}\n\n// Hours of Operation (optional - will sync if you create it)\nif (hours_of_operation) properties.hours_of_operation = truncate(hours_of_operation, 255);\n\n// Tech Stack (optional - will sync if you create it)\nif (tech_stack && tech_stack.length > 0) {\n  properties.tech_stack = truncate(arrayToString(tech_stack, ', ', 15), 65536);\n}\n\n// Certifications (optional - will sync if you create it)\nif (certifications && certifications.length > 0) {\n  properties.certifications = truncate(arrayToString(certifications, ', ', 10), 65536);\n} else if (context_jsonb?.tech_and_metrics?.certifications) {\n  properties.certifications = truncate(arrayToString(context_jsonb.tech_and_metrics.certifications, ', ', 10), 65536);\n}\n\n// Priority Score (optional - will sync if you create it)\nif (priority_score) properties.priority_score = String(priority_score);\n\n// Years in Business (optional - will sync if you create it)\nif (years_in_business && years_in_business > 0) {\n  properties.years_in_business = String(years_in_business);\n}\n\n// Shop Type (optional - will sync if you create it)\nif (shop_type) properties.shop_type = shop_type;\n\n// ✅ Hiring Signals (YOU HAVE active_job_postings and active_job_titles!)\nif (buying_signals && buying_signals.length > 0) {\n  // Check if buying signals contain hiring-related keywords\n  const hiringSignals = buying_signals.filter(s => \n    String(s).toLowerCase().includes('hiring') || \n    String(s).toLowerCase().includes('job') ||\n    String(s).toLowerCase().includes('technician') ||\n    String(s).toLowerCase().includes('recruiting')\n  );\n  \n  if (hiringSignals.length > 0) {\n    properties.active_job_postings = truncate(arrayToString(hiringSignals, '\\n', 50), 65536);\n    properties.asm_hiring_flag = 'true';  // Set hiring flag to true\n  }\n}\n\n// Extract job titles from ai_candidates if available\nif (raw_input?.active_job_posts && Array.isArray(raw_input.active_job_posts)) {\n  const jobTitles = raw_input.active_job_posts.map(p => p.title).filter(Boolean);\n  if (jobTitles.length > 0) {\n    properties.active_job_titles = truncate(jobTitles.join('\\n'), 65536);\n  }\n}\n\n// ✅ AI Intelligence (using your existing properties)\n// Use asm_ai_summary for main AI summary\nproperties.asm_ai_summary = truncate(lead.intel_summary, 65536);\n\n// Use research_briefing for context/briefing\nproperties.research_briefing = truncate(lead.context_summary || lead.intel_summary, 65536);\n\n// ✅ Your existing AI insight properties\nproperties.personalization_hooks = truncate(arrayToString(personalization_hooks), 65536);\nproperties.pain_points = truncate(arrayToString(pain_points), 65536);\nproperties.buying_signals = truncate(arrayToString(buying_signals), 65536);\nproperties.red_flags = truncate(arrayToString(red_flags), 65536);\n\n// Talking points (optional - will sync if you create it)\nif (talking_points && talking_points.length > 0) {\n  properties.talking_points = truncate(arrayToString(talking_points), 65536);\n}\n\n// ✅ Outreach Strategy (you have recommended_channel)\nproperties.recommended_channel = lead.recommended_channel || null;\n\n// Best time to contact (optional - will sync if you create it)\nif (lead.best_time_to_contact) properties.best_time_to_contact = lead.best_time_to_contact;\n\n// ✅ Source Tracking (you have research_run_id)\nproperties.research_run_id = lead.research_run_id || null;\n\n// Airtable ID (optional - will sync if you create it)\nif (lead.airtable_id) properties.airtable_id = lead.airtable_id;\n\n// Enriched date (optional - will sync if you create it)\nif (lead.enriched_at) properties.enriched_at = lead.enriched_at;\n\n// ========================================\n// CLEAN PROPERTIES (remove null/empty)\n// ========================================\n\nconst cleanProperties = Object.fromEntries(\n  Object.entries(properties).filter(([_, v]) => v !== null && v !== '')\n);\n\n// ========================================\n// VALIDATION\n// ========================================\n\nconst hasEmail = lead.contact_email && lead.contact_email.includes('@');\nconst hasPhone = !!(lead.contact_phone || lead.company_phone);\nconst hasName = !!(lead.contact_firstname || lead.contact_lastname);\n\nlet validation = {\n  can_proceed: hasEmail || hasPhone,\n  skip_reason: null,\n  search_strategy: null\n};\n\nif (!hasEmail && !hasPhone) {\n  validation.skip_reason = 'No email or phone available';\n  validation.can_proceed = false;\n} else if (hasEmail) {\n  validation.search_strategy = 'email';\n} else if (hasPhone) {\n  validation.search_strategy = 'phone';\n}\n\n// Name handling: If no name, use company name or \"Unknown\"\nif (!hasName && cleanProperties.email) {\n  // Try to extract from email\n  const emailParts = cleanProperties.email.split('@')[0].split('.');\n  cleanProperties.firstname = emailParts[0] ? emailParts[0].charAt(0).toUpperCase() + emailParts[0].slice(1) : 'Contact';\n  cleanProperties.lastname = emailParts[1] ? emailParts[1].charAt(0).toUpperCase() + emailParts[1].slice(1) : (lead.company_name || 'Unknown');\n} else if (!hasName) {\n  cleanProperties.firstname = 'Contact';\n  cleanProperties.lastname = lead.company_name || 'Unknown';\n}\n\nreturn [{\n  json: {\n    // Pass through original data\n    ...lead,\n    \n    // HubSpot payload\n    hubspot_properties: cleanProperties,\n    \n    // Validation\n    validation,\n    \n    // Search identifiers\n    search_email: lead.contact_email || null,\n    search_phone: lead.contact_phone || lead.company_phone || null\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-400, 300],
+      "id": "code-prep-payload",
+      "name": "📋 Prep HubSpot Payload"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-can-proceed",
+              "leftValue": "={{ $json.validation.can_proceed }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [-160, 300],
+      "id": "if-can-sync",
+      "name": "Can Sync?"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.hubapi.com/crm/v3/objects/contacts/search",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "hubSpotOAuth2Api",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"filterGroups\": [\n    {\n      \"filters\": [\n        {\n          \"propertyName\": \"email\",\n          \"operator\": \"EQ\",\n          \"value\": \"{{ $json.search_email }}\"\n        }\n      ]\n    }\n  ],\n  \"properties\": [\"email\", \"firstname\", \"lastname\", \"phone\"],\n  \"limit\": 1\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [120, 180],
+      "id": "http-search-email",
+      "name": "🔍 Search HubSpot by Email",
+      "credentials": {
+        "hubSpotOAuth2Api": {
+          "id": "lYfPDbXeRJyLf4I3",
+          "name": "HubSpot OAuth account"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract search result\nconst searchResult = $json;\nconst prepData = $('📋 Prep HubSpot Payload').item.json;\n\nlet foundContact = null;\nlet searchMethod = 'email';\n\n// Check if we found a contact\nif (searchResult?.results && searchResult.results.length > 0) {\n  foundContact = searchResult.results[0];\n}\n\nreturn [{\n  json: {\n    ...prepData,\n    found_contact: foundContact,\n    contact_exists: !!foundContact,\n    search_method: searchMethod,\n    hubspot_contact_id: foundContact?.id || null,\n    need_phone_search: !foundContact && !!prepData.search_phone\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [360, 180],
+      "id": "code-extract-email-result",
+      "name": "⚙️ Extract Email Result"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-need-phone",
+              "leftValue": "={{ $json.need_phone_search }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [600, 180],
+      "id": "if-need-phone-search",
+      "name": "Need Phone Search?"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.hubapi.com/crm/v3/objects/contacts/search",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "hubSpotOAuth2Api",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"filterGroups\": [\n    {\n      \"filters\": [\n        {\n          \"propertyName\": \"phone\",\n          \"operator\": \"EQ\",\n          \"value\": \"{{ $json.search_phone }}\"\n        }\n      ]\n    }\n  ],\n  \"properties\": [\"email\", \"firstname\", \"lastname\", \"phone\"],\n  \"limit\": 1\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [840, 100],
+      "id": "http-search-phone",
+      "name": "🔍 Search HubSpot by Phone",
+      "credentials": {
+        "hubSpotOAuth2Api": {
+          "id": "lYfPDbXeRJyLf4I3",
+          "name": "HubSpot OAuth account"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract phone search result\nconst searchResult = $json;\nconst prepData = $('⚙️ Extract Email Result').item.json;\n\nlet foundContact = null;\nlet searchMethod = 'phone';\n\nif (searchResult?.results && searchResult.results.length > 0) {\n  foundContact = searchResult.results[0];\n}\n\nreturn [{\n  json: {\n    ...prepData,\n    found_contact: foundContact,\n    contact_exists: !!foundContact,\n    search_method: searchMethod,\n    hubspot_contact_id: foundContact?.id || null,\n    need_phone_search: false\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1080, 100],
+      "id": "code-extract-phone-result",
+      "name": "⚙️ Extract Phone Result"
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {
+          "includeUnpaired": true
+        }
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [1320, 260],
+      "id": "merge-search-results",
+      "name": "🤝 Merge Search Results"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-exists",
+              "leftValue": "={{ $json.contact_exists }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1560, 260],
+      "id": "if-contact-exists",
+      "name": "Contact Exists?"
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://api.hubapi.com/crm/v3/objects/contacts/{{ $json.hubspot_contact_id }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "hubSpotOAuth2Api",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"properties\": {{ JSON.stringify($json.hubspot_properties) }}\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1800, 160],
+      "id": "http-update-contact",
+      "name": "📝 Update Contact in HubSpot",
+      "credentials": {
+        "hubSpotOAuth2Api": {
+          "id": "lYfPDbXeRJyLf4I3",
+          "name": "HubSpot OAuth account"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.hubapi.com/crm/v3/objects/contacts",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "hubSpotOAuth2Api",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"properties\": {{ JSON.stringify($json.hubspot_properties) }}\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1800, 360],
+      "id": "http-create-contact",
+      "name": "➕ Create Contact in HubSpot",
+      "credentials": {
+        "hubSpotOAuth2Api": {
+          "id": "lYfPDbXeRJyLf4I3",
+          "name": "HubSpot OAuth account"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {
+          "includeUnpaired": true
+        }
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [2040, 260],
+      "id": "merge-upsert-result",
+      "name": "🤝 Merge Upsert Result"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract final HubSpot contact ID and status\nconst hsResult = $json;\nconst prepData = $('🤝 Merge Search Results').item.json;\n\nlet success = false;\nlet hubspot_contact_id = null;\nlet sync_error = null;\nlet operation = prepData.contact_exists ? 'update' : 'create';\n\n// Check if the HubSpot API call was successful\nif (hsResult?.id) {\n  success = true;\n  hubspot_contact_id = hsResult.id;\n} else if (hsResult?.error) {\n  sync_error = hsResult.message || JSON.stringify(hsResult.error);\n} else if (!hsResult || Object.keys(hsResult).length === 0) {\n  sync_error = 'No response from HubSpot API';\n} else {\n  // Sometimes the result might have the ID in a different location\n  hubspot_contact_id = hsResult.properties?.hs_object_id || prepData.hubspot_contact_id;\n  success = !!hubspot_contact_id;\n}\n\nreturn [{\n  json: {\n    research_run_id: prepData.research_run_id,\n    company_id: prepData.company_id,\n    \n    // HubSpot IDs\n    hubspot_contact_id: hubspot_contact_id ? String(hubspot_contact_id) : null,\n    \n    // Sync status\n    sync_success: success,\n    sync_operation: operation,\n    sync_error: sync_error,\n    outreach_status: success ? 'synced' : 'sync_failed',\n    \n    // Contact info\n    contact_email: prepData.search_email,\n    contact_phone: prepData.search_phone,\n    \n    // DCS info\n    dcs_tier: prepData.dcs_tier,\n    dcs_score: prepData.dcs_score,\n    \n    // Full result for debugging\n    hubspot_response: hsResult\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2280, 260],
+      "id": "code-extract-final-id",
+      "name": "⚙️ Extract Final Contact ID"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-has-contact-id",
+              "leftValue": "={{ $json.hubspot_contact_id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "exists"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [2520, 260],
+      "id": "if-should-create-notes",
+      "name": "Should Create Notes?"
+    },
+    {
+      "parameters": {
+        "jsCode": "// 📝 Prepare 3 HubSpot Notes with Enrichment Intel\n\nconst data = $json;\nconst prepData = $('🤝 Merge Search Results').item.json;\n\n// Helper to safely parse arrays\nconst safeJson = (v) => {\n  if (!v) return [];\n  if (Array.isArray(v)) return v;\n  if (typeof v === 'string') {\n    try { return JSON.parse(v); } catch { return []; }\n  }\n  return [];\n};\n\nconst hubspot_contact_id = data.hubspot_contact_id;\nconst timestamp = new Date().getTime();\n\n// Extract data\nconst personalization_hooks = safeJson(prepData.personalization_hooks);\nconst pain_points = safeJson(prepData.pain_points);\nconst buying_signals = safeJson(prepData.buying_signals);\nconst red_flags = safeJson(prepData.red_flags);\nconst talking_points = safeJson(prepData.talking_points);\nconst company_specialties = safeJson(prepData.company_specialties);\n\n// ==========================================\n// NOTE 1: Lead Intelligence & Scoring\n// ==========================================\nconst note1_parts = [];\nnote1_parts.push('🎯 **LEAD INTELLIGENCE**\\n');\nnote1_parts.push(`**DCS Tier:** ${prepData.dcs_tier || 'Unknown'}`);\nif (prepData.dcs_score) note1_parts.push(`**DCS Score:** ${prepData.dcs_score}/100`);\nif (prepData.contact_confidence) note1_parts.push(`**Contact Confidence:** ${prepData.contact_confidence}%`);\n\nif (buying_signals.length > 0) {\n  note1_parts.push('\\n**🚀 BUYING SIGNALS:**');\n  buying_signals.slice(0, 5).forEach(signal => note1_parts.push(`• ${signal}`));\n}\n\nif (pain_points.length > 0) {\n  note1_parts.push('\\n**⚠️ PAIN POINTS:**');\n  pain_points.slice(0, 5).forEach(point => note1_parts.push(`• ${point}`));\n}\n\nif (red_flags.length > 0) {\n  note1_parts.push('\\n**🚩 RED FLAGS:**');\n  red_flags.slice(0, 3).forEach(flag => note1_parts.push(`• ${flag}`));\n}\n\nconst note1 = note1_parts.join('\\n');\n\n// ==========================================\n// NOTE 2: Outreach Strategy & Talking Points\n// ==========================================\nconst note2_parts = [];\nnote2_parts.push('📞 **OUTREACH STRATEGY**\\n');\n\nif (prepData.recommended_channel) {\n  note2_parts.push(`**Channel:** ${prepData.recommended_channel.toUpperCase()}`);\n}\n\nif (prepData.best_time_to_contact) {\n  note2_parts.push(`**Best Time:** ${prepData.best_time_to_contact}`);\n}\n\nif (prepData.hours_of_operation) {\n  note2_parts.push(`**Hours:** ${prepData.hours_of_operation}`);\n}\n\nif (personalization_hooks.length > 0) {\n  note2_parts.push('\\n**💡 PERSONALIZATION HOOKS:**');\n  personalization_hooks.slice(0, 3).forEach(hook => note2_parts.push(`• ${hook}`));\n}\n\nif (talking_points.length > 0) {\n  note2_parts.push('\\n**🗣️ TALKING POINTS:**');\n  talking_points.slice(0, 5).forEach(point => note2_parts.push(`• ${point}`));\n}\n\nconst note2 = note2_parts.join('\\n');\n\n// ==========================================\n// NOTE 3: Company Context & Services\n// ==========================================\nconst note3_parts = [];\nnote3_parts.push('🏢 **COMPANY CONTEXT**\\n');\n\nif (prepData.intel_summary) {\n  note3_parts.push(`**Summary:** ${prepData.intel_summary}`);\n}\n\nif (company_specialties.length > 0) {\n  note3_parts.push('\\n**Services Offered:**');\n  company_specialties.slice(0, 10).forEach(service => note3_parts.push(`• ${service}`));\n}\n\nif (prepData.google_rating) {\n  note3_parts.push(`\\n**Google Rating:** ⭐ ${prepData.google_rating}/5 (${prepData.google_review_count || 0} reviews)`);\n}\n\nif (prepData.company_employee_count) {\n  note3_parts.push(`**Team Size:** ~${prepData.company_employee_count} employees`);\n}\n\nconst note3 = note3_parts.join('\\n');\n\n// Return all 3 notes\nreturn [{\n  json: {\n    ...data,\n    notes: [\n      {\n        title: 'Lead Intelligence & Scoring',\n        body: note1,\n        timestamp: timestamp\n      },\n      {\n        title: 'Outreach Strategy',\n        body: note2,\n        timestamp: timestamp + 1000\n      },\n      {\n        title: 'Company Context',\n        body: note3,\n        timestamp: timestamp + 2000\n      }\n    ]\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2760, 180],
+      "id": "code-prep-notes",
+      "name": "📝 Prep 3 Notes"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.hubapi.com/crm/v3/objects/notes",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "hubSpotOAuth2Api",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"properties\": {\n    \"hs_note_body\": \"{{ $json.notes[0].body }}\",\n    \"hs_timestamp\": \"{{ $json.notes[0].timestamp }}\"\n  },\n  \"associations\": [\n    {\n      \"to\": { \"id\": \"{{ $json.hubspot_contact_id }}\" },\n      \"types\": [{ \"associationCategory\": \"HUBSPOT_DEFINED\", \"associationTypeId\": 202 }]\n    }\n  ]\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [3000, 100],
+      "id": "http-create-note-1",
+      "name": "📝 Note 1: Intelligence",
+      "credentials": {
+        "hubSpotOAuth2Api": {
+          "id": "lYfPDbXeRJyLf4I3",
+          "name": "HubSpot OAuth account"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.hubapi.com/crm/v3/objects/notes",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "hubSpotOAuth2Api",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"properties\": {\n    \"hs_note_body\": \"{{ $('📝 Prep 3 Notes').item.json.notes[1].body }}\",\n    \"hs_timestamp\": \"{{ $('📝 Prep 3 Notes').item.json.notes[1].timestamp }}\"\n  },\n  \"associations\": [\n    {\n      \"to\": { \"id\": \"{{ $('📝 Prep 3 Notes').item.json.hubspot_contact_id }}\" },\n      \"types\": [{ \"associationCategory\": \"HUBSPOT_DEFINED\", \"associationTypeId\": 202 }]\n    }\n  ]\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [3000, 200],
+      "id": "http-create-note-2",
+      "name": "📝 Note 2: Outreach",
+      "credentials": {
+        "hubSpotOAuth2Api": {
+          "id": "lYfPDbXeRJyLf4I3",
+          "name": "HubSpot OAuth account"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.hubapi.com/crm/v3/objects/notes",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "hubSpotOAuth2Api",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"properties\": {\n    \"hs_note_body\": \"{{ $('📝 Prep 3 Notes').item.json.notes[2].body }}\",\n    \"hs_timestamp\": \"{{ $('📝 Prep 3 Notes').item.json.notes[2].timestamp }}\"\n  },\n  \"associations\": [\n    {\n      \"to\": { \"id\": \"{{ $('📝 Prep 3 Notes').item.json.hubspot_contact_id }}\" },\n      \"types\": [{ \"associationCategory\": \"HUBSPOT_DEFINED\", \"associationTypeId\": 202 }]\n    }\n  ]\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [3000, 300],
+      "id": "http-create-note-3",
+      "name": "📝 Note 3: Company",
+      "credentials": {
+        "hubSpotOAuth2Api": {
+          "id": "lYfPDbXeRJyLf4I3",
+          "name": "HubSpot OAuth account"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {
+          "includeUnpaired": true
+        }
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [3240, 180],
+      "id": "merge-notes-created",
+      "name": "🤝 Merge Notes"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Update enriched_leads with HubSpot sync status\nUPDATE public.enriched_leads \nSET \n  hubspot_contact_id = $2,\n  outreach_status = $3,\n  outreach_started_at = CASE WHEN $3 = 'synced' THEN NOW() ELSE outreach_started_at END,\n  updated_at = NOW()\nWHERE research_run_id = $1\nRETURNING id, research_run_id, hubspot_contact_id, outreach_status;",
+        "options": {
+          "queryReplacement": "={{ [$('⚙️ Extract Final Contact ID').item.json.research_run_id, $('⚙️ Extract Final Contact ID').item.json.hubspot_contact_id, $('⚙️ Extract Final Contact ID').item.json.outreach_status] }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [3480, 260],
+      "id": "db-update-enriched-leads",
+      "name": "🗄️ Update enriched_leads",
+      "credentials": {
+        "postgres": {
+          "id": "xogKD739Qe4gqWBU",
+          "name": "Postgres account"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Track sync in hubspot_syncs table\nINSERT INTO public.hubspot_syncs (\n  company_id,\n  research_run_id,\n  hubspot_contact_id,\n  sync_status,\n  sync_error,\n  synced_at\n)\nVALUES (\n  $1::uuid,\n  $2,\n  $3,\n  $4,\n  $5,\n  CASE WHEN $4 = 'completed' THEN NOW() ELSE NULL END\n)\nON CONFLICT (id) DO UPDATE SET\n  hubspot_contact_id = EXCLUDED.hubspot_contact_id,\n  sync_status = EXCLUDED.sync_status,\n  sync_error = EXCLUDED.sync_error,\n  synced_at = EXCLUDED.synced_at\nRETURNING *;",
+        "options": {
+          "queryReplacement": "={{ [$json.company_id, $json.research_run_id, $json.hubspot_contact_id, $json.sync_success ? 'completed' : 'failed', $json.sync_error] }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [3720, 260],
+      "id": "db-track-sync",
+      "name": "📊 Track in hubspot_syncs",
+      "credentials": {
+        "postgres": {
+          "id": "xogKD739Qe4gqWBU",
+          "name": "Postgres account"
+        }
+      },
+      "alwaysOutputData": true,
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Upsert into hubspot_contacts tracking table\nINSERT INTO public.hubspot_contacts (\n  id,\n  email,\n  firstname,\n  lastname,\n  phone,\n  company,\n  jobtitle,\n  lifecyclestage,\n  hs_lead_status,\n  properties,\n  created_at,\n  updated_at,\n  last_synced_at,\n  archived\n)\nVALUES (\n  $1,\n  $2,\n  $3,\n  $4,\n  $5,\n  $6,\n  $7,\n  'lead',\n  'NEW',\n  $8::jsonb,\n  NOW(),\n  NOW(),\n  NOW(),\n  false\n)\nON CONFLICT (id) DO UPDATE SET\n  email = EXCLUDED.email,\n  firstname = EXCLUDED.firstname,\n  lastname = EXCLUDED.lastname,\n  phone = EXCLUDED.phone,\n  company = EXCLUDED.company,\n  jobtitle = EXCLUDED.jobtitle,\n  properties = EXCLUDED.properties,\n  updated_at = NOW(),\n  last_synced_at = NOW()\nRETURNING id;",
+        "options": {
+          "queryReplacement": "={{ [$('⚙️ Extract Final Contact ID').item.json.hubspot_contact_id, $('⚙️ Extract Final Contact ID').item.json.contact_email, $('🤝 Merge Search Results').item.json.contact_firstname || 'Contact', $('🤝 Merge Search Results').item.json.contact_lastname || 'Unknown', $('⚙️ Extract Final Contact ID').item.json.contact_phone, $('🤝 Merge Search Results').item.json.company_name, $('🤝 Merge Search Results').item.json.contact_title, JSON.stringify($('🤝 Merge Search Results').item.json.hubspot_properties || {})] }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [3960, 260],
+      "id": "db-upsert-hubspot-contacts",
+      "name": "📇 Upsert to hubspot_contacts",
+      "credentials": {
+        "postgres": {
+          "id": "xogKD739Qe4gqWBU",
+          "name": "Postgres account"
+        }
+      },
+      "alwaysOutputData": true,
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// Aggregate sync results\nconst items = $input.all();\n\nlet synced = 0;\nlet failed = 0;\nlet updated = 0;\nlet created = 0;\n\nfor (const item of items) {\n  const op = item.json.sync_operation;\n  const success = item.json.sync_success;\n  \n  if (success) {\n    synced++;\n    if (op === 'update') updated++;\n    if (op === 'create') created++;\n  } else {\n    failed++;\n  }\n}\n\nconst summary = `HubSpot Sync Complete: ${synced} synced (${created} created, ${updated} updated), ${failed} failed`;\n\nconsole.log(summary);\n\nreturn [{\n  json: {\n    success: true,\n    total_processed: items.length,\n    synced,\n    created,\n    updated,\n    failed,\n    summary\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [4200, 260],
+      "id": "code-summary",
+      "name": "📊 Sync Summary"
+    },
+    {
+      "parameters": {
+        "jsCode": "// No leads to sync\nreturn [{\n  json: {\n    success: true,\n    message: 'No pending leads to sync to HubSpot',\n    total_processed: 0\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-400, 500],
+      "id": "code-no-leads",
+      "name": "📭 No Leads"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Lead cannot be synced\nconst lead = $json;\n\nreturn [{\n  json: {\n    research_run_id: lead.research_run_id,\n    company_id: lead.company_id,\n    skip_reason: lead.validation.skip_reason,\n    outreach_status: 'sync_skipped'\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-160, 420],
+      "id": "code-skip-lead",
+      "name": "⏭️ Skip Lead"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Mark lead as skipped\nUPDATE public.enriched_leads \nSET \n  outreach_status = 'sync_skipped',\n  updated_at = NOW()\nWHERE research_run_id = $1;",
+        "options": {
+          "queryReplacement": "={{ [$json.research_run_id] }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [80, 420],
+      "id": "db-mark-skipped",
+      "name": "🗄️ Mark as Skipped",
+      "credentials": {
+        "postgres": {
+          "id": "xogKD739Qe4gqWBU",
+          "name": "Postgres account"
+        }
+      },
+      "alwaysOutputData": true
+    }
+  ],
+  "connections": {
+    "⏱️ Every 5 Minutes": {
+      "main": [
+        [{ "node": "📥 Get Pending Enriched Leads", "type": "main", "index": 0 }]
+      ]
+    },
+    "When clicking 'Execute workflow'": {
+      "main": [
+        [{ "node": "📥 Get Pending Enriched Leads", "type": "main", "index": 0 }]
+      ]
+    },
+    "📥 Get Pending Enriched Leads": {
+      "main": [
+        [{ "node": "Has Leads?", "type": "main", "index": 0 }]
+      ]
+    },
+    "Has Leads?": {
+      "main": [
+        [{ "node": "📋 Prep HubSpot Payload", "type": "main", "index": 0 }],
+        [{ "node": "📭 No Leads", "type": "main", "index": 0 }]
+      ]
+    },
+    "📋 Prep HubSpot Payload": {
+      "main": [
+        [{ "node": "Can Sync?", "type": "main", "index": 0 }]
+      ]
+    },
+    "Can Sync?": {
+      "main": [
+        [{ "node": "🔍 Search HubSpot by Email", "type": "main", "index": 0 }],
+        [{ "node": "⏭️ Skip Lead", "type": "main", "index": 0 }]
+      ]
+    },
+    "🔍 Search HubSpot by Email": {
+      "main": [
+        [{ "node": "⚙️ Extract Email Result", "type": "main", "index": 0 }]
+      ]
+    },
+    "⚙️ Extract Email Result": {
+      "main": [
+        [{ "node": "Need Phone Search?", "type": "main", "index": 0 }]
+      ]
+    },
+    "Need Phone Search?": {
+      "main": [
+        [{ "node": "🔍 Search HubSpot by Phone", "type": "main", "index": 0 }],
+        [{ "node": "🤝 Merge Search Results", "type": "main", "index": 0 }]
+      ]
+    },
+    "🔍 Search HubSpot by Phone": {
+      "main": [
+        [{ "node": "⚙️ Extract Phone Result", "type": "main", "index": 0 }]
+      ]
+    },
+    "⚙️ Extract Phone Result": {
+      "main": [
+        [{ "node": "🤝 Merge Search Results", "type": "main", "index": 1 }]
+      ]
+    },
+    "🤝 Merge Search Results": {
+      "main": [
+        [{ "node": "Contact Exists?", "type": "main", "index": 0 }]
+      ]
+    },
+    "Contact Exists?": {
+      "main": [
+        [{ "node": "📝 Update Contact in HubSpot", "type": "main", "index": 0 }],
+        [{ "node": "➕ Create Contact in HubSpot", "type": "main", "index": 0 }]
+      ]
+    },
+    "📝 Update Contact in HubSpot": {
+      "main": [
+        [{ "node": "🤝 Merge Upsert Result", "type": "main", "index": 0 }]
+      ]
+    },
+    "➕ Create Contact in HubSpot": {
+      "main": [
+        [{ "node": "🤝 Merge Upsert Result", "type": "main", "index": 1 }]
+      ]
+    },
+    "🤝 Merge Upsert Result": {
+      "main": [
+        [{ "node": "⚙️ Extract Final Contact ID", "type": "main", "index": 0 }]
+      ]
+    },
+    "⚙️ Extract Final Contact ID": {
+      "main": [
+        [{ "node": "Should Create Notes?", "type": "main", "index": 0 }]
+      ]
+    },
+    "Should Create Notes?": {
+      "main": [
+        [{ "node": "📝 Prep 3 Notes", "type": "main", "index": 0 }],
+        [{ "node": "🗄️ Update enriched_leads", "type": "main", "index": 0 }]
+      ]
+    },
+    "📝 Prep 3 Notes": {
+      "main": [
+        [
+          { "node": "📝 Note 1: Intelligence", "type": "main", "index": 0 },
+          { "node": "📝 Note 2: Outreach", "type": "main", "index": 0 },
+          { "node": "📝 Note 3: Company", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "📝 Note 1: Intelligence": {
+      "main": [
+        [{ "node": "🤝 Merge Notes", "type": "main", "index": 0 }]
+      ]
+    },
+    "📝 Note 2: Outreach": {
+      "main": [
+        [{ "node": "🤝 Merge Notes", "type": "main", "index": 1 }]
+      ]
+    },
+    "📝 Note 3: Company": {
+      "main": [
+        [{ "node": "🤝 Merge Notes", "type": "main", "index": 2 }]
+      ]
+    },
+    "🤝 Merge Notes": {
+      "main": [
+        [{ "node": "🗄️ Update enriched_leads", "type": "main", "index": 0 }]
+      ]
+    },
+    "🗄️ Update enriched_leads": {
+      "main": [
+        [{ "node": "📊 Track in hubspot_syncs", "type": "main", "index": 0 }]
+      ]
+    },
+    "📊 Track in hubspot_syncs": {
+      "main": [
+        [{ "node": "📇 Upsert to hubspot_contacts", "type": "main", "index": 0 }]
+      ]
+    },
+    "📇 Upsert to hubspot_contacts": {
+      "main": [
+        [{ "node": "📊 Sync Summary", "type": "main", "index": 0 }]
+      ]
+    },
+    "⏭️ Skip Lead": {
+      "main": [
+        [{ "node": "🗄️ Mark as Skipped", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "pinData": {},
+  "meta": {
+    "instanceId": "2d82e0d27c2a88970c7ba9693b6bad225f1d31f9cf0d392d33dd9cabf99f185f"
+  }
+}

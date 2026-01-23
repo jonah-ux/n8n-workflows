@@ -1,0 +1,205 @@
+{
+  "name": "🧠 AI Chat Analysis — Extract Lessons & Hallucinations",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [-200, 300],
+      "id": "manual-trigger",
+      "name": "Manual Trigger"
+    },
+    {
+      "parameters": {
+        "jsCode": "// 📥 Input form for pasting chat logs\n// This collects the raw chat transcript and metadata\n\nreturn [{\n  json: {\n    // Paste your full chat here\n    chat_transcript: ``,\n    \n    // Metadata\n    ai_assistant: 'ChatGPT',  // or 'Gemini', 'Claude', etc.\n    topic: 'n8n workflows',  // or 'HubSpot', 'Postgres', etc.\n    date: new Date().toISOString().split('T')[0],\n    \n    // Optional context\n    what_i_was_trying_to_do: '',\n    final_outcome: ''  // 'success', 'partial', 'failed'\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [40, 300],
+      "id": "code-input-form",
+      "name": "📝 Input Chat Data"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-has-chat",
+              "leftValue": "={{ $json.chat_transcript }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "isNotEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [280, 300],
+      "id": "if-has-content",
+      "name": "Has Chat?"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "prep-data",
+              "name": "analysis_id",
+              "value": "={{ 'chat-analysis-' + $now.format('yyyy-MM-dd-HHmmss') }}",
+              "type": "string"
+            },
+            {
+              "id": "prep-word-count",
+              "name": "word_count",
+              "value": "={{ $json.chat_transcript.split(' ').length }}",
+              "type": "number"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [520, 220],
+      "id": "set-metadata",
+      "name": "📊 Set Metadata"
+    },
+    {
+      "parameters": {
+        "options": {
+          "systemMessage": "You are an expert AI behavior analyst specializing in identifying AI hallucinations, errors, and lessons learned from technical conversations. Your job is to analyze chat transcripts between users and AI assistants (like ChatGPT, Gemini, Claude) where they're working on technical problems.\n\nYou must extract:\n1. **Hallucinations** - Times when the AI gave incorrect/non-existent information\n2. **Wrong Approaches** - When AI suggested something that didn't work\n3. **Corrections** - What the user had to do differently to fix it\n4. **Patterns** - Recurring mistakes the AI makes\n5. **Lessons** - Actionable knowledge for future AI interactions\n\nBe specific, technical, and cite examples from the chat."
+        },
+        "promptType": "define",
+        "text": "=# AI Chat Analysis Task\n\nAnalyze this technical conversation between a user and {{ $('📝 Input Chat Data').item.json.ai_assistant }} about {{ $('📝 Input Chat Data').item.json.topic }}.\n\n## Chat Transcript:\n```\n{{ $('📝 Input Chat Data').item.json.chat_transcript }}\n```\n\n## Context:\n- **What user was trying to do:** {{ $('📝 Input Chat Data').item.json.what_i_was_trying_to_do || 'Not specified' }}\n- **Final outcome:** {{ $('📝 Input Chat Data').item.json.final_outcome || 'Not specified' }}\n\n---\n\n# Your Analysis Must Include:\n\n## 1. AI Hallucinations & Incorrect Information\nIdentify specific instances where the AI:\n- Invented features, functions, or capabilities that don't exist\n- Gave wrong syntax or code examples\n- Referenced non-existent documentation or APIs\n- Made up node names, properties, or settings in n8n/HubSpot\n\nFormat:\n```json\n{\n  \"hallucinations\": [\n    {\n      \"what_ai_said\": \"exact quote\",\n      \"why_wrong\": \"explanation of why this is incorrect\",\n      \"actual_truth\": \"what's actually correct\",\n      \"severity\": \"critical|high|medium|low\",\n      \"category\": \"feature|syntax|api|documentation|other\"\n    }\n  ]\n}\n```\n\n## 2. Wrong Approaches & Failed Solutions\nTimes when AI suggested something that didn't work:\n```json\n{\n  \"failed_approaches\": [\n    {\n      \"ai_suggestion\": \"what AI recommended\",\n      \"why_failed\": \"why it didn't work\",\n      \"what_worked_instead\": \"the actual solution\",\n      \"time_wasted\": \"estimate in minutes\"\n    }\n  ]\n}\n```\n\n## 3. User Corrections & Workarounds\nWhat the user had to figure out themselves:\n```json\n{\n  \"user_corrections\": [\n    {\n      \"problem\": \"the issue user faced\",\n      \"ai_couldnt_solve\": \"what AI failed to help with\",\n      \"user_solution\": \"how user actually solved it\",\n      \"lesson\": \"what AI should know for next time\"\n    }\n  ]\n}\n```\n\n## 4. Recurring Patterns\nCommon mistakes this AI makes:\n```json\n{\n  \"patterns\": [\n    {\n      \"pattern\": \"description of recurring error\",\n      \"frequency\": \"how often it happened in this chat\",\n      \"impact\": \"how much it slows down work\",\n      \"recommendation\": \"how to avoid this in future\"\n    }\n  ]\n}\n```\n\n## 5. Actionable Lessons for Future AI\nSpecific knowledge to give AI next time:\n```json\n{\n  \"lessons\": [\n    {\n      \"topic\": \"specific area (e.g., n8n HTTP nodes, HubSpot API)\",\n      \"lesson\": \"clear, specific instruction\",\n      \"example\": \"concrete example showing correct approach\",\n      \"priority\": \"critical|high|medium|low\"\n    }\n  ]\n}\n```\n\n## 6. Summary Stats\n```json\n{\n  \"summary\": {\n    \"total_hallucinations\": 0,\n    \"total_failed_approaches\": 0,\n    \"total_corrections\": 0,\n    \"overall_ai_accuracy\": \"0-100%\",\n    \"most_problematic_area\": \"what AI struggled with most\",\n    \"best_contribution\": \"what AI actually helped with\"\n  }\n}\n```\n\n---\n\n**Return ONLY valid JSON** with all sections filled out. Be thorough and specific."
+      },
+      "type": "n8n-nodes-base.openAi",
+      "typeVersion": 1.4,
+      "position": [760, 220],
+      "id": "openai-analyze",
+      "name": "🤖 AI Analysis (GPT-4)",
+      "credentials": {
+        "openAiApi": {
+          "id": "placeholder",
+          "name": "OpenAI account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// 🧹 Parse and structure the AI analysis\n\nconst analysisText = $json.message?.content || $json.text || '';\nconst metadata = $('📝 Input Chat Data').item.json;\n\nlet analysis = {};\n\ntry {\n  // Try to parse JSON response\n  const jsonMatch = analysisText.match(/\\{[\\s\\S]*\\}/);\n  if (jsonMatch) {\n    analysis = JSON.parse(jsonMatch[0]);\n  }\n} catch (error) {\n  console.error('Failed to parse AI response as JSON:', error);\n  analysis = {\n    error: 'Failed to parse analysis',\n    raw_response: analysisText\n  };\n}\n\n// Build structured output\nreturn [{\n  json: {\n    analysis_id: $('📊 Set Metadata').item.json.analysis_id,\n    analyzed_at: new Date().toISOString(),\n    \n    // Metadata\n    metadata: {\n      ai_assistant: metadata.ai_assistant,\n      topic: metadata.topic,\n      date: metadata.date,\n      word_count: $('📊 Set Metadata').item.json.word_count,\n      what_trying_to_do: metadata.what_i_was_trying_to_do,\n      final_outcome: metadata.final_outcome\n    },\n    \n    // Analysis results\n    hallucinations: analysis.hallucinations || [],\n    failed_approaches: analysis.failed_approaches || [],\n    user_corrections: analysis.user_corrections || [],\n    patterns: analysis.patterns || [],\n    lessons: analysis.lessons || [],\n    summary: analysis.summary || {},\n    \n    // Counts for quick reference\n    counts: {\n      hallucinations: (analysis.hallucinations || []).length,\n      failed_approaches: (analysis.failed_approaches || []).length,\n      corrections: (analysis.user_corrections || []).length,\n      patterns: (analysis.patterns || []).length,\n      lessons: (analysis.lessons || []).length\n    },\n    \n    // Original chat (for reference)\n    original_chat: metadata.chat_transcript,\n    \n    // Full analysis object\n    full_analysis: analysis\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1000, 220],
+      "id": "code-parse-analysis",
+      "name": "🧹 Parse Analysis"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Store the chat analysis in Postgres\nINSERT INTO public.ai_chat_analysis (\n  analysis_id,\n  ai_assistant,\n  topic,\n  chat_date,\n  analyzed_at,\n  word_count,\n  what_trying_to_do,\n  final_outcome,\n  \n  -- Analysis results\n  hallucinations,\n  failed_approaches,\n  user_corrections,\n  patterns,\n  lessons,\n  summary,\n  \n  -- Counts\n  hallucination_count,\n  failed_approach_count,\n  correction_count,\n  pattern_count,\n  lesson_count,\n  \n  -- Original data\n  original_chat,\n  full_analysis_json,\n  \n  created_at\n)\nVALUES (\n  $1, $2, $3, $4, $5, $6, $7, $8,\n  $9::jsonb, $10::jsonb, $11::jsonb, $12::jsonb, $13::jsonb, $14::jsonb,\n  $15, $16, $17, $18, $19,\n  $20, $21::jsonb,\n  NOW()\n)\nRETURNING analysis_id, hallucination_count, lesson_count;",
+        "options": {
+          "queryReplacement": "={{ [\n  $json.analysis_id,\n  $json.metadata.ai_assistant,\n  $json.metadata.topic,\n  $json.metadata.date,\n  $json.analyzed_at,\n  $json.metadata.word_count,\n  $json.metadata.what_trying_to_do,\n  $json.metadata.final_outcome,\n  JSON.stringify($json.hallucinations),\n  JSON.stringify($json.failed_approaches),\n  JSON.stringify($json.user_corrections),\n  JSON.stringify($json.patterns),\n  JSON.stringify($json.lessons),\n  JSON.stringify($json.summary),\n  $json.counts.hallucinations,\n  $json.counts.failed_approaches,\n  $json.counts.corrections,\n  $json.counts.patterns,\n  $json.counts.lessons,\n  $json.original_chat,\n  JSON.stringify($json.full_analysis)\n] }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [1240, 220],
+      "id": "db-store-analysis",
+      "name": "💾 Store in Database",
+      "credentials": {
+        "postgres": {
+          "id": "xogKD739Qe4gqWBU",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// 📄 Generate Markdown Report\n\nconst data = $json;\n\n// Helper to format lessons as markdown\nconst formatLessons = (lessons) => {\n  if (!lessons || lessons.length === 0) return 'None identified.';\n  return lessons.map((l, i) => \n    `### ${i + 1}. ${l.topic}\\n**Priority:** ${l.priority}\\n\\n${l.lesson}\\n\\n**Example:**\\n\\`\\`\\`\\n${l.example}\\n\\`\\`\\`\\n`\n  ).join('\\n---\\n\\n');\n};\n\n// Helper to format hallucinations\nconst formatHallucinations = (hallucinations) => {\n  if (!hallucinations || hallucinations.length === 0) return 'None detected.';\n  return hallucinations.map((h, i) => \n    `### ${i + 1}. ${h.category} - ${h.severity}\\n**What AI Said:** \"${h.what_ai_said}\"\\n\\n**Why Wrong:** ${h.why_wrong}\\n\\n**Actual Truth:** ${h.actual_truth}\\n`\n  ).join('\\n---\\n\\n');\n};\n\n// Helper to format corrections\nconst formatCorrections = (corrections) => {\n  if (!corrections || corrections.length === 0) return 'None needed.';\n  return corrections.map((c, i) => \n    `### ${i + 1}. ${c.problem}\\n**AI Failed To:** ${c.ai_couldnt_solve}\\n\\n**User Solution:** ${c.user_solution}\\n\\n**Lesson:** ${c.lesson}\\n`\n  ).join('\\n---\\n\\n');\n};\n\nconst markdown = `# AI Chat Analysis Report\n\n**Analysis ID:** ${data.analysis_id}  \n**Date:** ${data.metadata.date}  \n**AI Assistant:** ${data.metadata.ai_assistant}  \n**Topic:** ${data.metadata.topic}  \n**Analyzed:** ${new Date(data.analyzed_at).toLocaleString()}  \n\n---\n\n## 📊 Summary Statistics\n\n- **Total Hallucinations:** ${data.counts.hallucinations}\n- **Failed Approaches:** ${data.counts.failed_approaches}\n- **User Corrections:** ${data.counts.corrections}\n- **Patterns Identified:** ${data.counts.patterns}\n- **Lessons Extracted:** ${data.counts.lessons}\n- **Chat Length:** ${data.metadata.word_count} words\n- **AI Accuracy:** ${data.summary.overall_ai_accuracy || 'N/A'}\n\n**Most Problematic Area:** ${data.summary.most_problematic_area || 'N/A'}  \n**Best Contribution:** ${data.summary.best_contribution || 'N/A'}  \n\n---\n\n## 🚨 Hallucinations & Incorrect Information\n\n${formatHallucinations(data.hallucinations)}\n\n---\n\n## ❌ Failed Approaches\n\n${data.failed_approaches && data.failed_approaches.length > 0 ? data.failed_approaches.map((f, i) => \n  `### ${i + 1}. ${f.ai_suggestion}\\n**Why Failed:** ${f.why_failed}\\n\\n**What Worked:** ${f.what_worked_instead}\\n\\n**Time Wasted:** ~${f.time_wasted} minutes\\n`\n).join('\\n---\\n\\n') : 'None identified.'}\n\n---\n\n## ✅ User Corrections\n\n${formatCorrections(data.user_corrections)}\n\n---\n\n## 🔄 Recurring Patterns\n\n${data.patterns && data.patterns.length > 0 ? data.patterns.map((p, i) => \n  `### ${i + 1}. ${p.pattern}\\n**Frequency:** ${p.frequency}\\n**Impact:** ${p.impact}\\n**Recommendation:** ${p.recommendation}\\n`\n).join('\\n---\\n\\n') : 'None identified.'}\n\n---\n\n## 📚 Actionable Lessons for Future AI\n\n${formatLessons(data.lessons)}\n\n---\n\n## 📝 Context\n\n**What User Was Trying To Do:**  \n${data.metadata.what_trying_to_do || 'Not specified'}\n\n**Final Outcome:**  \n${data.metadata.final_outcome || 'Not specified'}\n\n---\n\n## 💡 Recommendations\n\n### For Future AI Interactions:\n${data.lessons && data.lessons.filter(l => l.priority === 'critical' || l.priority === 'high').map(l => `- ${l.lesson}`).join('\\n') || 'None'}\n\n### Common Mistakes to Avoid:\n${data.patterns && data.patterns.map(p => `- ${p.pattern}`).join('\\n') || 'None'}\n\n---\n\n*Generated by AI Chat Analysis Workflow*  \n*Analysis ID: ${data.analysis_id}*\n`;\n\nreturn [{\n  json: {\n    ...data,\n    markdown_report: markdown,\n    report_filename: `ai-chat-analysis-${data.analysis_id}.md`\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1480, 220],
+      "id": "code-generate-markdown",
+      "name": "📄 Generate Report"
+    },
+    {
+      "parameters": {
+        "jsCode": "// 📊 Generate summary output\n\nconst data = $json;\n\nconst summary = `\n✅ Chat Analysis Complete!\n\n📊 Results:\n  • ${data.counts.hallucinations} hallucinations detected\n  • ${data.counts.failed_approaches} failed approaches\n  • ${data.counts.corrections} user corrections\n  • ${data.counts.patterns} patterns identified\n  • ${data.counts.lessons} lessons extracted\n\n💾 Stored in database: ${data.analysis_id}\n📄 Report generated: ${data.report_filename}\n\n🎯 Top Priority Lessons:\n${data.lessons.filter(l => l.priority === 'critical' || l.priority === 'high').map(l => `  • ${l.topic}`).join('\\n') || '  (none)'}\n`;\n\nconsole.log(summary);\n\nreturn [{\n  json: {\n    success: true,\n    analysis_id: data.analysis_id,\n    summary: summary,\n    stats: data.counts,\n    report_file: data.report_filename,\n    markdown: data.markdown_report\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1720, 220],
+      "id": "code-output-summary",
+      "name": "📊 Output Summary"
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{\n  json: {\n    error: 'No chat transcript provided',\n    message: 'Please paste a chat transcript in the Input Chat Data node'\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [280, 420],
+      "id": "code-no-content",
+      "name": "❌ No Content"
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [{ "node": "📝 Input Chat Data", "type": "main", "index": 0 }]
+      ]
+    },
+    "📝 Input Chat Data": {
+      "main": [
+        [{ "node": "Has Chat?", "type": "main", "index": 0 }]
+      ]
+    },
+    "Has Chat?": {
+      "main": [
+        [{ "node": "📊 Set Metadata", "type": "main", "index": 0 }],
+        [{ "node": "❌ No Content", "type": "main", "index": 0 }]
+      ]
+    },
+    "📊 Set Metadata": {
+      "main": [
+        [{ "node": "🤖 AI Analysis (GPT-4)", "type": "main", "index": 0 }]
+      ]
+    },
+    "🤖 AI Analysis (GPT-4)": {
+      "main": [
+        [{ "node": "🧹 Parse Analysis", "type": "main", "index": 0 }]
+      ]
+    },
+    "🧹 Parse Analysis": {
+      "main": [
+        [{ "node": "💾 Store in Database", "type": "main", "index": 0 }]
+      ]
+    },
+    "💾 Store in Database": {
+      "main": [
+        [{ "node": "📄 Generate Report", "type": "main", "index": 0 }]
+      ]
+    },
+    "📄 Generate Report": {
+      "main": [
+        [{ "node": "📊 Output Summary", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "pinData": {},
+  "meta": {
+    "instanceId": "2d82e0d27c2a88970c7ba9693b6bad225f1d31f9cf0d392d33dd9cabf99f185f"
+  }
+}

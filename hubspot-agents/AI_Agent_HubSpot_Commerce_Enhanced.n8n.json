@@ -1,0 +1,1078 @@
+{
+  "nodes": [
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            { "name": "request_id" },
+            { "name": "session_id" },
+            { "name": "chat_id" },
+            { "name": "user_id" },
+            { "name": "user_message" },
+            { "name": "caller_workflow_id" },
+            { "name": "caller_execution_id" },
+            { "name": "tool_name" },
+            { "name": "dry_run", "type": "boolean" },
+            { "name": "conversation_id" },
+            { "name": "hs_portal_id" },
+            { "name": "product_id" },
+            { "name": "line_item_id" },
+            { "name": "quote_id" },
+            { "name": "deal_id" }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [-800, -400],
+      "id": "trigger-1",
+      "name": "When Executed by Another Workflow"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.chatTrigger",
+      "typeVersion": 1.4,
+      "position": [-800, -200],
+      "id": "chat-trigger-1",
+      "name": "When chat message received",
+      "webhookId": "commerce-chat-test"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\n\nconst chatText =\n  input.chatInput ||\n  input.message?.text ||\n  input.text ||\n  input.body?.message ||\n  input.body?.text ||\n  '';\n\nreturn [{\n  json: {\n    user_message: String(chatText || ''),\n    dry_run: true,\n    tool_name: 'hubspot.commerce',\n    session_id: input.sessionId || input.session_id || 'chat_test',\n    conversation_id: input.conversationId || input.conversation_id || 'chat_test',\n    chat_id: input.chatId || input.chat_id || null,\n    user_id: input.userId || input.user_id || null,\n    request_id: input.request_id || null,\n    caller_workflow_id: input.caller_workflow_id || null,\n    caller_execution_id: input.caller_execution_id || null,\n    product_id: input.product_id || null,\n    line_item_id: input.line_item_id || null,\n    quote_id: input.quote_id || null,\n    deal_id: input.deal_id || null,\n    hs_portal_id: input.hs_portal_id || null,\n    object_type: 'commerce'\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-560, -200],
+      "id": "chat-normalize-1",
+      "name": "Normalize Chat Input"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\n\nconst nowIso = new Date().toISOString();\nconst startedMs = Date.now();\n\nconst tool_name = input.tool_name || 'hubspot.commerce';\nconst dry_run = (input.dry_run === undefined || input.dry_run === null) ? true : !!input.dry_run;\n\nconst safeJson = (obj) => {\n  const s = JSON.stringify(obj ?? {});\n  return s.replace(/'/g, \"''\");\n};\n\nconst q = (v) => (v === undefined || v === null || v === '') ? null : String(v);\n\nconst qSql = (v) => {\n  const s = q(v);\n  if (s === null) return 'null';\n  return `'${s.replace(/'/g, \"''\")}'`;\n};\n\nconst nSql = (v) => {\n  if (v === undefined || v === null || v === '') return 'null';\n  const num = Number(v);\n  return Number.isFinite(num) ? String(num) : 'null';\n};\n\nconst uuidSql = (v) => {\n  const s = (v ?? '').toString().trim();\n  const ok = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(s);\n  return ok ? `'${s}'::uuid` : 'null';\n};\n\nconst note_scope = 'hubspot';\nconst note_key = input.product_id ? `product.${input.product_id}` : (input.quote_id ? `quote.${input.quote_id}` : 'commerce.general');\n\nconst payload_for_log = {\n  ...input,\n  tool_name,\n  dry_run,\n  note_scope,\n  note_key,\n  started_at: nowIso,\n  _started_ms: startedMs\n};\n\nconst log_start_sql = `\nINSERT INTO tool_execution_log (\n  tool_name,\n  input_data,\n  success,\n  conversation_id,\n  user_id,\n  required_approval\n)\nVALUES (\n  ${qSql(tool_name)},\n  '${safeJson(payload_for_log)}'::jsonb,\n  false,\n  ${uuidSql(input.conversation_id)},\n  ${nSql(input.user_id)},\n  ${dry_run ? 'false' : 'true'}\n)\nRETURNING id;\n`;\n\nconst ctx_sql = `\nSELECT jsonb_build_object(\n  'agent_notes', (\n    SELECT COALESCE(jsonb_agg(n ORDER BY n.updated_at DESC), '[]'::jsonb)\n    FROM agent_notes n\n    WHERE n.scope = ${qSql(note_scope)}\n      AND n.note_key = ${qSql(note_key)}\n    LIMIT 15\n  ),\n  'schema_cache', (\n    SELECT to_jsonb(s)\n    FROM hubspot_schema_cache s\n    WHERE s.portal_id = ${nSql(input.hs_portal_id)}\n    ORDER BY s.fetched_at DESC\n    LIMIT 1\n  )\n) AS context;\n`;\n\nreturn [{\n  json: {\n    ...payload_for_log,\n    log_start_sql,\n    ctx_sql\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-320, -320],
+      "id": "normalize-1",
+      "name": "Normalize + Build SQL"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{$json.log_start_sql}}",
+        "options": {}
+      },
+      "id": "log-start-1",
+      "name": "Log Start (tool_execution_log)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [-80, -400],
+      "credentials": {
+        "postgres": {
+          "id": "BwXy2JHETe47vH1I",
+          "name": "Postgres account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{$json.ctx_sql}}",
+        "options": {}
+      },
+      "id": "load-ctx-1",
+      "name": "Load Context",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [-80, -240],
+      "credentials": {
+        "postgres": {
+          "id": "BwXy2JHETe47vH1I",
+          "name": "Postgres account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const base = $('Normalize + Build SQL').first().json;\n\nconst logStart = $('Log Start (tool_execution_log)').first().json;\nconst tool_execution_id = (logStart && logStart.id) ? logStart.id : null;\n\nconst ctxRows = $('Load Context').first().json;\nconst context_pack = (ctxRows && ctxRows.context) ? ctxRows.context : {};\n\nreturn [{\n  json: {\n    ...base,\n    tool_execution_id,\n    context_pack\n  }\n}];"
+      },
+      "id": "assemble-1",
+      "name": "Assemble Context Pack",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [160, -320]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ \n[\n  \"USER_REQUEST:\",\n  ($json.user_message || \"\").toString(),\n  \"\",\n  \"RUNTIME:\",\n  JSON.stringify({\n    tool_name: $json.tool_name || \"hubspot.commerce\",\n    dry_run: $json.dry_run ?? false,\n    session_id: $json.session_id,\n    request_id: $json.request_id,\n    conversation_id: $json.conversation_id,\n    product_id: $json.product_id,\n    line_item_id: $json.line_item_id,\n    quote_id: $json.quote_id,\n    deal_id: $json.deal_id\n  }, null, 2),\n  \"\",\n  \"CONTEXT_PACK:\",\n  JSON.stringify($json.context_pack ?? {}, null, 2)\n].join(\"\\n\")\n}}\n",
+        "options": {
+          "systemMessage": "You are the HubSpot COMMERCE Agent. You manage Products, Line Items, and Quotes.\n\nGoal: reliably answer commerce-related questions by calling the correct HubSpot API tools.\n\nYou receive:\n- USER_REQUEST (text)\n- RUNTIME (json): { tool_name, dry_run, ids... }\n- CONTEXT_PACK (json): { agent_notes, schema_cache }\n\nNON-NEGOTIABLE RULES\n1) TOOL-FIRST FACTS:\n   - If the answer depends on HubSpot data, you MUST call a tool.\n   - Never guess totals, property names, IDs, or associations.\n\n2) DRY RUN ENFORCEMENT:\n   - If runtime.dry_run === true: DO NOT call write tools (create/update/archive/batch).\n   - If the user requests a write while dry_run=true:\n     - Do NOT execute.\n     - Return errors[] with code \"DRY_RUN_BLOCK\"\n     - Include a proposed tool call + exact arguments.\n\nTOOL CATEGORIES:\n\nPRODUCTS (0-7):\n- List Products, Get Product by ID, Create Product, Update Product, Archive Product\n- Search Products, List Product Properties, Batch operations\n\nLINE ITEMS (0-8):\n- List Line Items, Get Line Item by ID, Create Line Item, Update Line Item, Archive Line Item\n- Search Line Items, Get Line Item Associations\n\nQUOTES (0-14):\n- List Quotes, Get Quote by ID, Create Quote, Update Quote, Archive Quote\n- Search Quotes, Get Quote PDF, Get Quote Associations\n- Create Quote Template, List Quote Templates\n\nOUTPUT REQUIREMENTS (JSON ONLY)\nReturn exactly:\n{\n  \"summary\": \"short human summary\",\n  \"data\": { \"any\": \"tool results or extracted fields\" },\n  \"tool_calls\": [\n    { \"tool\": \"Tool Name\", \"arguments\": { } }\n  ],\n  \"errors\": [\n    { \"code\": \"MISSING_ARG|DRY_RUN_BLOCK|TOOL_ERROR\", \"message\": \"...\" }\n  ],\n  \"notes_to_save\": \"optional short learning string or null\"\n}\n",
+          "maxIterations": 25
+        }
+      },
+      "id": "agent-1",
+      "name": "AI Agent - Commerce",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [400, -320],
+      "alwaysOutputData": true,
+      "retryOnFail": true,
+      "waitBetweenTries": 3000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "list",
+          "value": "gpt-4o",
+          "cachedResultName": "gpt-4o"
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [160, -120],
+      "id": "llm-1",
+      "name": "OpenAI Chat Model",
+      "credentials": {
+        "openAiApi": {
+          "id": "Lb7LQd5GQa1bZ9yX",
+          "name": "OpenAi account 4"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sessionKey": "session_id",
+        "sessionIdType": "customKey"
+      },
+      "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
+      "typeVersion": 1.3,
+      "position": [280, -120],
+      "id": "memory-1",
+      "name": "Memory"
+    },
+    {
+      "parameters": {
+        "toolDescription": "List all products with pagination. Optional: limit, after, properties.",
+        "url": "={{ (() => { const a = $json.params?.arguments || {}; const base = 'https://api.hubapi.com/crm/v3/objects/products'; const q = []; if (a.limit) q.push(`limit=${a.limit}`); if (a.after) q.push(`after=${a.after}`); if (a.properties) q.push(`properties=${Array.isArray(a.properties) ? a.properties.join(',') : a.properties}`); return q.length ? `${base}?${q.join('&')}` : base; })() }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [-200, 100],
+      "id": "tool-1",
+      "name": "List Products",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "toolDescription": "Get a product by ID. Args: productId.",
+        "url": "={{ (() => { const a = $json.params?.arguments || {}; const id = a.productId || a.id; return id ? `https://api.hubapi.com/crm/v3/objects/products/${id}` : 'https://api.hubapi.com/crm/v3/objects/products/0'; })() }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [-40, 100],
+      "id": "tool-2",
+      "name": "Get Product by ID",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "toolDescription": "Create a product. Body: { properties: { name, price, description, ... } }.",
+        "method": "POST",
+        "url": "https://api.hubapi.com/crm/v3/objects/products",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $fromAI('product_data', 'Product creation body with properties object', 'json') }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [120, 100],
+      "id": "tool-3",
+      "name": "Create Product",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "toolDescription": "Update a product. Args: productId. Body: { properties: {...} }.",
+        "method": "PATCH",
+        "url": "={{ (() => { const a = $json.params?.arguments || {}; const id = a.productId || a.id; return id ? `https://api.hubapi.com/crm/v3/objects/products/${id}` : 'https://api.hubapi.com/crm/v3/objects/products/0'; })() }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $fromAI('product_update', 'Product update body with properties object', 'json') }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [280, 100],
+      "id": "tool-4",
+      "name": "Update Product",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "toolDescription": "Archive a product. Args: productId.",
+        "method": "DELETE",
+        "url": "={{ (() => { const a = $json.params?.arguments || {}; const id = a.productId || a.id; return id ? `https://api.hubapi.com/crm/v3/objects/products/${id}` : 'https://api.hubapi.com/crm/v3/objects/products/0'; })() }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [440, 100],
+      "id": "tool-5",
+      "name": "Archive Product",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "toolDescription": "Search products with filters. Body: { filterGroups, sorts, query, properties, limit }.",
+        "method": "POST",
+        "url": "https://api.hubapi.com/crm/v3/objects/products/search",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ (() => { const a = $json.params?.arguments || {}; return { filterGroups: a.filterGroups || [], limit: a.limit || 100, properties: a.properties || [], sorts: a.sorts || [] }; })() }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [600, 100],
+      "id": "tool-6",
+      "name": "Search Products",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "toolDescription": "List all product properties (schema).",
+        "url": "https://api.hubapi.com/crm/v3/properties/products",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [760, 100],
+      "id": "tool-7",
+      "name": "List Product Properties",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "toolDescription": "List all line items with pagination. Optional: limit, after, properties.",
+        "url": "={{ (() => { const a = $json.params?.arguments || {}; const base = 'https://api.hubapi.com/crm/v3/objects/line_items'; const q = []; if (a.limit) q.push(`limit=${a.limit}`); if (a.after) q.push(`after=${a.after}`); if (a.properties) q.push(`properties=${Array.isArray(a.properties) ? a.properties.join(',') : a.properties}`); return q.length ? `${base}?${q.join('&')}` : base; })() }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [-200, 260],
+      "id": "tool-8",
+      "name": "List Line Items",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "toolDescription": "Get a line item by ID. Args: lineItemId.",
+        "url": "={{ (() => { const a = $json.params?.arguments || {}; const id = a.lineItemId || a.id; return id ? `https://api.hubapi.com/crm/v3/objects/line_items/${id}` : 'https://api.hubapi.com/crm/v3/objects/line_items/0'; })() }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [-40, 260],
+      "id": "tool-9",
+      "name": "Get Line Item by ID",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "toolDescription": "Create a line item. Body: { properties: { name, quantity, price, hs_product_id, ... } }.",
+        "method": "POST",
+        "url": "https://api.hubapi.com/crm/v3/objects/line_items",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $fromAI('line_item_data', 'Line item creation body with properties object', 'json') }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [120, 260],
+      "id": "tool-10",
+      "name": "Create Line Item",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "toolDescription": "Update a line item. Args: lineItemId. Body: { properties: {...} }.",
+        "method": "PATCH",
+        "url": "={{ (() => { const a = $json.params?.arguments || {}; const id = a.lineItemId || a.id; return id ? `https://api.hubapi.com/crm/v3/objects/line_items/${id}` : 'https://api.hubapi.com/crm/v3/objects/line_items/0'; })() }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $fromAI('line_item_update', 'Line item update body with properties object', 'json') }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [280, 260],
+      "id": "tool-11",
+      "name": "Update Line Item",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "toolDescription": "Archive a line item. Args: lineItemId.",
+        "method": "DELETE",
+        "url": "={{ (() => { const a = $json.params?.arguments || {}; const id = a.lineItemId || a.id; return id ? `https://api.hubapi.com/crm/v3/objects/line_items/${id}` : 'https://api.hubapi.com/crm/v3/objects/line_items/0'; })() }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [440, 260],
+      "id": "tool-12",
+      "name": "Archive Line Item",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "toolDescription": "Search line items. Body: { filterGroups, limit, properties }.",
+        "method": "POST",
+        "url": "https://api.hubapi.com/crm/v3/objects/line_items/search",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ (() => { const a = $json.params?.arguments || {}; return { filterGroups: a.filterGroups || [], limit: a.limit || 100, properties: a.properties || [] }; })() }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [600, 260],
+      "id": "tool-13",
+      "name": "Search Line Items",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "toolDescription": "Get line item associations. Args: lineItemId, toObjectType (deals|quotes).",
+        "url": "={{ (() => { const a = $json.params?.arguments || {}; const id = a.lineItemId || a.id; const to = a.toObjectType || 'deals'; return id ? `https://api.hubapi.com/crm/v4/objects/line_items/${id}/associations/${to}` : 'https://api.hubapi.com/crm/v4/objects/line_items/0/associations/deals'; })() }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [760, 260],
+      "id": "tool-14",
+      "name": "Get Line Item Associations",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "toolDescription": "List all quotes with pagination. Optional: limit, after, properties.",
+        "url": "={{ (() => { const a = $json.params?.arguments || {}; const base = 'https://api.hubapi.com/crm/v3/objects/quotes'; const q = []; if (a.limit) q.push(`limit=${a.limit}`); if (a.after) q.push(`after=${a.after}`); if (a.properties) q.push(`properties=${Array.isArray(a.properties) ? a.properties.join(',') : a.properties}`); return q.length ? `${base}?${q.join('&')}` : base; })() }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [-200, 420],
+      "id": "tool-15",
+      "name": "List Quotes",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "toolDescription": "Get a quote by ID. Args: quoteId.",
+        "url": "={{ (() => { const a = $json.params?.arguments || {}; const id = a.quoteId || a.id; return id ? `https://api.hubapi.com/crm/v3/objects/quotes/${id}` : 'https://api.hubapi.com/crm/v3/objects/quotes/0'; })() }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [-40, 420],
+      "id": "tool-16",
+      "name": "Get Quote by ID",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "toolDescription": "Create a quote. Body: { properties: { hs_title, hs_expiration_date, ... } }.",
+        "method": "POST",
+        "url": "https://api.hubapi.com/crm/v3/objects/quotes",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $fromAI('quote_data', 'Quote creation body with properties object', 'json') }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [120, 420],
+      "id": "tool-17",
+      "name": "Create Quote",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "toolDescription": "Update a quote. Args: quoteId. Body: { properties: {...} }.",
+        "method": "PATCH",
+        "url": "={{ (() => { const a = $json.params?.arguments || {}; const id = a.quoteId || a.id; return id ? `https://api.hubapi.com/crm/v3/objects/quotes/${id}` : 'https://api.hubapi.com/crm/v3/objects/quotes/0'; })() }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $fromAI('quote_update', 'Quote update body with properties object', 'json') }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [280, 420],
+      "id": "tool-18",
+      "name": "Update Quote",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "toolDescription": "Archive a quote. Args: quoteId.",
+        "method": "DELETE",
+        "url": "={{ (() => { const a = $json.params?.arguments || {}; const id = a.quoteId || a.id; return id ? `https://api.hubapi.com/crm/v3/objects/quotes/${id}` : 'https://api.hubapi.com/crm/v3/objects/quotes/0'; })() }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [440, 420],
+      "id": "tool-19",
+      "name": "Archive Quote",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "toolDescription": "Search quotes. Body: { filterGroups, limit, properties }.",
+        "method": "POST",
+        "url": "https://api.hubapi.com/crm/v3/objects/quotes/search",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ (() => { const a = $json.params?.arguments || {}; return { filterGroups: a.filterGroups || [], limit: a.limit || 100, properties: a.properties || [] }; })() }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [600, 420],
+      "id": "tool-20",
+      "name": "Search Quotes",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "toolDescription": "Get quote associations. Args: quoteId, toObjectType (deals|contacts|line_items).",
+        "url": "={{ (() => { const a = $json.params?.arguments || {}; const id = a.quoteId || a.id; const to = a.toObjectType || 'deals'; return id ? `https://api.hubapi.com/crm/v4/objects/quotes/${id}/associations/${to}` : 'https://api.hubapi.com/crm/v4/objects/quotes/0/associations/deals'; })() }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [760, 420],
+      "id": "tool-21",
+      "name": "Get Quote Associations",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const base = $('Assemble Context Pack').first().json;\n\nconst started = Number(base._started_ms || Date.now());\nconst duration_ms = Math.max(0, Date.now() - started);\n\nlet agentRaw = $('AI Agent - Commerce').first().json;\n\nconst coerceJson = (val) => {\n  if (val === null || val === undefined) return null;\n  if (typeof val === 'object') return val;\n  if (typeof val !== 'string') return { value: val };\n  const s = val.trim().replace(/^```json\\s*/i, '').replace(/```$/,'').trim();\n  try { return JSON.parse(s); } catch { return { raw: val }; }\n};\n\nconst agentOut = coerceJson(agentRaw.output ?? agentRaw.text ?? agentRaw);\n\nconst ok = !(agentOut?.errors && agentOut.errors.length);\n\nconst esc = (s) => String(s ?? '').replace(/'/g, \"''\");\n\nconst final = {\n  ok,\n  tool_name: base.tool_name,\n  tool_execution_id: base.tool_execution_id,\n  session_id: base.session_id,\n  conversation_id: base.conversation_id,\n  dry_run: base.dry_run,\n  summary: agentOut?.summary ?? (ok ? 'ok' : 'error'),\n  data: agentOut?.data ?? null,\n  tool_calls: agentOut?.tool_calls ?? [],\n  errors: agentOut?.errors ?? [],\n  notes_to_save: agentOut?.notes_to_save ?? null,\n  context_used: base.context_pack ?? {},\n  duration_ms\n};\n\nconst outJson = esc(JSON.stringify(final));\nconst errText = final.errors?.length ? esc(JSON.stringify(final.errors)) : null;\n\nfinal.log_end_sql = `\nUPDATE tool_execution_log\nSET\n  output_data = '${outJson}'::jsonb,\n  success = ${final.ok ? 'true' : 'false'},\n  error = ${errText ? `'${errText}'` : 'null'},\n  duration_ms = ${Number.isFinite(final.duration_ms) ? final.duration_ms : 'null'}\nWHERE id = '${esc(base.tool_execution_id)}'::uuid;\n`;\n\nconst note_scope = base.note_scope || 'hubspot';\nconst note_key = base.note_key || 'commerce.general';\n\nif (final.notes_to_save && typeof final.notes_to_save === 'string' && final.notes_to_save.trim() !== '') {\n  const noteObj = { text: final.notes_to_save.trim() };\n  const noteJson = esc(JSON.stringify(noteObj));\n  final.save_notes_sql = `\nINSERT INTO agent_notes (scope, note_key, note)\nVALUES ('${esc(note_scope)}', '${esc(note_key)}', '${noteJson}'::jsonb);\n`;\n}\n\nreturn [{ json: final }];"
+      },
+      "id": "parse-output-1",
+      "name": "Parse + Finalize Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [640, -320]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{$json.log_end_sql}}",
+        "options": {}
+      },
+      "id": "log-end-1",
+      "name": "Log End (tool_execution_log)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [880, -320],
+      "credentials": {
+        "postgres": {
+          "id": "BwXy2JHETe47vH1I",
+          "name": "Postgres account 2"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "has_notes",
+              "leftValue": "={{ $json.save_notes_sql }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [880, -440],
+      "id": "has-notes-1",
+      "name": "Has Notes to Save?",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{$json.save_notes_sql}}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1120, -480],
+      "id": "save-notes-1",
+      "name": "Save Agent Notes",
+      "credentials": {
+        "postgres": {
+          "id": "BwXy2JHETe47vH1I",
+          "name": "Postgres account 2"
+        }
+      },
+      "onError": "continueRegularOutput"
+    }
+  ],
+  "connections": {
+    "When Executed by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "Normalize + Build SQL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "When chat message received": {
+      "main": [
+        [
+          {
+            "node": "Normalize Chat Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Chat Input": {
+      "main": [
+        [
+          {
+            "node": "Normalize + Build SQL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize + Build SQL": {
+      "main": [
+        [
+          {
+            "node": "Log Start (tool_execution_log)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Load Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Start (tool_execution_log)": {
+      "main": [
+        [
+          {
+            "node": "Assemble Context Pack",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Context": {
+      "main": [
+        [
+          {
+            "node": "Assemble Context Pack",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Assemble Context Pack": {
+      "main": [
+        [
+          {
+            "node": "AI Agent - Commerce",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent - Commerce": {
+      "main": [
+        [
+          {
+            "node": "Parse + Finalize Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse + Finalize Output": {
+      "main": [
+        [
+          {
+            "node": "Log End (tool_execution_log)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Has Notes to Save?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Notes to Save?": {
+      "main": [
+        [
+          {
+            "node": "Save Agent Notes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent - Commerce",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Memory": {
+      "ai_memory": [
+        [
+          {
+            "node": "AI Agent - Commerce",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "List Products": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Commerce",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Product by ID": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Commerce",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Product": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Commerce",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Product": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Commerce",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Archive Product": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Commerce",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Search Products": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Commerce",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "List Product Properties": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Commerce",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "List Line Items": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Commerce",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Line Item by ID": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Commerce",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Line Item": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Commerce",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Line Item": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Commerce",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Archive Line Item": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Commerce",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Search Line Items": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Commerce",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Line Item Associations": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Commerce",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "List Quotes": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Commerce",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Quote by ID": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Commerce",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Quote": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Commerce",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Quote": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Commerce",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Archive Quote": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Commerce",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Search Quotes": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Commerce",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Quote Associations": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Commerce",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "2d82e0d27c2a88970c7ba9693b6bad225f1d31f9cf0d392d33dd9cabf99f185f"
+  }
+}

@@ -1,0 +1,125 @@
+{
+  "name": "AI Agent - HubSpot CMS (Enhanced)",
+  "nodes": [
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {"name": "request_id", "type": "string"},
+            {"name": "session_id", "type": "string"},
+            {"name": "user_id", "type": "string"},
+            {"name": "user_message", "type": "string"},
+            {"name": "page_id", "type": "string"},
+            {"name": "blog_id", "type": "string"},
+            {"name": "tool_name", "type": "string"},
+            {"name": "dry_run", "type": "boolean"},
+            {"name": "conversation_id", "type": "string"}
+          ]
+        }
+      },
+      "id": "trigger-1",
+      "name": "When Executed by Another Workflow",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [-800, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst tool_name = input.tool_name || 'hubspot.cms';\nconst dry_run = input.dry_run ?? true;\nconst q = v => v == null || v === '' ? null : String(v);\nconst payload = {...input, tool_name, dry_run, _started_ms: Date.now()};\nconst log_sql = `INSERT INTO tool_execution_log (tool_name, input_data, success, conversation_id, user_id, required_approval) VALUES ($1, $2::jsonb, false, $3, $4, $5) RETURNING id;`;\nreturn [{json: {...payload, log_start_sql: log_sql, log_start_params: [tool_name, JSON.stringify(payload), q(input.conversation_id), q(input.user_id), !dry_run]}}];"
+      },
+      "id": "normalize-1",
+      "name": "Normalize + Build SQL",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-560, 0]
+    },
+    {"parameters": {"operation": "executeQuery", "query": "={{$json.log_start_sql}}", "options": {"queryReplacement": "={{ $json.log_start_params }}"}}, "id": "log-start-1", "name": "Log Start", "type": "n8n-nodes-base.postgres", "typeVersion": 2.5, "position": [-320, 0], "credentials": {"postgres": {"id": "BwXy2JHETe47vH1I", "name": "Postgres account 2"}}},
+    {"parameters": {"jsCode": "const base = $('Normalize + Build SQL').first().json;\nconst logStart = $('Log Start').first().json;\nreturn [{json: {...base, tool_execution_id: logStart?.id || null}}];"}, "id": "assemble-1", "name": "Assemble", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [-80, 0]},
+    {
+      "parameters": {
+        "text": "={{ ['USER_REQUEST:', $json.user_message, 'RUNTIME:', JSON.stringify({tool_name: $json.tool_name, dry_run: $json.dry_run, page_id: $json.page_id, blog_id: $json.blog_id})].join('\\n') }}",
+        "options": {
+          "maxIterations": 15,
+          "systemMessage": "You are the HubSpot CMS Agent.\n\nYour job:\n- Manage website pages, landing pages, blog posts\n- Work with HubDB tables (structured data)\n- Manage templates and modules\n- Handle site domains and URL mappings\n\nAVAILABLE TOOLS:\n\nPAGES:\n- List Site Pages - Get website pages\n- Get Page by ID - Get single page\n- Search Pages - Search pages\n- Create Page - Create new page (WRITE)\n- Update Page - Update page content (WRITE)\n- Delete Page - Delete page (WRITE)\n- Publish Page - Publish draft (WRITE)\n- Unpublish Page - Take offline (WRITE)\n\nBLOG:\n- List Blogs - Get all blogs\n- List Blog Posts - Get posts\n- Get Blog Post by ID - Get single post\n- Search Blog Posts - Search posts\n- Create Blog Post - Create post (WRITE)\n- Update Blog Post - Update post (WRITE)\n- Delete Blog Post - Delete post (WRITE)\n- Publish Blog Post - Publish draft (WRITE)\n\nHUBDB (Structured Data):\n- List HubDB Tables - Get all tables\n- Get HubDB Table - Get table schema\n- Get HubDB Rows - Get table rows\n- Create HubDB Row - Add row (WRITE)\n- Update HubDB Row - Update row (WRITE)\n- Delete HubDB Row - Delete row (WRITE)\n\nTEMPLATES & MODULES:\n- List Templates - Get templates\n- Get Template by ID - Get template details\n\nDOMAINS:\n- List Domains - Get configured domains\n- Get Domain by ID - Get domain details\n\nURL MAPPINGS:\n- List URL Mappings - Get redirects\n- Create URL Mapping - Create redirect (WRITE)\n\nOUTPUT FORMAT:\n{\"summary\": \"...\", \"data\": {}, \"errors\": []}"
+        },
+        "promptType": "define"
+      },
+      "id": "agent-1",
+      "name": "AI Agent - CMS",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [160, 0],
+      "alwaysOutputData": true,
+      "retryOnFail": true,
+      "waitBetweenTries": 3000,
+      "onError": "continueRegularOutput"
+    },
+    {"parameters": {"model": {"__rl": true, "mode": "list", "value": "gpt-4o"}, "options": {}}, "id": "llm-1", "name": "OpenAI Chat Model", "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi", "typeVersion": 1.3, "position": [-80, 200], "credentials": {"openAiApi": {"id": "Lb7LQd5GQa1bZ9yX", "name": "OpenAi account 4"}}},
+    {"parameters": {"sessionKey": "session_id", "sessionIdType": "customKey"}, "id": "memory-1", "name": "Memory", "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow", "typeVersion": 1.3, "position": [40, 200]},
+    {"parameters": {"url": "https://api.hubapi.com/cms/v3/pages/site-pages", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "sendQuery": true, "specifyQuery": "json", "options": {}, "toolDescription": "List site pages. Query: limit, after, state."}, "id": "tool-list-pages", "name": "List Site Pages", "type": "n8n-nodes-base.httpRequestTool", "typeVersion": 4.3, "position": [160, 200], "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}},
+    {"parameters": {"url": "=https://api.hubapi.com/cms/v3/pages/site-pages/{{ $json.pageId }}", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "options": {}, "toolDescription": "Get site page by ID."}, "id": "tool-get-page", "name": "Get Page by ID", "type": "n8n-nodes-base.httpRequestTool", "typeVersion": 4.3, "position": [280, 200], "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}},
+    {"parameters": {"method": "POST", "url": "https://api.hubapi.com/cms/v3/pages/site-pages/search", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "sendBody": true, "specifyBody": "json", "options": {}, "toolDescription": "Search site pages. Body: {query, filterGroups, limit}."}, "id": "tool-search-pages", "name": "Search Pages", "type": "n8n-nodes-base.httpRequestTool", "typeVersion": 4.3, "position": [400, 200], "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}},
+    {"parameters": {"method": "POST", "url": "https://api.hubapi.com/cms/v3/pages/site-pages", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "sendBody": true, "specifyBody": "json", "options": {}, "toolDescription": "Create site page. Body: {name, slug, htmlTitle, contentGroupId, templatePath}. WRITE."}, "id": "tool-create-page", "name": "Create Page", "type": "n8n-nodes-base.httpRequestTool", "typeVersion": 4.3, "position": [520, 200], "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}},
+    {"parameters": {"method": "PATCH", "url": "=https://api.hubapi.com/cms/v3/pages/site-pages/{{ $json.pageId }}", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "sendBody": true, "specifyBody": "json", "options": {}, "toolDescription": "Update site page. WRITE."}, "id": "tool-update-page", "name": "Update Page", "type": "n8n-nodes-base.httpRequestTool", "typeVersion": 4.3, "position": [640, 200], "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}},
+    {"parameters": {"method": "DELETE", "url": "=https://api.hubapi.com/cms/v3/pages/site-pages/{{ $json.pageId }}", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "options": {}, "toolDescription": "Delete site page. WRITE."}, "id": "tool-delete-page", "name": "Delete Page", "type": "n8n-nodes-base.httpRequestTool", "typeVersion": 4.3, "position": [760, 200], "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}},
+    {"parameters": {"method": "POST", "url": "=https://api.hubapi.com/cms/v3/pages/site-pages/{{ $json.pageId }}/publish", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "options": {}, "toolDescription": "Publish a page draft. WRITE."}, "id": "tool-publish-page", "name": "Publish Page", "type": "n8n-nodes-base.httpRequestTool", "typeVersion": 4.3, "position": [880, 200], "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}},
+    {"parameters": {"method": "POST", "url": "=https://api.hubapi.com/cms/v3/pages/site-pages/{{ $json.pageId }}/unpublish", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "options": {}, "toolDescription": "Unpublish a page. WRITE."}, "id": "tool-unpublish-page", "name": "Unpublish Page", "type": "n8n-nodes-base.httpRequestTool", "typeVersion": 4.3, "position": [1000, 200], "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}},
+    {"parameters": {"url": "https://api.hubapi.com/cms/v3/blogs/posts", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "sendQuery": true, "specifyQuery": "json", "options": {}, "toolDescription": "List blog posts. Query: limit, after, state, contentGroupId."}, "id": "tool-list-posts", "name": "List Blog Posts", "type": "n8n-nodes-base.httpRequestTool", "typeVersion": 4.3, "position": [160, 360], "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}},
+    {"parameters": {"url": "=https://api.hubapi.com/cms/v3/blogs/posts/{{ $json.postId }}", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "options": {}, "toolDescription": "Get blog post by ID."}, "id": "tool-get-post", "name": "Get Blog Post by ID", "type": "n8n-nodes-base.httpRequestTool", "typeVersion": 4.3, "position": [280, 360], "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}},
+    {"parameters": {"method": "POST", "url": "https://api.hubapi.com/cms/v3/blogs/posts", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "sendBody": true, "specifyBody": "json", "options": {}, "toolDescription": "Create blog post. Body: {name, slug, htmlTitle, postBody, contentGroupId}. WRITE."}, "id": "tool-create-post", "name": "Create Blog Post", "type": "n8n-nodes-base.httpRequestTool", "typeVersion": 4.3, "position": [400, 360], "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}},
+    {"parameters": {"method": "PATCH", "url": "=https://api.hubapi.com/cms/v3/blogs/posts/{{ $json.postId }}", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "sendBody": true, "specifyBody": "json", "options": {}, "toolDescription": "Update blog post. WRITE."}, "id": "tool-update-post", "name": "Update Blog Post", "type": "n8n-nodes-base.httpRequestTool", "typeVersion": 4.3, "position": [520, 360], "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}},
+    {"parameters": {"method": "DELETE", "url": "=https://api.hubapi.com/cms/v3/blogs/posts/{{ $json.postId }}", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "options": {}, "toolDescription": "Delete blog post. WRITE."}, "id": "tool-delete-post", "name": "Delete Blog Post", "type": "n8n-nodes-base.httpRequestTool", "typeVersion": 4.3, "position": [640, 360], "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}},
+    {"parameters": {"method": "POST", "url": "=https://api.hubapi.com/cms/v3/blogs/posts/{{ $json.postId }}/publish", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "options": {}, "toolDescription": "Publish blog post draft. WRITE."}, "id": "tool-publish-post", "name": "Publish Blog Post", "type": "n8n-nodes-base.httpRequestTool", "typeVersion": 4.3, "position": [760, 360], "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}},
+    {"parameters": {"url": "https://api.hubapi.com/cms/v3/hubdb/tables", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "options": {}, "toolDescription": "List all HubDB tables."}, "id": "tool-list-hubdb", "name": "List HubDB Tables", "type": "n8n-nodes-base.httpRequestTool", "typeVersion": 4.3, "position": [880, 360], "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}},
+    {"parameters": {"url": "=https://api.hubapi.com/cms/v3/hubdb/tables/{{ $json.tableId }}", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "options": {}, "toolDescription": "Get HubDB table schema by ID."}, "id": "tool-get-hubdb", "name": "Get HubDB Table", "type": "n8n-nodes-base.httpRequestTool", "typeVersion": 4.3, "position": [1000, 360], "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}},
+    {"parameters": {"url": "=https://api.hubapi.com/cms/v3/hubdb/tables/{{ $json.tableId }}/rows", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "sendQuery": true, "specifyQuery": "json", "options": {}, "toolDescription": "Get HubDB table rows. Query: limit, after, sort."}, "id": "tool-get-rows", "name": "Get HubDB Rows", "type": "n8n-nodes-base.httpRequestTool", "typeVersion": 4.3, "position": [1120, 360], "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}},
+    {"parameters": {"method": "POST", "url": "=https://api.hubapi.com/cms/v3/hubdb/tables/{{ $json.tableId }}/rows", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "sendBody": true, "specifyBody": "json", "options": {}, "toolDescription": "Create HubDB row. Body: {values: {column: value}}. WRITE."}, "id": "tool-create-row", "name": "Create HubDB Row", "type": "n8n-nodes-base.httpRequestTool", "typeVersion": 4.3, "position": [160, 520], "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}},
+    {"parameters": {"method": "PATCH", "url": "=https://api.hubapi.com/cms/v3/hubdb/tables/{{ $json.tableId }}/rows/{{ $json.rowId }}", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "sendBody": true, "specifyBody": "json", "options": {}, "toolDescription": "Update HubDB row. WRITE."}, "id": "tool-update-row", "name": "Update HubDB Row", "type": "n8n-nodes-base.httpRequestTool", "typeVersion": 4.3, "position": [280, 520], "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}},
+    {"parameters": {"method": "DELETE", "url": "=https://api.hubapi.com/cms/v3/hubdb/tables/{{ $json.tableId }}/rows/{{ $json.rowId }}", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "options": {}, "toolDescription": "Delete HubDB row. WRITE."}, "id": "tool-delete-row", "name": "Delete HubDB Row", "type": "n8n-nodes-base.httpRequestTool", "typeVersion": 4.3, "position": [400, 520], "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}},
+    {"parameters": {"url": "https://api.hubapi.com/cms/v3/domains", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "options": {}, "toolDescription": "List configured domains."}, "id": "tool-list-domains", "name": "List Domains", "type": "n8n-nodes-base.httpRequestTool", "typeVersion": 4.3, "position": [520, 520], "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}},
+    {"parameters": {"url": "https://api.hubapi.com/cms/v3/url-redirects", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "sendQuery": true, "specifyQuery": "json", "options": {}, "toolDescription": "List URL redirects/mappings."}, "id": "tool-list-redirects", "name": "List URL Mappings", "type": "n8n-nodes-base.httpRequestTool", "typeVersion": 4.3, "position": [640, 520], "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}},
+    {"parameters": {"method": "POST", "url": "https://api.hubapi.com/cms/v3/url-redirects", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "sendBody": true, "specifyBody": "json", "options": {}, "toolDescription": "Create URL redirect. Body: {routePrefix, destination, redirectStyle}. WRITE."}, "id": "tool-create-redirect", "name": "Create URL Mapping", "type": "n8n-nodes-base.httpRequestTool", "typeVersion": 4.3, "position": [760, 520], "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}},
+    {"parameters": {"jsCode": "const base = $('Assemble').first().json;\nconst agentRaw = $('AI Agent - CMS').first().json;\nlet agentOut = {};\ntry { agentOut = typeof agentRaw.output === 'object' ? agentRaw.output : JSON.parse((agentRaw.output||'{}').replace(/^```json|```$/g,'')); } catch {}\nconst ok = !agentOut?.errors?.length;\nconst esc = s => String(s??'').replace(/'/g,\"''\");\nconst final = {ok, summary: agentOut?.summary || 'done', data: agentOut?.data, errors: agentOut?.errors || []};\nfinal.log_end_sql = `UPDATE tool_execution_log SET output_data = '${esc(JSON.stringify(final))}'::jsonb, success = ${ok} WHERE id = '${esc(base.tool_execution_id)}'::uuid;`;\nreturn [{json: final}];"}, "id": "parse-1", "name": "Parse Output", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [400, 0]},
+    {"parameters": {"operation": "executeQuery", "query": "={{$json.log_end_sql}}", "options": {}}, "id": "log-end-1", "name": "Log End", "type": "n8n-nodes-base.postgres", "typeVersion": 2.5, "position": [640, 0], "credentials": {"postgres": {"id": "BwXy2JHETe47vH1I", "name": "Postgres account 2"}}, "onError": "continueRegularOutput"},
+    {"parameters": {"options": {}}, "type": "@n8n/n8n-nodes-langchain.chatTrigger", "typeVersion": 1.4, "position": [-800, -200], "id": "chat-trigger-1", "name": "Chat Trigger", "webhookId": "cms-test"},
+    {"parameters": {"jsCode": "return [{json: {user_message: $input.first().json.chatInput || '', dry_run: true, tool_name: 'hubspot.cms', session_id: 'test'}}];"}, "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [-560, -200], "id": "chat-norm", "name": "Normalize Chat"}
+  ],
+  "connections": {
+    "When Executed by Another Workflow": {"main": [[{"node": "Normalize + Build SQL", "type": "main", "index": 0}]]},
+    "Chat Trigger": {"main": [[{"node": "Normalize Chat", "type": "main", "index": 0}]]},
+    "Normalize Chat": {"main": [[{"node": "Normalize + Build SQL", "type": "main", "index": 0}]]},
+    "Normalize + Build SQL": {"main": [[{"node": "Log Start", "type": "main", "index": 0}]]},
+    "Log Start": {"main": [[{"node": "Assemble", "type": "main", "index": 0}]]},
+    "Assemble": {"main": [[{"node": "AI Agent - CMS", "type": "main", "index": 0}]]},
+    "AI Agent - CMS": {"main": [[{"node": "Parse Output", "type": "main", "index": 0}]]},
+    "Parse Output": {"main": [[{"node": "Log End", "type": "main", "index": 0}]]},
+    "OpenAI Chat Model": {"ai_languageModel": [[{"node": "AI Agent - CMS", "type": "ai_languageModel", "index": 0}]]},
+    "Memory": {"ai_memory": [[{"node": "AI Agent - CMS", "type": "ai_memory", "index": 0}]]},
+    "List Site Pages": {"ai_tool": [[{"node": "AI Agent - CMS", "type": "ai_tool", "index": 0}]]},
+    "Get Page by ID": {"ai_tool": [[{"node": "AI Agent - CMS", "type": "ai_tool", "index": 0}]]},
+    "Search Pages": {"ai_tool": [[{"node": "AI Agent - CMS", "type": "ai_tool", "index": 0}]]},
+    "Create Page": {"ai_tool": [[{"node": "AI Agent - CMS", "type": "ai_tool", "index": 0}]]},
+    "Update Page": {"ai_tool": [[{"node": "AI Agent - CMS", "type": "ai_tool", "index": 0}]]},
+    "Delete Page": {"ai_tool": [[{"node": "AI Agent - CMS", "type": "ai_tool", "index": 0}]]},
+    "Publish Page": {"ai_tool": [[{"node": "AI Agent - CMS", "type": "ai_tool", "index": 0}]]},
+    "Unpublish Page": {"ai_tool": [[{"node": "AI Agent - CMS", "type": "ai_tool", "index": 0}]]},
+    "List Blog Posts": {"ai_tool": [[{"node": "AI Agent - CMS", "type": "ai_tool", "index": 0}]]},
+    "Get Blog Post by ID": {"ai_tool": [[{"node": "AI Agent - CMS", "type": "ai_tool", "index": 0}]]},
+    "Create Blog Post": {"ai_tool": [[{"node": "AI Agent - CMS", "type": "ai_tool", "index": 0}]]},
+    "Update Blog Post": {"ai_tool": [[{"node": "AI Agent - CMS", "type": "ai_tool", "index": 0}]]},
+    "Delete Blog Post": {"ai_tool": [[{"node": "AI Agent - CMS", "type": "ai_tool", "index": 0}]]},
+    "Publish Blog Post": {"ai_tool": [[{"node": "AI Agent - CMS", "type": "ai_tool", "index": 0}]]},
+    "List HubDB Tables": {"ai_tool": [[{"node": "AI Agent - CMS", "type": "ai_tool", "index": 0}]]},
+    "Get HubDB Table": {"ai_tool": [[{"node": "AI Agent - CMS", "type": "ai_tool", "index": 0}]]},
+    "Get HubDB Rows": {"ai_tool": [[{"node": "AI Agent - CMS", "type": "ai_tool", "index": 0}]]},
+    "Create HubDB Row": {"ai_tool": [[{"node": "AI Agent - CMS", "type": "ai_tool", "index": 0}]]},
+    "Update HubDB Row": {"ai_tool": [[{"node": "AI Agent - CMS", "type": "ai_tool", "index": 0}]]},
+    "Delete HubDB Row": {"ai_tool": [[{"node": "AI Agent - CMS", "type": "ai_tool", "index": 0}]]},
+    "List Domains": {"ai_tool": [[{"node": "AI Agent - CMS", "type": "ai_tool", "index": 0}]]},
+    "List URL Mappings": {"ai_tool": [[{"node": "AI Agent - CMS", "type": "ai_tool", "index": 0}]]},
+    "Create URL Mapping": {"ai_tool": [[{"node": "AI Agent - CMS", "type": "ai_tool", "index": 0}]]}
+  },
+  "settings": {"executionOrder": "v1"},
+  "tags": [],
+  "pinData": {}
+}

@@ -1,0 +1,414 @@
+{
+  "name": "AI Agent - HubSpot Files (Enhanced)",
+  "nodes": [
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {"name": "request_id", "type": "string"},
+            {"name": "session_id", "type": "string"},
+            {"name": "user_id", "type": "string"},
+            {"name": "user_message", "type": "string"},
+            {"name": "file_id", "type": "string"},
+            {"name": "folder_id", "type": "string"},
+            {"name": "tool_name", "type": "string"},
+            {"name": "dry_run", "type": "boolean"},
+            {"name": "conversation_id", "type": "string"}
+          ]
+        }
+      },
+      "id": "trigger-1",
+      "name": "When Executed by Another Workflow",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [-800, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst nowIso = new Date().toISOString();\nconst startedMs = Date.now();\nconst tool_name = input.tool_name || 'hubspot.files';\nconst dry_run = (input.dry_run === undefined || input.dry_run === null) ? true : !!input.dry_run;\nconst q = (v) => (v === undefined || v === null || v === '') ? null : String(v);\nconst payload_for_log = {...input, tool_name, dry_run, started_at: nowIso, _started_ms: startedMs};\nconst log_start_sql = `INSERT INTO tool_execution_log (tool_name, input_data, success, conversation_id, user_id, required_approval) VALUES ($1, $2::jsonb, false, $3, $4, $5) RETURNING id;`;\nconst log_start_params = [tool_name, JSON.stringify(payload_for_log), q(input.conversation_id), q(input.user_id), !dry_run];\nreturn [{json: {...payload_for_log, log_start_sql, log_start_params}}];"
+      },
+      "id": "normalize-1",
+      "name": "Normalize + Build SQL",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-560, 0]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{$json.log_start_sql}}",
+        "options": {"queryReplacement": "={{ $json.log_start_params }}"}
+      },
+      "id": "log-start-1",
+      "name": "Log Start",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [-320, 0],
+      "credentials": {"postgres": {"id": "BwXy2JHETe47vH1I", "name": "Postgres account 2"}}
+    },
+    {
+      "parameters": {
+        "jsCode": "const base = $('Normalize + Build SQL').first().json;\nconst logStart = $('Log Start').first().json;\nconst tool_execution_id = (logStart && logStart.id) ? logStart.id : null;\nreturn [{json: {...base, tool_execution_id, context_pack: {}}}];"
+      },
+      "id": "assemble-1",
+      "name": "Assemble Context Pack",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-80, 0]
+    },
+    {
+      "parameters": {
+        "text": "={{ [\n  \"USER_REQUEST:\", $json.user_message || \"\",\n  \"RUNTIME:\", JSON.stringify({tool_name: $json.tool_name, dry_run: $json.dry_run, file_id: $json.file_id, folder_id: $json.folder_id}, null, 2)\n].join(\"\\n\") }}",
+        "options": {
+          "maxIterations": 15,
+          "systemMessage": "You are the HubSpot FILES Agent.\n\nYour job:\n- Upload, download, and manage files in HubSpot File Manager\n- Create and organize folders\n- Get file metadata and signed URLs\n- Search for files\n\nAVAILABLE TOOLS:\n\nFILE OPERATIONS:\n- Search Files - Search/list files with filters\n- Get File by ID - Get file metadata\n- Upload File - Upload new file (URL or base64)\n- Update File - Update file properties\n- Archive File - Soft delete file\n- Permanently Delete File - Hard delete\n- Get Signed URL - Get temporary download URL\n- Get File Public URL - Get public access URL\n\nFOLDER OPERATIONS:\n- Search Folders - List/search folders\n- Get Folder by ID - Get folder details\n- Get Folder by Path - Get folder by path string\n- Create Folder - Create new folder\n- Update Folder - Rename/move folder\n- Archive Folder - Soft delete folder\n\nIMPORT:\n- Import File from URL - Import file from external URL\n\nOUTPUT FORMAT:\n{\"summary\": \"...\", \"data\": {}, \"tool_calls\": [], \"errors\": [], \"notes_to_save\": null}"
+        },
+        "promptType": "define"
+      },
+      "id": "agent-1",
+      "name": "AI Agent - Files",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [160, 0],
+      "alwaysOutputData": true,
+      "retryOnFail": true,
+      "waitBetweenTries": 3000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {"model": {"__rl": true, "mode": "list", "value": "gpt-4o"}, "options": {}},
+      "id": "llm-1",
+      "name": "OpenAI Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [-80, 200],
+      "credentials": {"openAiApi": {"id": "Lb7LQd5GQa1bZ9yX", "name": "OpenAi account 4"}}
+    },
+    {
+      "parameters": {"sessionKey": "session_id", "sessionIdType": "customKey"},
+      "id": "memory-1",
+      "name": "Memory",
+      "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
+      "typeVersion": 1.3,
+      "position": [40, 200]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.hubapi.com/files/v3/files/search",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "options": {},
+        "toolDescription": "Search files. Body: {filterGroups, sorts, properties, limit, after}. Filter by name, type, parentFolderId, etc."
+      },
+      "id": "tool-search-files",
+      "name": "Search Files",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [160, 200],
+      "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}
+    },
+    {
+      "parameters": {
+        "url": "=https://api.hubapi.com/files/v3/files/{{ $json.fileId }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {},
+        "toolDescription": "Get file metadata by ID. Returns name, size, type, url, parentFolderId, etc."
+      },
+      "id": "tool-get-file",
+      "name": "Get File by ID",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [280, 200],
+      "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.hubapi.com/files/v3/files",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "options": {},
+        "toolDescription": "Upload file. Body: {file (base64), folderId, folderPath, fileName, options: {access}}. WRITE - respect dry_run."
+      },
+      "id": "tool-upload-file",
+      "name": "Upload File",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [400, 200],
+      "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://api.hubapi.com/files/v3/files/{{ $json.fileId }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "options": {},
+        "toolDescription": "Update file properties. Body: {name, parentFolderId, isUsableInContent, access}. WRITE - respect dry_run."
+      },
+      "id": "tool-update-file",
+      "name": "Update File",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [520, 200],
+      "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}
+    },
+    {
+      "parameters": {
+        "method": "DELETE",
+        "url": "=https://api.hubapi.com/files/v3/files/{{ $json.fileId }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {},
+        "toolDescription": "Archive/soft delete file. WRITE - respect dry_run."
+      },
+      "id": "tool-archive-file",
+      "name": "Archive File",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [640, 200],
+      "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}
+    },
+    {
+      "parameters": {
+        "method": "DELETE",
+        "url": "=https://api.hubapi.com/files/v3/files/{{ $json.fileId }}/gdpr-delete",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {},
+        "toolDescription": "Permanently delete file (GDPR). DESTRUCTIVE - respect dry_run."
+      },
+      "id": "tool-perm-delete",
+      "name": "Permanently Delete File",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [760, 200],
+      "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}
+    },
+    {
+      "parameters": {
+        "url": "=https://api.hubapi.com/files/v3/files/{{ $json.fileId }}/signed-url",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {},
+        "toolDescription": "Get temporary signed URL for private file download."
+      },
+      "id": "tool-signed-url",
+      "name": "Get Signed URL",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [880, 200],
+      "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}
+    },
+    {
+      "parameters": {
+        "url": "=https://api.hubapi.com/files/v3/files/{{ $json.fileId }}/public-url",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {},
+        "toolDescription": "Get public URL for file (if public access enabled)."
+      },
+      "id": "tool-public-url",
+      "name": "Get File Public URL",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [1000, 200],
+      "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.hubapi.com/files/v3/files/import-from-url/async",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "options": {},
+        "toolDescription": "Import file from external URL. Body: {url, name, folderId, access, duplicateValidationStrategy}. WRITE - respect dry_run."
+      },
+      "id": "tool-import-url",
+      "name": "Import File from URL",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [1120, 200],
+      "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.hubapi.com/files/v3/folders/search",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "options": {},
+        "toolDescription": "Search folders. Body: {filterGroups, sorts, properties, limit, after}."
+      },
+      "id": "tool-search-folders",
+      "name": "Search Folders",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [160, 360],
+      "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}
+    },
+    {
+      "parameters": {
+        "url": "=https://api.hubapi.com/files/v3/folders/{{ $json.folderId }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {},
+        "toolDescription": "Get folder by ID."
+      },
+      "id": "tool-get-folder",
+      "name": "Get Folder by ID",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [280, 360],
+      "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}
+    },
+    {
+      "parameters": {
+        "url": "=https://api.hubapi.com/files/v3/folders/by-path/{{ encodeURIComponent($json.folderPath) }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {},
+        "toolDescription": "Get folder by path string (e.g., '/marketing/images')."
+      },
+      "id": "tool-folder-by-path",
+      "name": "Get Folder by Path",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [400, 360],
+      "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.hubapi.com/files/v3/folders",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "options": {},
+        "toolDescription": "Create folder. Body: {name, parentFolderId OR parentFolderPath}. WRITE - respect dry_run."
+      },
+      "id": "tool-create-folder",
+      "name": "Create Folder",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [520, 360],
+      "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://api.hubapi.com/files/v3/folders/{{ $json.folderId }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "options": {},
+        "toolDescription": "Update folder (rename/move). Body: {name, parentFolderId}. WRITE - respect dry_run."
+      },
+      "id": "tool-update-folder",
+      "name": "Update Folder",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [640, 360],
+      "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}
+    },
+    {
+      "parameters": {
+        "method": "DELETE",
+        "url": "=https://api.hubapi.com/files/v3/folders/{{ $json.folderId }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {},
+        "toolDescription": "Archive/delete folder. WRITE - respect dry_run."
+      },
+      "id": "tool-archive-folder",
+      "name": "Archive Folder",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [760, 360],
+      "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}
+    },
+    {
+      "parameters": {
+        "jsCode": "const base = $('Assemble Context Pack').first().json;\nconst started = Number(base._started_ms || Date.now());\nconst duration_ms = Math.max(0, Date.now() - started);\nlet agentRaw = $('AI Agent - Files').first().json;\nconst coerceJson = (val) => {\n  if (val === null || val === undefined) return null;\n  if (typeof val === 'object') return val;\n  if (typeof val !== 'string') return { value: val };\n  const s = val.trim().replace(/^```json\\s*/i, '').replace(/```$/,'').trim();\n  try { return JSON.parse(s); } catch { return { raw: val }; }\n};\nconst agentOut = coerceJson(agentRaw.output ?? agentRaw.text ?? agentRaw);\nconst ok = !(agentOut?.errors && agentOut.errors.length);\nconst esc = (s) => String(s ?? '').replace(/'/g, \"''\");\nconst final = {ok, tool_name: base.tool_name, tool_execution_id: base.tool_execution_id, summary: agentOut?.summary ?? (ok ? 'ok' : 'error'), data: agentOut?.data ?? null, errors: agentOut?.errors ?? [], duration_ms};\nconst outJson = esc(JSON.stringify(final));\nfinal.log_end_sql = `UPDATE tool_execution_log SET output_data = '${outJson}'::jsonb, success = ${final.ok}, duration_ms = ${duration_ms} WHERE id = '${esc(base.tool_execution_id)}'::uuid;`;\nreturn [{ json: final }];"
+      },
+      "id": "parse-output-1",
+      "name": "Parse + Finalize Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [400, 0]
+    },
+    {
+      "parameters": {"operation": "executeQuery", "query": "={{$json.log_end_sql}}", "options": {}},
+      "id": "log-end-1",
+      "name": "Log End",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [640, 0],
+      "credentials": {"postgres": {"id": "BwXy2JHETe47vH1I", "name": "Postgres account 2"}},
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {"options": {}},
+      "type": "@n8n/n8n-nodes-langchain.chatTrigger",
+      "typeVersion": 1.4,
+      "position": [-800, -200],
+      "id": "chat-trigger-1",
+      "name": "When chat message received",
+      "webhookId": "files-chat-test"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nreturn [{json: {user_message: input.chatInput || '', dry_run: true, tool_name: 'hubspot.files', session_id: input.sessionId || 'chat_test'}}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-560, -200],
+      "id": "chat-normalize-1",
+      "name": "Normalize Chat Input"
+    }
+  ],
+  "connections": {
+    "When Executed by Another Workflow": {"main": [[{"node": "Normalize + Build SQL", "type": "main", "index": 0}]]},
+    "When chat message received": {"main": [[{"node": "Normalize Chat Input", "type": "main", "index": 0}]]},
+    "Normalize Chat Input": {"main": [[{"node": "Normalize + Build SQL", "type": "main", "index": 0}]]},
+    "Normalize + Build SQL": {"main": [[{"node": "Log Start", "type": "main", "index": 0}]]},
+    "Log Start": {"main": [[{"node": "Assemble Context Pack", "type": "main", "index": 0}]]},
+    "Assemble Context Pack": {"main": [[{"node": "AI Agent - Files", "type": "main", "index": 0}]]},
+    "AI Agent - Files": {"main": [[{"node": "Parse + Finalize Output", "type": "main", "index": 0}]]},
+    "Parse + Finalize Output": {"main": [[{"node": "Log End", "type": "main", "index": 0}]]},
+    "OpenAI Chat Model": {"ai_languageModel": [[{"node": "AI Agent - Files", "type": "ai_languageModel", "index": 0}]]},
+    "Memory": {"ai_memory": [[{"node": "AI Agent - Files", "type": "ai_memory", "index": 0}]]},
+    "Search Files": {"ai_tool": [[{"node": "AI Agent - Files", "type": "ai_tool", "index": 0}]]},
+    "Get File by ID": {"ai_tool": [[{"node": "AI Agent - Files", "type": "ai_tool", "index": 0}]]},
+    "Upload File": {"ai_tool": [[{"node": "AI Agent - Files", "type": "ai_tool", "index": 0}]]},
+    "Update File": {"ai_tool": [[{"node": "AI Agent - Files", "type": "ai_tool", "index": 0}]]},
+    "Archive File": {"ai_tool": [[{"node": "AI Agent - Files", "type": "ai_tool", "index": 0}]]},
+    "Permanently Delete File": {"ai_tool": [[{"node": "AI Agent - Files", "type": "ai_tool", "index": 0}]]},
+    "Get Signed URL": {"ai_tool": [[{"node": "AI Agent - Files", "type": "ai_tool", "index": 0}]]},
+    "Get File Public URL": {"ai_tool": [[{"node": "AI Agent - Files", "type": "ai_tool", "index": 0}]]},
+    "Import File from URL": {"ai_tool": [[{"node": "AI Agent - Files", "type": "ai_tool", "index": 0}]]},
+    "Search Folders": {"ai_tool": [[{"node": "AI Agent - Files", "type": "ai_tool", "index": 0}]]},
+    "Get Folder by ID": {"ai_tool": [[{"node": "AI Agent - Files", "type": "ai_tool", "index": 0}]]},
+    "Get Folder by Path": {"ai_tool": [[{"node": "AI Agent - Files", "type": "ai_tool", "index": 0}]]},
+    "Create Folder": {"ai_tool": [[{"node": "AI Agent - Files", "type": "ai_tool", "index": 0}]]},
+    "Update Folder": {"ai_tool": [[{"node": "AI Agent - Files", "type": "ai_tool", "index": 0}]]},
+    "Archive Folder": {"ai_tool": [[{"node": "AI Agent - Files", "type": "ai_tool", "index": 0}]]}
+  },
+  "settings": {"executionOrder": "v1"},
+  "tags": [],
+  "pinData": {}
+}

@@ -1,0 +1,754 @@
+{
+  "name": "🔄 HubSpot Lead Sync — Postgres → CRM",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 5
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [-800, 300],
+      "id": "schedule-trigger",
+      "name": "⏱️ Every 5 Minutes"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [-800, 480],
+      "id": "manual-trigger",
+      "name": "When clicking 'Execute workflow'"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT \n  id,\n  research_run_id,\n  company_id,\n  airtable_id,\n  \n  -- DCS\n  dcs_tier,\n  dcs_score,\n  dcs_breakdown,\n  \n  -- Contact\n  contact_firstname,\n  contact_lastname,\n  contact_title,\n  contact_email,\n  contact_phone,\n  contact_linkedin,\n  contact_source,\n  contact_confidence,\n  \n  -- Company\n  company_name,\n  company_domain,\n  company_phone,\n  company_address,\n  company_city,\n  company_state,\n  company_zip,\n  company_rating,\n  company_review_count,\n  company_employee_count,\n  company_year_founded,\n  company_specialties,\n  \n  -- Social Proof\n  google_place_id,\n  google_rating,\n  google_review_count,\n  yelp_rating,\n  facebook_url,\n  \n  -- Intel\n  intel_summary,\n  personalization_hooks,\n  pain_points,\n  buying_signals,\n  red_flags,\n  talking_points,\n  \n  -- Outreach\n  recommended_channel,\n  best_time_to_contact,\n  \n  -- Timestamps\n  enriched_at,\n  created_at\n  \nFROM public.enriched_leads\nWHERE outreach_ready = true \n  AND outreach_status = 'pending'\n  AND hubspot_contact_id IS NULL\nORDER BY dcs_score DESC\nLIMIT 10;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [-560, 380],
+      "id": "db-get-pending",
+      "name": "📥 Get Pending Leads",
+      "credentials": {
+        "postgres": {
+          "id": "xogKD739Qe4gqWBU",
+          "name": "Postgres account"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-has-leads",
+              "leftValue": "={{ $json.id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "exists"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [-320, 380],
+      "id": "if-has-leads",
+      "name": "Has Leads to Sync?"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ⚙️ Prepare HubSpot Company Payload\n// Maps enriched_leads fields to HubSpot Company properties\n\nconst lead = $json;\n\n// Helper to safely get array as string\nconst arrayToString = (arr, max = 5) => {\n  if (!arr) return null;\n  if (typeof arr === 'string') {\n    try { arr = JSON.parse(arr); } catch { return arr; }\n  }\n  if (!Array.isArray(arr)) return null;\n  return arr.slice(0, max).join('; ');\n};\n\n// Helper to safely parse JSON\nconst safeJson = (v) => {\n  if (!v) return null;\n  if (typeof v === 'object') return v;\n  try { return JSON.parse(v); } catch { return null; }\n};\n\nconst dcsBreakdown = safeJson(lead.dcs_breakdown);\n\n// Build HubSpot Company properties\nconst companyProperties = {\n  // Core Identity\n  name: lead.company_name || 'Unknown Company',\n  domain: lead.company_domain || null,\n  phone: lead.company_phone || null,\n  \n  // Address\n  address: lead.company_address || null,\n  city: lead.company_city || null,\n  state: lead.company_state || null,\n  zip: lead.company_zip || null,\n  country: 'United States',\n  \n  // Firmographics\n  numberofemployees: lead.company_employee_count ? String(lead.company_employee_count) : null,\n  founded_year: lead.company_year_founded ? String(lead.company_year_founded) : null,\n  industry: 'Automotive',\n  \n  // Custom: DCS Scoring (You'll need to create these custom properties in HubSpot)\n  dcs_score: lead.dcs_score ? String(lead.dcs_score) : null,\n  dcs_tier: lead.dcs_tier || null,\n  \n  // Custom: Social Proof\n  google_rating: lead.google_rating ? String(lead.google_rating) : null,\n  google_review_count: lead.google_review_count ? String(lead.google_review_count) : null,\n  google_place_id: lead.google_place_id || null,\n  \n  // Custom: Intel\n  intel_summary: lead.intel_summary ? lead.intel_summary.substring(0, 2000) : null,\n  pain_points: arrayToString(lead.pain_points),\n  buying_signals: arrayToString(lead.buying_signals),\n  red_flags: arrayToString(lead.red_flags),\n  personalization_hooks: arrayToString(lead.personalization_hooks),\n  talking_points: arrayToString(lead.talking_points),\n  \n  // Custom: Outreach Strategy\n  recommended_channel: lead.recommended_channel || null,\n  best_contact_time: lead.best_time_to_contact || null,\n  \n  // Custom: Source Tracking\n  research_run_id: lead.research_run_id || null,\n  airtable_id: lead.airtable_id || null,\n  enriched_at: lead.enriched_at || null\n};\n\n// Remove null values for cleaner API call\nconst cleanProperties = Object.fromEntries(\n  Object.entries(companyProperties).filter(([_, v]) => v !== null && v !== '')\n);\n\nreturn [{\n  json: {\n    ...lead,\n    hubspot_company_payload: {\n      properties: cleanProperties\n    },\n    search_domain: lead.company_domain\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-80, 300],
+      "id": "code-prep-company",
+      "name": "⚙️ Prep Company Payload"
+    },
+    {
+      "parameters": {
+        "resource": "company",
+        "operation": "search",
+        "filterGroups": {
+          "values": [
+            {
+              "filters": {
+                "filter": [
+                  {
+                    "propertyName": "domain",
+                    "type": "string",
+                    "operator": "EQ",
+                    "value": "={{ $json.search_domain }}"
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.hubspot",
+      "typeVersion": 2,
+      "position": [160, 300],
+      "id": "hs-search-company",
+      "name": "🔍 Search Company by Domain",
+      "credentials": {
+        "hubSpotOAuth2Api": {
+          "id": "lYfPDbXeRJyLf4I3",
+          "name": "HubSpot OAuth account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-company-exists",
+              "leftValue": "={{ $json.id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "exists"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [400, 300],
+      "id": "if-company-exists",
+      "name": "Company Exists?"
+    },
+    {
+      "parameters": {
+        "resource": "company",
+        "operation": "update",
+        "companyId": "={{ $json.id }}",
+        "updateFields": {
+          "customPropertiesUi": {
+            "customPropertiesValues": [
+              {
+                "property": "dcs_score",
+                "value": "={{ $('⚙️ Prep Company Payload').item.json.hubspot_company_payload.properties.dcs_score }}"
+              },
+              {
+                "property": "dcs_tier",
+                "value": "={{ $('⚙️ Prep Company Payload').item.json.hubspot_company_payload.properties.dcs_tier }}"
+              },
+              {
+                "property": "intel_summary",
+                "value": "={{ $('⚙️ Prep Company Payload').item.json.hubspot_company_payload.properties.intel_summary }}"
+              },
+              {
+                "property": "google_rating",
+                "value": "={{ $('⚙️ Prep Company Payload').item.json.hubspot_company_payload.properties.google_rating }}"
+              },
+              {
+                "property": "pain_points",
+                "value": "={{ $('⚙️ Prep Company Payload').item.json.hubspot_company_payload.properties.pain_points }}"
+              },
+              {
+                "property": "buying_signals",
+                "value": "={{ $('⚙️ Prep Company Payload').item.json.hubspot_company_payload.properties.buying_signals }}"
+              },
+              {
+                "property": "recommended_channel",
+                "value": "={{ $('⚙️ Prep Company Payload').item.json.hubspot_company_payload.properties.recommended_channel }}"
+              }
+            ]
+          }
+        }
+      },
+      "type": "n8n-nodes-base.hubspot",
+      "typeVersion": 2,
+      "position": [640, 200],
+      "id": "hs-update-company",
+      "name": "📝 Update Company",
+      "credentials": {
+        "hubSpotOAuth2Api": {
+          "id": "lYfPDbXeRJyLf4I3",
+          "name": "HubSpot OAuth account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "resource": "company",
+        "operation": "create",
+        "additionalFields": {
+          "name": "={{ $('⚙️ Prep Company Payload').item.json.hubspot_company_payload.properties.name }}",
+          "domain": "={{ $('⚙️ Prep Company Payload').item.json.hubspot_company_payload.properties.domain }}",
+          "phone": "={{ $('⚙️ Prep Company Payload').item.json.hubspot_company_payload.properties.phone }}",
+          "address": "={{ $('⚙️ Prep Company Payload').item.json.hubspot_company_payload.properties.address }}",
+          "city": "={{ $('⚙️ Prep Company Payload').item.json.hubspot_company_payload.properties.city }}",
+          "state": "={{ $('⚙️ Prep Company Payload').item.json.hubspot_company_payload.properties.state }}",
+          "zip": "={{ $('⚙️ Prep Company Payload').item.json.hubspot_company_payload.properties.zip }}",
+          "numberOfEmployees": "={{ $('⚙️ Prep Company Payload').item.json.hubspot_company_payload.properties.numberofemployees }}",
+          "customPropertiesUi": {
+            "customPropertiesValues": [
+              {
+                "property": "dcs_score",
+                "value": "={{ $('⚙️ Prep Company Payload').item.json.hubspot_company_payload.properties.dcs_score }}"
+              },
+              {
+                "property": "dcs_tier",
+                "value": "={{ $('⚙️ Prep Company Payload').item.json.hubspot_company_payload.properties.dcs_tier }}"
+              },
+              {
+                "property": "intel_summary",
+                "value": "={{ $('⚙️ Prep Company Payload').item.json.hubspot_company_payload.properties.intel_summary }}"
+              },
+              {
+                "property": "google_rating",
+                "value": "={{ $('⚙️ Prep Company Payload').item.json.hubspot_company_payload.properties.google_rating }}"
+              },
+              {
+                "property": "google_review_count",
+                "value": "={{ $('⚙️ Prep Company Payload').item.json.hubspot_company_payload.properties.google_review_count }}"
+              },
+              {
+                "property": "pain_points",
+                "value": "={{ $('⚙️ Prep Company Payload').item.json.hubspot_company_payload.properties.pain_points }}"
+              },
+              {
+                "property": "buying_signals",
+                "value": "={{ $('⚙️ Prep Company Payload').item.json.hubspot_company_payload.properties.buying_signals }}"
+              },
+              {
+                "property": "red_flags",
+                "value": "={{ $('⚙️ Prep Company Payload').item.json.hubspot_company_payload.properties.red_flags }}"
+              },
+              {
+                "property": "personalization_hooks",
+                "value": "={{ $('⚙️ Prep Company Payload').item.json.hubspot_company_payload.properties.personalization_hooks }}"
+              },
+              {
+                "property": "talking_points",
+                "value": "={{ $('⚙️ Prep Company Payload').item.json.hubspot_company_payload.properties.talking_points }}"
+              },
+              {
+                "property": "recommended_channel",
+                "value": "={{ $('⚙️ Prep Company Payload').item.json.hubspot_company_payload.properties.recommended_channel }}"
+              },
+              {
+                "property": "best_contact_time",
+                "value": "={{ $('⚙️ Prep Company Payload').item.json.hubspot_company_payload.properties.best_contact_time }}"
+              },
+              {
+                "property": "research_run_id",
+                "value": "={{ $('⚙️ Prep Company Payload').item.json.hubspot_company_payload.properties.research_run_id }}"
+              }
+            ]
+          }
+        }
+      },
+      "type": "n8n-nodes-base.hubspot",
+      "typeVersion": 2,
+      "position": [640, 400],
+      "id": "hs-create-company",
+      "name": "➕ Create Company",
+      "credentials": {
+        "hubSpotOAuth2Api": {
+          "id": "lYfPDbXeRJyLf4I3",
+          "name": "HubSpot OAuth account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {
+          "includeUnpaired": true
+        }
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [880, 300],
+      "id": "merge-company-result",
+      "name": "🤝 Merge Company Result"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ⚙️ Extract Company ID & Prep Contact Payload\n\nconst companyResult = $json;\nconst originalLead = $('⚙️ Prep Company Payload').item.json;\n\n// Get company ID from either create or update result\nconst hubspot_company_id = companyResult.id || companyResult.companyId || null;\n\n// Only proceed if we have email (required for contact)\nconst hasEmail = originalLead.contact_email && originalLead.contact_email.includes('@');\n\nif (!hasEmail) {\n  return [{\n    json: {\n      ...originalLead,\n      hubspot_company_id,\n      hubspot_contact_id: null,\n      skip_contact: true,\n      skip_reason: 'No valid email address'\n    }\n  }];\n}\n\n// Build contact properties\nconst contactProperties = {\n  email: originalLead.contact_email,\n  firstname: originalLead.contact_firstname || null,\n  lastname: originalLead.contact_lastname || null,\n  phone: originalLead.contact_phone || originalLead.company_phone || null,\n  jobtitle: originalLead.contact_title || null,\n  \n  // LinkedIn\n  linkedinbio: originalLead.contact_linkedin || null,\n  \n  // Custom: Source tracking\n  contact_source: originalLead.contact_source || null,\n  contact_confidence: originalLead.contact_confidence ? String(originalLead.contact_confidence) : null,\n  dcs_tier: originalLead.dcs_tier || null,\n  \n  // Lead source\n  hs_lead_status: 'NEW',\n  lifecyclestage: 'lead'\n};\n\n// Remove null values\nconst cleanProperties = Object.fromEntries(\n  Object.entries(contactProperties).filter(([_, v]) => v !== null && v !== '')\n);\n\nreturn [{\n  json: {\n    ...originalLead,\n    hubspot_company_id,\n    skip_contact: false,\n    hubspot_contact_payload: {\n      properties: cleanProperties\n    }\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1120, 300],
+      "id": "code-prep-contact",
+      "name": "⚙️ Prep Contact Payload"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-skip-contact",
+              "leftValue": "={{ $json.skip_contact }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "notEquals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1360, 300],
+      "id": "if-create-contact",
+      "name": "Create Contact?"
+    },
+    {
+      "parameters": {
+        "resource": "contact",
+        "operation": "search",
+        "filterGroups": {
+          "values": [
+            {
+              "filters": {
+                "filter": [
+                  {
+                    "propertyName": "email",
+                    "type": "string",
+                    "operator": "EQ",
+                    "value": "={{ $json.contact_email }}"
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.hubspot",
+      "typeVersion": 2,
+      "position": [1600, 220],
+      "id": "hs-search-contact",
+      "name": "🔍 Search Contact by Email",
+      "credentials": {
+        "hubSpotOAuth2Api": {
+          "id": "lYfPDbXeRJyLf4I3",
+          "name": "HubSpot OAuth account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-contact-exists",
+              "leftValue": "={{ $json.id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "exists"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1840, 220],
+      "id": "if-contact-exists",
+      "name": "Contact Exists?"
+    },
+    {
+      "parameters": {
+        "resource": "contact",
+        "operation": "update",
+        "contactId": "={{ $json.id }}",
+        "updateFields": {
+          "firstName": "={{ $('⚙️ Prep Contact Payload').item.json.hubspot_contact_payload.properties.firstname }}",
+          "lastName": "={{ $('⚙️ Prep Contact Payload').item.json.hubspot_contact_payload.properties.lastname }}",
+          "phone": "={{ $('⚙️ Prep Contact Payload').item.json.hubspot_contact_payload.properties.phone }}",
+          "jobTitle": "={{ $('⚙️ Prep Contact Payload').item.json.hubspot_contact_payload.properties.jobtitle }}",
+          "customPropertiesUi": {
+            "customPropertiesValues": [
+              {
+                "property": "contact_source",
+                "value": "={{ $('⚙️ Prep Contact Payload').item.json.hubspot_contact_payload.properties.contact_source }}"
+              },
+              {
+                "property": "contact_confidence",
+                "value": "={{ $('⚙️ Prep Contact Payload').item.json.hubspot_contact_payload.properties.contact_confidence }}"
+              },
+              {
+                "property": "dcs_tier",
+                "value": "={{ $('⚙️ Prep Contact Payload').item.json.hubspot_contact_payload.properties.dcs_tier }}"
+              }
+            ]
+          }
+        }
+      },
+      "type": "n8n-nodes-base.hubspot",
+      "typeVersion": 2,
+      "position": [2080, 140],
+      "id": "hs-update-contact",
+      "name": "📝 Update Contact",
+      "credentials": {
+        "hubSpotOAuth2Api": {
+          "id": "lYfPDbXeRJyLf4I3",
+          "name": "HubSpot OAuth account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "resource": "contact",
+        "operation": "create",
+        "additionalFields": {
+          "email": "={{ $('⚙️ Prep Contact Payload').item.json.hubspot_contact_payload.properties.email }}",
+          "firstName": "={{ $('⚙️ Prep Contact Payload').item.json.hubspot_contact_payload.properties.firstname }}",
+          "lastName": "={{ $('⚙️ Prep Contact Payload').item.json.hubspot_contact_payload.properties.lastname }}",
+          "phone": "={{ $('⚙️ Prep Contact Payload').item.json.hubspot_contact_payload.properties.phone }}",
+          "jobTitle": "={{ $('⚙️ Prep Contact Payload').item.json.hubspot_contact_payload.properties.jobtitle }}",
+          "leadStatus": "NEW",
+          "lifeCycleStage": "lead",
+          "customPropertiesUi": {
+            "customPropertiesValues": [
+              {
+                "property": "contact_source",
+                "value": "={{ $('⚙️ Prep Contact Payload').item.json.hubspot_contact_payload.properties.contact_source }}"
+              },
+              {
+                "property": "contact_confidence",
+                "value": "={{ $('⚙️ Prep Contact Payload').item.json.hubspot_contact_payload.properties.contact_confidence }}"
+              },
+              {
+                "property": "dcs_tier",
+                "value": "={{ $('⚙️ Prep Contact Payload').item.json.hubspot_contact_payload.properties.dcs_tier }}"
+              }
+            ]
+          }
+        }
+      },
+      "type": "n8n-nodes-base.hubspot",
+      "typeVersion": 2,
+      "position": [2080, 300],
+      "id": "hs-create-contact",
+      "name": "➕ Create Contact",
+      "credentials": {
+        "hubSpotOAuth2Api": {
+          "id": "lYfPDbXeRJyLf4I3",
+          "name": "HubSpot OAuth account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {
+          "includeUnpaired": true
+        }
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [2320, 220],
+      "id": "merge-contact-result",
+      "name": "🤝 Merge Contact Result"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ⚙️ Extract Contact ID & Prepare Association\n\nconst contactResult = $json;\nconst prepData = $('⚙️ Prep Contact Payload').item.json;\n\nconst hubspot_contact_id = contactResult.id || contactResult.contactId || null;\nconst hubspot_company_id = prepData.hubspot_company_id;\n\nreturn [{\n  json: {\n    ...prepData,\n    hubspot_contact_id,\n    needs_association: !!(hubspot_contact_id && hubspot_company_id)\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2560, 220],
+      "id": "code-extract-contact-id",
+      "name": "⚙️ Extract Contact ID"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-needs-assoc",
+              "leftValue": "={{ $json.needs_association }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [2800, 220],
+      "id": "if-needs-association",
+      "name": "Needs Association?"
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "=https://api.hubapi.com/crm/v3/objects/contacts/{{ $json.hubspot_contact_id }}/associations/companies/{{ $json.hubspot_company_id }}/contact_to_company",
+        "authentication": "oAuth2",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [3040, 140],
+      "id": "hs-create-association",
+      "name": "🔗 Associate Contact → Company",
+      "credentials": {
+        "hubSpotOAuth2Api": {
+          "id": "lYfPDbXeRJyLf4I3",
+          "name": "HubSpot OAuth account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {
+          "includeUnpaired": true
+        }
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [3280, 300],
+      "id": "merge-all-paths",
+      "name": "🤝 Merge All Paths"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ⚙️ Build Final Update for Postgres\n\n// Try to get data from the most complete path\nconst extractId = $('⚙️ Extract Contact ID');\nconst prepContact = $('⚙️ Prep Contact Payload');\nconst prepCompany = $('⚙️ Prep Company Payload');\n\nlet data = {};\n\n// Try extract first, then prep contact, then prep company\nif (extractId.all().length > 0) {\n  data = extractId.first().json;\n} else if (prepContact.all().length > 0) {\n  data = prepContact.first().json;\n} else if (prepCompany.all().length > 0) {\n  data = prepCompany.first().json;\n} else {\n  data = $json;\n}\n\nconst hubspot_company_id = data.hubspot_company_id || null;\nconst hubspot_contact_id = data.hubspot_contact_id || null;\nconst research_run_id = data.research_run_id;\n\n// Determine sync status\nlet outreach_status = 'synced';\nlet sync_notes = [];\n\nif (hubspot_company_id) sync_notes.push(`Company: ${hubspot_company_id}`);\nelse sync_notes.push('Company: FAILED');\n\nif (hubspot_contact_id) sync_notes.push(`Contact: ${hubspot_contact_id}`);\nelse if (data.skip_contact) sync_notes.push(`Contact: Skipped (${data.skip_reason})`);\nelse sync_notes.push('Contact: FAILED');\n\n// If neither succeeded, mark as failed\nif (!hubspot_company_id && !hubspot_contact_id) {\n  outreach_status = 'sync_failed';\n}\n\nreturn [{\n  json: {\n    research_run_id,\n    hubspot_company_id: hubspot_company_id ? String(hubspot_company_id) : null,\n    hubspot_contact_id: hubspot_contact_id ? String(hubspot_contact_id) : null,\n    outreach_status,\n    sync_notes: sync_notes.join('; ')\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3520, 300],
+      "id": "code-build-update",
+      "name": "⚙️ Build Postgres Update"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE public.enriched_leads \nSET \n  hubspot_company_id = COALESCE($2, hubspot_company_id),\n  hubspot_contact_id = COALESCE($3, hubspot_contact_id),\n  outreach_status = $4,\n  outreach_started_at = CASE WHEN $4 = 'synced' THEN NOW() ELSE outreach_started_at END,\n  updated_at = NOW()\nWHERE research_run_id = $1\nRETURNING research_run_id, hubspot_company_id, hubspot_contact_id, outreach_status;",
+        "options": {
+          "queryReplacement": "={{ [$json.research_run_id, $json.hubspot_company_id, $json.hubspot_contact_id, $json.outreach_status] }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [3760, 300],
+      "id": "db-update-status",
+      "name": "🗄️ Update enriched_leads Status",
+      "credentials": {
+        "postgres": {
+          "id": "xogKD739Qe4gqWBU",
+          "name": "Postgres account"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// 📊 Generate Sync Summary\n\nconst items = $input.all();\n\nlet synced = 0;\nlet failed = 0;\nlet skipped = 0;\n\nfor (const item of items) {\n  const status = item.json.outreach_status;\n  if (status === 'synced') synced++;\n  else if (status === 'sync_failed') failed++;\n  else skipped++;\n}\n\nconst summary = `HubSpot Sync Complete: ${synced} synced, ${failed} failed, ${skipped} skipped`;\n\nconsole.log(summary);\n\nreturn [{\n  json: {\n    success: true,\n    total_processed: items.length,\n    synced,\n    failed,\n    skipped,\n    summary\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [4000, 300],
+      "id": "code-summary",
+      "name": "📊 Sync Summary"
+    },
+    {
+      "parameters": {
+        "jsCode": "// No leads to sync\nreturn [{\n  json: {\n    success: true,\n    message: 'No pending leads to sync',\n    total_processed: 0\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-80, 480],
+      "id": "code-no-leads",
+      "name": "📭 No Leads to Sync"
+    }
+  ],
+  "connections": {
+    "⏱️ Every 5 Minutes": {
+      "main": [
+        [{ "node": "📥 Get Pending Leads", "type": "main", "index": 0 }]
+      ]
+    },
+    "When clicking 'Execute workflow'": {
+      "main": [
+        [{ "node": "📥 Get Pending Leads", "type": "main", "index": 0 }]
+      ]
+    },
+    "📥 Get Pending Leads": {
+      "main": [
+        [{ "node": "Has Leads to Sync?", "type": "main", "index": 0 }]
+      ]
+    },
+    "Has Leads to Sync?": {
+      "main": [
+        [{ "node": "⚙️ Prep Company Payload", "type": "main", "index": 0 }],
+        [{ "node": "📭 No Leads to Sync", "type": "main", "index": 0 }]
+      ]
+    },
+    "⚙️ Prep Company Payload": {
+      "main": [
+        [{ "node": "🔍 Search Company by Domain", "type": "main", "index": 0 }]
+      ]
+    },
+    "🔍 Search Company by Domain": {
+      "main": [
+        [{ "node": "Company Exists?", "type": "main", "index": 0 }]
+      ]
+    },
+    "Company Exists?": {
+      "main": [
+        [{ "node": "📝 Update Company", "type": "main", "index": 0 }],
+        [{ "node": "➕ Create Company", "type": "main", "index": 0 }]
+      ]
+    },
+    "📝 Update Company": {
+      "main": [
+        [{ "node": "🤝 Merge Company Result", "type": "main", "index": 0 }]
+      ]
+    },
+    "➕ Create Company": {
+      "main": [
+        [{ "node": "🤝 Merge Company Result", "type": "main", "index": 1 }]
+      ]
+    },
+    "🤝 Merge Company Result": {
+      "main": [
+        [{ "node": "⚙️ Prep Contact Payload", "type": "main", "index": 0 }]
+      ]
+    },
+    "⚙️ Prep Contact Payload": {
+      "main": [
+        [{ "node": "Create Contact?", "type": "main", "index": 0 }]
+      ]
+    },
+    "Create Contact?": {
+      "main": [
+        [{ "node": "🔍 Search Contact by Email", "type": "main", "index": 0 }],
+        [{ "node": "🤝 Merge All Paths", "type": "main", "index": 1 }]
+      ]
+    },
+    "🔍 Search Contact by Email": {
+      "main": [
+        [{ "node": "Contact Exists?", "type": "main", "index": 0 }]
+      ]
+    },
+    "Contact Exists?": {
+      "main": [
+        [{ "node": "📝 Update Contact", "type": "main", "index": 0 }],
+        [{ "node": "➕ Create Contact", "type": "main", "index": 0 }]
+      ]
+    },
+    "📝 Update Contact": {
+      "main": [
+        [{ "node": "🤝 Merge Contact Result", "type": "main", "index": 0 }]
+      ]
+    },
+    "➕ Create Contact": {
+      "main": [
+        [{ "node": "🤝 Merge Contact Result", "type": "main", "index": 1 }]
+      ]
+    },
+    "🤝 Merge Contact Result": {
+      "main": [
+        [{ "node": "⚙️ Extract Contact ID", "type": "main", "index": 0 }]
+      ]
+    },
+    "⚙️ Extract Contact ID": {
+      "main": [
+        [{ "node": "Needs Association?", "type": "main", "index": 0 }]
+      ]
+    },
+    "Needs Association?": {
+      "main": [
+        [{ "node": "🔗 Associate Contact → Company", "type": "main", "index": 0 }],
+        [{ "node": "🤝 Merge All Paths", "type": "main", "index": 0 }]
+      ]
+    },
+    "🔗 Associate Contact → Company": {
+      "main": [
+        [{ "node": "🤝 Merge All Paths", "type": "main", "index": 0 }]
+      ]
+    },
+    "🤝 Merge All Paths": {
+      "main": [
+        [{ "node": "⚙️ Build Postgres Update", "type": "main", "index": 0 }]
+      ]
+    },
+    "⚙️ Build Postgres Update": {
+      "main": [
+        [{ "node": "🗄️ Update enriched_leads Status", "type": "main", "index": 0 }]
+      ]
+    },
+    "🗄️ Update enriched_leads Status": {
+      "main": [
+        [{ "node": "📊 Sync Summary", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "pinData": {},
+  "meta": {
+    "instanceId": "2d82e0d27c2a88970c7ba9693b6bad225f1d31f9cf0d392d33dd9cabf99f185f"
+  }
+}

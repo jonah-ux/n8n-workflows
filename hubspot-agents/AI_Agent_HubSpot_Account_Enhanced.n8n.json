@@ -1,0 +1,985 @@
+{
+  "name": "AI Agent - HubSpot Account (Enhanced)",
+  "nodes": [
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "request_id",
+              "type": "string"
+            },
+            {
+              "name": "session_id",
+              "type": "string"
+            },
+            {
+              "name": "chat_id",
+              "type": "string"
+            },
+            {
+              "name": "user_id",
+              "type": "string"
+            },
+            {
+              "name": "user_message",
+              "type": "string"
+            },
+            {
+              "name": "object_type",
+              "type": "string"
+            },
+            {
+              "name": "object_id",
+              "type": "string"
+            },
+            {
+              "name": "company_id",
+              "type": "string"
+            },
+            {
+              "name": "contact_id",
+              "type": "string"
+            },
+            {
+              "name": "deal_id",
+              "type": "string"
+            },
+            {
+              "name": "caller_workflow_id",
+              "type": "string"
+            },
+            {
+              "name": "caller_execution_id",
+              "type": "string"
+            },
+            {
+              "name": "tool_name",
+              "type": "string"
+            },
+            {
+              "name": "dry_run",
+              "type": "boolean"
+            },
+            {
+              "name": "conversation_id",
+              "type": "string"
+            },
+            {
+              "name": "hs_portal_id",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "id": "trigger-1",
+      "name": "When Executed by Another Workflow",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        -800,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\n\nconst nowIso = new Date().toISOString();\nconst startedMs = Date.now();\n\nconst tool_name = input.tool_name || 'hubspot.account';\nconst dry_run = (input.dry_run === undefined || input.dry_run === null) ? true : !!input.dry_run;\n\nconst q = (v) => (v === undefined || v === null || v === '') ? null : String(v);\n\nconst note_scope = 'hubspot';\nconst note_key = input.hs_portal_id \n  ? `account.${input.hs_portal_id}` \n  : 'account.general';\n\nconst payload_for_log = {\n  ...input,\n  tool_name,\n  dry_run,\n  note_scope,\n  note_key,\n  started_at: nowIso,\n  _started_ms: startedMs\n};\n\n// Parameterized SQL for log_start\nconst log_start_sql = `\nINSERT INTO tool_execution_log (\n  tool_name,\n  input_data,\n  success,\n  conversation_id,\n  user_id,\n  required_approval\n)\nVALUES ($1, $2::jsonb, false, $3, $4, $5)\nRETURNING id;\n`;\n\nconst log_start_params = [\n  tool_name,\n  JSON.stringify(payload_for_log),\n  q(input.conversation_id),\n  q(input.user_id),\n  !dry_run\n];\n\n// Parameterized SQL for context loading (account-level context)\nconst ctx_sql = `\nSELECT jsonb_build_object(\n  'agent_notes', (\n    SELECT COALESCE(jsonb_agg(n ORDER BY n.updated_at DESC), '[]'::jsonb)\n    FROM agent_notes n\n    WHERE n.scope = $1\n      AND n.note_key = $2\n    LIMIT 10\n  ),\n  'recent_account_queries', (\n    SELECT COALESCE(jsonb_agg(\n      jsonb_build_object(\n        'tool_name', tel.tool_name,\n        'created_at', tel.created_at,\n        'success', tel.success\n      ) ORDER BY tel.created_at DESC\n    ), '[]'::jsonb)\n    FROM tool_execution_log tel\n    WHERE tel.tool_name LIKE 'hubspot.account%'\n    LIMIT 5\n  )\n) AS context;\n`;\n\nconst ctx_params = [\n  note_scope,\n  note_key\n];\n\nreturn [{\n  json: {\n    ...payload_for_log,\n    log_start_sql,\n    log_start_params,\n    ctx_sql,\n    ctx_params\n  }\n}];"
+      },
+      "id": "normalize-1",
+      "name": "Normalize + Build SQL",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -560,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{$json.log_start_sql}}",
+        "options": {
+          "queryReplacement": "={{ $json.log_start_params }}"
+        }
+      },
+      "id": "log-start-1",
+      "name": "Log Start (tool_execution_log)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        -320,
+        -80
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "BwXy2JHETe47vH1I",
+          "name": "Postgres account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{$json.ctx_sql}}",
+        "options": {
+          "queryReplacement": "={{ $json.ctx_params }}"
+        }
+      },
+      "id": "load-context-1",
+      "name": "Load Context",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        -320,
+        80
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "BwXy2JHETe47vH1I",
+          "name": "Postgres account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const base = $('Normalize + Build SQL').first().json;\n\nconst logStart = $('Log Start (tool_execution_log)').first().json;\nconst tool_execution_id = (logStart && logStart.id) ? logStart.id : null;\n\nconst ctxRows = $('Load Context').first().json;\nconst context_pack = (ctxRows && ctxRows.context) ? ctxRows.context : {};\n\nreturn [{\n  json: {\n    ...base,\n    tool_execution_id,\n    context_pack\n  }\n}];"
+      },
+      "id": "assemble-1",
+      "name": "Assemble Context Pack",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -80,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "text": "={{ \n[\n  \"USER_REQUEST:\",\n  ($json.user_message || \"\").toString(),\n  \"\",\n  \"RUNTIME:\",\n  JSON.stringify({\n    tool_name: $json.tool_name || \"hubspot.account\",\n    dry_run: $json.dry_run ?? true,\n    session_id: $json.session_id,\n    request_id: $json.request_id,\n    conversation_id: $json.conversation_id,\n    hs_portal_id: $json.hs_portal_id,\n    user_id: $json.user_id,\n    caller_workflow_id: $json.caller_workflow_id,\n    caller_execution_id: $json.caller_execution_id\n  }, null, 2),\n  \"\",\n  \"CONTEXT_PACK (DB):\",\n  JSON.stringify($json.context_pack ?? {}, null, 2)\n].join(\"\\n\")\n}}\n",
+        "options": {
+          "maxIterations": 15,
+          "systemMessage": "You are the HubSpot ACCOUNT Agent.\n\nYour job:\n- Provide account-level information and administration for HubSpot portals.\n- Query account details, API usage, audit logs, users, pipelines, properties, and object schemas.\n- Return ONLY valid JSON in the specified output schema.\n\nINPUTS YOU RECEIVE:\n- USER_REQUEST (plain text)\n- RUNTIME (json): includes tool_name, dry_run, ids, hs_portal_id\n- CONTEXT_PACK (json): database context if available\n\nHARD RULES:\n1) Always use tools for factual data. Do NOT guess.\n2) DRY RUN ENFORCEMENT:\n   - Most account tools are READ-ONLY and safe to call.\n   - If any write operation exists and dry_run=true: return a proposed plan + exact tool + payload, but do not execute.\n3) If a required argument is missing, ask for it in errors[] and do not call the tool.\n\nAVAILABLE TOOLS (USE THESE NAMES EXACTLY):\n\nACCOUNT INFORMATION:\n- Get Account Details - Get detailed account information including portal ID, timezone, currency, UTM tracking settings\n- Get Account Information - Get basic account/portal information\n- Get API Usage - Get current API usage statistics for the account\n- Get Daily API Limit - Get the daily API call limit for the account\n\nOBJECT COUNTS:\n- Count Contacts - Get total count of contacts in the portal\n- Count Deals - Get total count of deals in the portal\n- Count Companies - Get total count of companies in the portal\n- Count Tickets - Get total count of tickets in the portal\n\nOWNERS & USERS:\n- Get Account Owners - List all owners (users who can be assigned to records)\n- List Users (Provisioning) - List all users in the account via Provisioning API\n\nPIPELINES:\n- List Pipelines - List all pipelines for an object type (deals, tickets, etc.)\n- Get Pipeline - Get details of a specific pipeline including stages\n\nPROPERTIES & SCHEMAS:\n- List Properties - List all properties for an object type (contacts, companies, deals, tickets)\n- Get Property - Get details of a specific property including options for enumerations\n\nAUDIT & SECURITY:\n- Get Audit Logs - Get account audit logs showing user actions, security events, and changes\n\nCOMMON USE CASES:\n1. \"What's my API usage?\" -> Use Get API Usage or Get Daily API Limit\n2. \"How many contacts/deals do we have?\" -> Use Count tools\n3. \"Who are the users in our account?\" -> Use List Users or Get Account Owners\n4. \"What pipelines do we have for deals?\" -> Use List Pipelines with objectType=deals\n5. \"What custom properties exist for contacts?\" -> Use List Properties with objectType=contacts\n6. \"Show me recent audit logs\" -> Use Get Audit Logs\n7. \"What's our portal ID and timezone?\" -> Use Get Account Details\n\nOBJECT TYPES FOR PIPELINES/PROPERTIES:\n- contacts\n- companies\n- deals\n- tickets\n- quotes\n- line_items\n\nOUTPUT FORMAT (RETURN JSON ONLY):\n{\n  \"summary\": \"short human summary\",\n  \"data\": { \"any\": \"tool results or extracted fields\" },\n  \"tool_calls\": [\n    { \"tool\": \"Tool Name\", \"arguments\": { } }\n  ],\n  \"errors\": [\n    { \"code\": \"MISSING_ARG|DRY_RUN_BLOCK|TOOL_ERROR\", \"message\": \"...\" }\n  ],\n  \"notes_to_save\": null\n}"
+        },
+        "promptType": "define"
+      },
+      "id": "agent-1",
+      "name": "AI Agent - Account",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        160,
+        0
+      ],
+      "alwaysOutputData": true,
+      "retryOnFail": true,
+      "waitBetweenTries": 3000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "list",
+          "value": "gpt-4o",
+          "cachedResultName": "gpt-4o"
+        },
+        "options": {}
+      },
+      "id": "llm-1",
+      "name": "OpenAI Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [
+        -80,
+        200
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "Lb7LQd5GQa1bZ9yX",
+          "name": "OpenAi account 4"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sessionKey": "session_id",
+        "sessionIdType": "customKey"
+      },
+      "id": "memory-1",
+      "name": "Memory",
+      "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
+      "typeVersion": 1.3,
+      "position": [
+        40,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://api.hubapi.com/account-info/v3/details",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {},
+        "toolDescription": "Get detailed account information including portal ID, timezone, currency, company info, UTM tracking settings, and data hosting location. Returns comprehensive account configuration."
+      },
+      "id": "tool-account-details",
+      "name": "Get Account Details",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        160,
+        200
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "https://api.hubapi.com/account-info/v3/api-usage/daily",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {},
+        "toolDescription": "Get current API usage statistics for the account. Returns daily usage breakdown showing calls made and remaining quota."
+      },
+      "id": "tool-api-usage",
+      "name": "Get API Usage",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        280,
+        200
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "https://api.hubapi.com/account-info/v3/api-usage/daily/private-apps",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {},
+        "toolDescription": "Get the daily API call limit and usage for private apps in the account. Shows maximum allowed calls and current consumption."
+      },
+      "id": "tool-daily-limit",
+      "name": "Get Daily API Limit",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        400,
+        200
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.hubapi.com/crm/v3/objects/contacts/search",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\"limit\": 0}",
+        "options": {},
+        "toolDescription": "Get total count of contacts in the HubSpot portal. Returns the total number of contact records."
+      },
+      "id": "tool-count-contacts",
+      "name": "Count Contacts",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        520,
+        200
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.hubapi.com/crm/v3/objects/deals/search",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\"limit\": 0}",
+        "options": {},
+        "toolDescription": "Get total count of deals in the HubSpot portal. Returns the total number of deal records."
+      },
+      "id": "tool-count-deals",
+      "name": "Count Deals",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        640,
+        200
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.hubapi.com/crm/v3/objects/companies/search",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\"limit\": 0}",
+        "options": {},
+        "toolDescription": "Get total count of companies in the HubSpot portal. Returns the total number of company records."
+      },
+      "id": "tool-count-companies",
+      "name": "Count Companies",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        760,
+        200
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.hubapi.com/crm/v3/objects/tickets/search",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\"limit\": 0}",
+        "options": {},
+        "toolDescription": "Get total count of tickets in the HubSpot portal. Returns the total number of ticket records."
+      },
+      "id": "tool-count-tickets",
+      "name": "Count Tickets",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        880,
+        200
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "https://api.hubapi.com/crm/v3/owners",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "specifyQuery": "json",
+        "options": {},
+        "toolDescription": "List all HubSpot owners (users who can be assigned to records). Returns id, email, firstName, lastName, teams, and active status. Use query params: limit, after, email (filter by email)."
+      },
+      "id": "tool-owners",
+      "name": "Get Account Owners",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        160,
+        360
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "=https://api.hubapi.com/crm/v3/pipelines/{{ $json.objectType || 'deals' }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {},
+        "toolDescription": "List all pipelines for a given object type. Specify objectType (deals, tickets). Returns pipeline ID, label, displayOrder, and stages with their properties."
+      },
+      "id": "tool-list-pipelines",
+      "name": "List Pipelines",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        280,
+        360
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "=https://api.hubapi.com/crm/v3/pipelines/{{ $json.objectType || 'deals' }}/{{ $json.pipelineId }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {},
+        "toolDescription": "Get details of a specific pipeline including all stages. Specify objectType (deals, tickets) and pipelineId. Returns pipeline configuration and stage definitions."
+      },
+      "id": "tool-get-pipeline",
+      "name": "Get Pipeline",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        400,
+        360
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "=https://api.hubapi.com/crm/v3/properties/{{ $json.objectType || 'contacts' }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {},
+        "toolDescription": "List all properties for an object type. Specify objectType (contacts, companies, deals, tickets, quotes, line_items). Returns property definitions including name, label, type, fieldType, groupName, and options for enumeration types."
+      },
+      "id": "tool-list-properties",
+      "name": "List Properties",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        520,
+        360
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "=https://api.hubapi.com/crm/v3/properties/{{ $json.objectType || 'contacts' }}/{{ $json.propertyName }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {},
+        "toolDescription": "Get details of a specific property including options for enumeration properties. Specify objectType (contacts, companies, deals, tickets) and propertyName. Returns full property definition."
+      },
+      "id": "tool-get-property",
+      "name": "Get Property",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        640,
+        360
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "https://api.hubapi.com/settings/v3/users",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "specifyQuery": "json",
+        "options": {},
+        "toolDescription": "List all users in the HubSpot account via Settings/Provisioning API. Returns user ID, email, roleIds, primaryTeamId, and sendWelcomeEmail status. Use query params: limit, after."
+      },
+      "id": "tool-list-users",
+      "name": "List Users (Provisioning)",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        760,
+        360
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "https://api.hubapi.com/account-info/v3/activity/audit-logs",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "specifyQuery": "json",
+        "options": {},
+        "toolDescription": "Get account audit logs showing user actions, security events, and configuration changes. Use query params: after (pagination cursor), limit (max results), userId (filter by user), eventType (filter by event type: LOGIN, EXPORT, PROPERTY_CREATE, etc.), objectType, objectId, occurredAfter, occurredBefore (ISO timestamps for date range). Returns timestamped log entries with actor, action, and affected resources."
+      },
+      "id": "tool-audit-logs",
+      "name": "Get Audit Logs",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        880,
+        360
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const base = $('Assemble Context Pack').first().json;\n\nconst started = Number(base._started_ms || Date.now());\nconst duration_ms = Math.max(0, Date.now() - started);\n\nlet agentRaw = $('AI Agent - Account').first().json;\n\nconst coerceJson = (val) => {\n  if (val === null || val === undefined) return null;\n  if (typeof val === 'object') return val;\n  if (typeof val !== 'string') return { value: val };\n  const s = val.trim().replace(/^```json\\s*/i, '').replace(/```$/,'').trim();\n  try { return JSON.parse(s); } catch { return { raw: val }; }\n};\n\nconst agentOut = coerceJson(agentRaw.output ?? agentRaw.text ?? agentRaw);\n\nconst ok = !(agentOut?.errors && agentOut.errors.length);\n\nconst esc = (s) => String(s ?? '').replace(/'/g, \"''\");\n\nconst final = {\n  ok,\n  tool_name: base.tool_name,\n  tool_execution_id: base.tool_execution_id,\n  session_id: base.session_id,\n  conversation_id: base.conversation_id,\n  dry_run: base.dry_run,\n  summary: agentOut?.summary ?? (ok ? 'ok' : 'error'),\n  data: agentOut?.data ?? null,\n  tool_calls: agentOut?.tool_calls ?? [],\n  errors: agentOut?.errors ?? [],\n  notes_to_save: agentOut?.notes_to_save ?? null,\n  context_used: base.context_pack ?? {},\n  duration_ms\n};\n\nconst outJson = esc(JSON.stringify(final));\nconst errText = final.errors?.length ? esc(JSON.stringify(final.errors)) : null;\n\nfinal.log_end_sql = `\nUPDATE tool_execution_log\nSET\n  output_data = '${outJson}'::jsonb,\n  success = ${final.ok ? 'true' : 'false'},\n  error = ${errText ? `'${errText}'` : 'null'},\n  duration_ms = ${Number.isFinite(final.duration_ms) ? final.duration_ms : 'null'}\nWHERE id = '${esc(base.tool_execution_id)}'::uuid;\n`;\n\nconst note_scope = base.note_scope || 'hubspot';\nconst note_key = base.note_key || 'account.general';\n\nif (final.notes_to_save && typeof final.notes_to_save === 'string' && final.notes_to_save.trim() !== '') {\n  const noteObj = { text: final.notes_to_save.trim() };\n  const noteJson = esc(JSON.stringify(noteObj));\n  final.save_notes_sql = `\nINSERT INTO agent_notes (scope, note_key, note)\nVALUES ('${esc(note_scope)}', '${esc(note_key)}', '${noteJson}'::jsonb);\n`;\n}\n\nreturn [{ json: final }];"
+      },
+      "id": "parse-output-1",
+      "name": "Parse + Finalize Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        400,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{$json.log_end_sql}}",
+        "options": {
+          "queryReplacement": "={{ $json.log_end_params }}"
+        }
+      },
+      "id": "log-end-1",
+      "name": "Log End (tool_execution_log)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        640,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "BwXy2JHETe47vH1I",
+          "name": "Postgres account 2"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.chatTrigger",
+      "typeVersion": 1.4,
+      "position": [
+        -800,
+        -200
+      ],
+      "id": "chat-trigger-1",
+      "name": "When chat message received",
+      "webhookId": "account-chat-test"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\n\nconst chatText =\n  input.chatInput ||\n  input.message?.text ||\n  input.text ||\n  input.body?.message ||\n  input.body?.text ||\n  '';\n\nreturn [{\n  json: {\n    user_message: String(chatText || ''),\n    dry_run: true,\n    tool_name: 'hubspot.account',\n    session_id: input.sessionId || input.session_id || 'chat_test',\n    conversation_id: input.conversationId || input.conversation_id || 'chat_test',\n    chat_id: input.chatId || input.chat_id || null,\n    user_id: input.userId || input.user_id || null,\n    request_id: input.request_id || null,\n    caller_workflow_id: input.caller_workflow_id || null,\n    caller_execution_id: input.caller_execution_id || null,\n    company_id: input.company_id || null,\n    contact_id: input.contact_id || null,\n    deal_id: input.deal_id || null,\n    hs_portal_id: input.hs_portal_id || null,\n    object_type: 'account',\n    object_id: null\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -560,
+        -200
+      ],
+      "id": "chat-normalize-1",
+      "name": "Normalize Chat Input"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "has_notes",
+              "leftValue": "={{ $json.save_notes_sql }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        640,
+        -120
+      ],
+      "id": "has-notes-1",
+      "name": "Has Notes to Save?",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{$json.save_notes_sql}}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        880,
+        -160
+      ],
+      "id": "save-notes-1",
+      "name": "Save Agent Notes",
+      "credentials": {
+        "postgres": {
+          "id": "BwXy2JHETe47vH1I",
+          "name": "Postgres account 2"
+        }
+      },
+      "onError": "continueRegularOutput"
+    }
+  ],
+  "connections": {
+    "When Executed by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "Normalize + Build SQL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "When chat message received": {
+      "main": [
+        [
+          {
+            "node": "Normalize Chat Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Chat Input": {
+      "main": [
+        [
+          {
+            "node": "Normalize + Build SQL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize + Build SQL": {
+      "main": [
+        [
+          {
+            "node": "Log Start (tool_execution_log)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Load Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Start (tool_execution_log)": {
+      "main": [
+        [
+          {
+            "node": "Assemble Context Pack",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Context": {
+      "main": [
+        [
+          {
+            "node": "Assemble Context Pack",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Assemble Context Pack": {
+      "main": [
+        [
+          {
+            "node": "AI Agent - Account",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent - Account": {
+      "main": [
+        [
+          {
+            "node": "Parse + Finalize Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse + Finalize Output": {
+      "main": [
+        [
+          {
+            "node": "Log End (tool_execution_log)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Has Notes to Save?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Notes to Save?": {
+      "main": [
+        [
+          {
+            "node": "Save Agent Notes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent - Account",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Memory": {
+      "ai_memory": [
+        [
+          {
+            "node": "AI Agent - Account",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Account Details": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Account",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get API Usage": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Account",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Daily API Limit": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Account",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Count Contacts": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Account",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Count Deals": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Account",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Count Companies": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Account",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Count Tickets": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Account",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Account Owners": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Account",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "List Pipelines": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Account",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Pipeline": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Account",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "List Properties": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Account",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Property": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Account",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "List Users (Provisioning)": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Account",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Audit Logs": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Account",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": [],
+  "pinData": {}
+}

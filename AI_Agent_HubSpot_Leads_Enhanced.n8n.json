@@ -1,0 +1,691 @@
+{
+  "name": "AI Agent - HubSpot Leads (Enhanced)",
+  "nodes": [
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {"name": "request_id", "type": "string"},
+            {"name": "session_id", "type": "string"},
+            {"name": "chat_id", "type": "string"},
+            {"name": "user_id", "type": "string"},
+            {"name": "user_message", "type": "string"},
+            {"name": "object_type", "type": "string"},
+            {"name": "object_id", "type": "string"},
+            {"name": "company_id", "type": "string"},
+            {"name": "contact_id", "type": "string"},
+            {"name": "deal_id", "type": "string"},
+            {"name": "lead_id", "type": "string"},
+            {"name": "caller_workflow_id", "type": "string"},
+            {"name": "caller_execution_id", "type": "string"},
+            {"name": "tool_name", "type": "string"},
+            {"name": "dry_run", "type": "boolean"},
+            {"name": "conversation_id", "type": "string"},
+            {"name": "hs_portal_id", "type": "string"}
+          ]
+        }
+      },
+      "id": "trigger-1",
+      "name": "When Executed by Another Workflow",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [-800, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\n\nconst nowIso = new Date().toISOString();\nconst startedMs = Date.now();\n\nconst tool_name = input.tool_name || 'hubspot.leads';\nconst dry_run = (input.dry_run === undefined || input.dry_run === null) ? true : !!input.dry_run;\n\nconst q = (v) => (v === undefined || v === null || v === '') ? null : String(v);\n\nconst note_scope = 'hubspot';\nconst note_key = input.lead_id \n  ? `lead.${input.lead_id}` \n  : (input.object_type && input.object_id ? `${input.object_type}.${input.object_id}` : 'leads.unknown');\n\nconst payload_for_log = {\n  ...input,\n  tool_name,\n  dry_run,\n  note_scope,\n  note_key,\n  started_at: nowIso,\n  _started_ms: startedMs\n};\n\nconst log_start_sql = `\nINSERT INTO tool_execution_log (\n  tool_name,\n  input_data,\n  success,\n  conversation_id,\n  user_id,\n  required_approval\n)\nVALUES ($1, $2::jsonb, false, $3, $4, $5)\nRETURNING id;\n`;\n\nconst log_start_params = [\n  tool_name,\n  JSON.stringify(payload_for_log),\n  q(input.conversation_id),\n  q(input.user_id),\n  !dry_run\n];\n\nconst ctx_sql = `\nSELECT jsonb_build_object(\n  'hubspot_lead', (\n    SELECT to_jsonb(l)\n    FROM hubspot_leads l\n    WHERE l.id = $1\n    LIMIT 1\n  ),\n  'associated_contact', (\n    SELECT to_jsonb(ct)\n    FROM hubspot_contacts ct\n    WHERE ct.id = $2\n    LIMIT 1\n  ),\n  'associated_company', (\n    SELECT to_jsonb(c)\n    FROM hubspot_companies c\n    WHERE c.id = $3\n    LIMIT 1\n  ),\n  'agent_notes', (\n    SELECT COALESCE(jsonb_agg(n ORDER BY n.updated_at DESC), '[]'::jsonb)\n    FROM agent_notes n\n    WHERE n.scope = $4\n      AND n.note_key = $5\n    LIMIT 10\n  ),\n  'lead_properties_sample', (\n    SELECT jsonb_agg(p.attrs->'properties')\n    FROM hubspot_leads p\n    LIMIT 3\n  )\n) AS context;\n`;\n\nconst ctx_params = [\n  q(input.lead_id),\n  q(input.contact_id),\n  q(input.company_id),\n  note_scope,\n  note_key\n];\n\nreturn [{\n  json: {\n    ...payload_for_log,\n    log_start_sql,\n    log_start_params,\n    ctx_sql,\n    ctx_params\n  }\n}];"
+      },
+      "id": "normalize-1",
+      "name": "Normalize + Build SQL",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-560, 0]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{$json.log_start_sql}}",
+        "options": {"queryReplacement": "={{ $json.log_start_params }}"}
+      },
+      "id": "log-start-1",
+      "name": "Log Start (tool_execution_log)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [-320, -80],
+      "credentials": {"postgres": {"id": "BwXy2JHETe47vH1I", "name": "Postgres account 2"}}
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{$json.ctx_sql}}",
+        "options": {"queryReplacement": "={{ $json.ctx_params }}"}
+      },
+      "id": "load-context-1",
+      "name": "Load Context",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [-320, 80],
+      "credentials": {"postgres": {"id": "BwXy2JHETe47vH1I", "name": "Postgres account 2"}}
+    },
+    {
+      "parameters": {
+        "jsCode": "const base = $('Normalize + Build SQL').first().json;\n\nconst logStart = $('Log Start (tool_execution_log)').first().json;\nconst tool_execution_id = (logStart && logStart.id) ? logStart.id : null;\n\nconst ctxRows = $('Load Context').first().json;\nconst context_pack = (ctxRows && ctxRows.context) ? ctxRows.context : {};\n\nreturn [{\n  json: {\n    ...base,\n    tool_execution_id,\n    context_pack\n  }\n}];"
+      },
+      "id": "assemble-1",
+      "name": "Assemble Context Pack",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-80, 0]
+    },
+    {
+      "parameters": {
+        "text": "={{ \n[\n  \"USER_REQUEST:\",\n  ($json.user_message || \"\").toString(),\n  \"\",\n  \"RUNTIME:\",\n  JSON.stringify({\n    tool_name: $json.tool_name || \"hubspot.leads\",\n    dry_run: $json.dry_run ?? true,\n    session_id: $json.session_id,\n    request_id: $json.request_id,\n    conversation_id: $json.conversation_id,\n    lead_id: $json.lead_id,\n    contact_id: $json.contact_id,\n    company_id: $json.company_id,\n    deal_id: $json.deal_id,\n    user_id: $json.user_id,\n    caller_workflow_id: $json.caller_workflow_id,\n    caller_execution_id: $json.caller_execution_id\n  }, null, 2),\n  \"\",\n  \"CONTEXT_PACK (DB):\",\n  JSON.stringify($json.context_pack ?? {}, null, 2)\n].join(\"\\n\")\n}}\n",
+        "options": {
+          "maxIterations": 15,
+          "systemMessage": "You are the HubSpot LEADS Agent.\n\nYour job:\n- Manage HubSpot leads: list, search, create, update, delete, merge, batch operations.\n- Manage lead associations to contacts, companies, and deals.\n- Track lead property history and lead scoring.\n- Return ONLY valid JSON in the specified output schema.\n\nINPUTS YOU RECEIVE:\n- USER_REQUEST (plain text)\n- RUNTIME (json): includes tool_name, dry_run, ids\n- CONTEXT_PACK (json): database context if available\n\nHARD RULES:\n1) Always use tools for factual data. Do NOT guess.\n2) DRY RUN ENFORCEMENT:\n   - If runtime.dry_run is true: DO NOT call ANY write tools (Create, Update, Delete, Merge, Associate, Batch writes).\n   - If the user requests a write and dry_run=true: return a proposed plan + exact tool + payload, but do not execute.\n3) If a required argument is missing (ex: leadId, email, hs_lead_status), ask for it in errors[] and do not call the tool.\n\nAVAILABLE TOOLS (USE THESE NAMES EXACTLY):\n\nREAD OPERATIONS:\n- List All Leads - Get paginated list of all leads\n- Get Lead by ID - Get a specific lead by ID\n- Search Leads - Search leads with filters\n- List Lead Properties - Get all lead property definitions\n- Get Lead Property - Get a specific property definition\n- Get Lead Property History - Get historical values of lead properties over time\n- Get Lead Associations - Get contacts/companies/deals associated with a lead\n- Get Lead Association Labels - Get available association types/labels\n- List Owners - List all HubSpot owners that can be assigned to leads\n\nBATCH READ OPERATIONS:\n- Batch Read Leads - Read multiple leads by ID in one call (max 100)\n\nWRITE OPERATIONS (ONLY IF dry_run=false AND user explicitly requested):\n- Create Lead - Create a new lead\n- Update Lead - Update lead properties\n- Delete Lead - Delete a lead (moves to recycle bin)\n- Merge Leads - Merge two leads into one\n- Associate Lead - Link lead to contact/company/deal\n- Remove Lead Association - Unlink lead from another object\n\nBATCH WRITE OPERATIONS:\n- Batch Create Leads - Create multiple leads at once (max 100)\n- Batch Update Leads - Update multiple leads at once (max 100)\n- Batch Archive Leads - Delete multiple leads at once (max 100)\n\nINTER-AGENT TOOLS (Delegate to specialized agents):\n- Call Contacts Agent - Look up contacts, search contacts for a lead\n- Call Companies Agent - Look up companies, search companies for a lead\n- Call Deals Agent - Look up deals, search deals for a lead\n- Call Engagements Agent - Log notes, create tasks, view activity history on leads\n\nCOMMON LEAD PROPERTIES:\n- hs_lead_status (NEW, OPEN, IN_PROGRESS, OPEN_DEAL, UNQUALIFIED, ATTEMPTED_TO_CONTACT, CONNECTED, BAD_TIMING)\n- firstname, lastname, email, phone, company, jobtitle\n- hs_lead_source, hs_lead_source_detail\n- hubspot_owner_id (assigned owner)\n- hs_lead_score (lead scoring value)\n- hs_lifecyclestage_lead_date\n- hs_lead_conversion_date, hs_converted_contact_id, hs_converted_deal_id\n- notes_last_updated, notes_last_contacted\n- hs_analytics_source, hs_analytics_source_data_1, hs_analytics_source_data_2\n\nLEAD STATUS VALUES:\n- NEW - Brand new lead\n- OPEN - Lead is being worked\n- IN_PROGRESS - Actively engaging\n- OPEN_DEAL - Lead converted, deal created\n- UNQUALIFIED - Lead does not meet criteria\n- ATTEMPTED_TO_CONTACT - Tried to reach out\n- CONNECTED - Made contact\n- BAD_TIMING - Not ready now\n\nSEARCH OPERATORS:\n- EQ, NEQ, LT, LTE, GT, GTE\n- CONTAINS_TOKEN, NOT_CONTAINS_TOKEN\n- HAS_PROPERTY, NOT_HAS_PROPERTY\n- BETWEEN, IN, NOT_IN\n\nASSOCIATION TYPES:\n- lead_to_contact (default association)\n- lead_to_company\n- lead_to_deal\n\nOUTPUT FORMAT (RETURN JSON ONLY):\n{\n  \"summary\": \"short human summary\",\n  \"data\": { \"any\": \"tool results or extracted fields\" },\n  \"tool_calls\": [\n    { \"tool\": \"Tool Name\", \"arguments\": { } }\n  ],\n  \"errors\": [\n    { \"code\": \"MISSING_ARG|DRY_RUN_BLOCK|TOOL_ERROR\", \"message\": \"...\" }\n  ],\n  \"notes_to_save\": null\n}"
+        },
+        "promptType": "define"
+      },
+      "id": "agent-1",
+      "name": "AI Agent - Leads",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [160, 0],
+      "alwaysOutputData": true,
+      "retryOnFail": true,
+      "waitBetweenTries": 3000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "model": {"__rl": true, "mode": "list", "value": "gpt-4o", "cachedResultName": "gpt-4o"},
+        "options": {}
+      },
+      "id": "llm-1",
+      "name": "OpenAI Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [-80, 200],
+      "credentials": {"openAiApi": {"id": "Lb7LQd5GQa1bZ9yX", "name": "OpenAi account 4"}}
+    },
+    {
+      "parameters": {"sessionKey": "session_id", "sessionIdType": "customKey"},
+      "id": "memory-1",
+      "name": "Memory",
+      "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
+      "typeVersion": 1.3,
+      "position": [40, 200]
+    },
+    {
+      "parameters": {
+        "url": "https://api.hubapi.com/crm/v3/objects/leads",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "specifyQuery": "json",
+        "options": {},
+        "toolDescription": "List all leads from HubSpot. Returns paginated results. Use query params: limit (max 100), after (pagination cursor), properties (comma-separated list), associations."
+      },
+      "id": "tool-list-leads",
+      "name": "List All Leads",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [160, 200],
+      "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}
+    },
+    {
+      "parameters": {
+        "url": "=https://api.hubapi.com/crm/v3/objects/leads/{{ $json.leadId || $json.id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "specifyQuery": "json",
+        "options": {},
+        "toolDescription": "Get a specific lead by ID. Include properties param to specify which properties to return. Use propertiesWithHistory for historical values."
+      },
+      "id": "tool-get-lead",
+      "name": "Get Lead by ID",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [280, 200],
+      "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.hubapi.com/crm/v3/objects/leads/search",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "contentType": "json",
+        "options": {},
+        "toolDescription": "Search leads using filters. Body: {filterGroups: [{filters: [{propertyName, operator, value}]}], sorts: [{propertyName, direction}], properties: [], limit, after}. Common filters: hs_lead_status, hubspot_owner_id, hs_lead_source, hs_lead_score."
+      },
+      "id": "tool-search-leads",
+      "name": "Search Leads",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [400, 200],
+      "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}
+    },
+    {
+      "parameters": {
+        "url": "https://api.hubapi.com/crm/v3/properties/leads",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {},
+        "toolDescription": "List all lead property definitions including standard and custom properties. Returns name, label, type, fieldType, groupName, options for enumeration types."
+      },
+      "id": "tool-list-props",
+      "name": "List Lead Properties",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [520, 200],
+      "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}
+    },
+    {
+      "parameters": {
+        "url": "=https://api.hubapi.com/crm/v3/properties/leads/{{ $json.propertyName }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {},
+        "toolDescription": "Get details about a specific lead property including options for enumeration properties (like hs_lead_status, hs_lead_source)."
+      },
+      "id": "tool-get-property",
+      "name": "Get Lead Property",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [640, 200],
+      "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}
+    },
+    {
+      "parameters": {
+        "url": "=https://api.hubapi.com/crm/v3/objects/leads/{{ $json.leadId || $json.id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "specifyQuery": "json",
+        "jsonQuery": "={{ JSON.stringify({ propertiesWithHistory: $json.properties || 'hs_lead_status,hs_lead_score,hubspot_owner_id,hs_lifecyclestage_lead_date' }) }}",
+        "options": {},
+        "toolDescription": "Get PROPERTY HISTORY for a lead. Returns historical values showing how properties changed over time. Specify leadId and properties (comma-separated). Great for tracking lead status progression, score changes, owner assignments."
+      },
+      "id": "tool-get-property-history",
+      "name": "Get Lead Property History",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [760, 200],
+      "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}
+    },
+    {
+      "parameters": {
+        "url": "=https://api.hubapi.com/crm/v4/objects/leads/{{ $json.leadId }}/associations/{{ $json.toObjectType || 'contacts' }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "specifyQuery": "json",
+        "options": {},
+        "toolDescription": "Get associations for a lead. Specify leadId and toObjectType (contacts, companies, deals). Returns associated object IDs and association types."
+      },
+      "id": "tool-get-assoc",
+      "name": "Get Lead Associations",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [880, 200],
+      "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}
+    },
+    {
+      "parameters": {
+        "url": "=https://api.hubapi.com/crm/v4/associations/leads/{{ $json.toObjectType || 'contacts' }}/labels",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {},
+        "toolDescription": "Get available association types/labels between leads and another object type (contacts, companies, deals). Returns associationTypeId values needed for creating associations."
+      },
+      "id": "tool-assoc-labels",
+      "name": "Get Lead Association Labels",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [1000, 200],
+      "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}
+    },
+    {
+      "parameters": {
+        "url": "https://api.hubapi.com/crm/v3/owners",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "specifyQuery": "json",
+        "options": {},
+        "toolDescription": "List all HubSpot owners (users) that can be assigned to leads. Returns id, email, firstName, lastName. Use the id value for hubspot_owner_id property."
+      },
+      "id": "tool-list-owners",
+      "name": "List Owners",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [1120, 200],
+      "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.hubapi.com/crm/v3/objects/leads/batch/read",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "contentType": "json",
+        "options": {},
+        "toolDescription": "Batch read multiple leads by ID. Body: {inputs: [{id: 'leadId'}], properties: ['prop1', 'prop2']}. More efficient than multiple single reads. Max 100 per batch."
+      },
+      "id": "tool-batch-read",
+      "name": "Batch Read Leads",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [160, 360],
+      "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.hubapi.com/crm/v3/objects/leads",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "contentType": "json",
+        "options": {},
+        "toolDescription": "CREATE a new lead. Body: {properties: {firstname, lastname, email, phone, company, hs_lead_status, hubspot_owner_id, ...}, associations: [{to: {id}, types: [{associationCategory, associationTypeId}]}]}. WRITE OPERATION - respect dry_run."
+      },
+      "id": "tool-create-lead",
+      "name": "Create Lead",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [280, 360],
+      "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://api.hubapi.com/crm/v3/objects/leads/{{ $json.leadId || $json.id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "contentType": "json",
+        "options": {},
+        "toolDescription": "UPDATE a lead by ID. Body: {properties: {key: value, ...}}. Can update any writable property including hs_lead_status for status changes, hs_lead_score for scoring. WRITE OPERATION - respect dry_run."
+      },
+      "id": "tool-update-lead",
+      "name": "Update Lead",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [400, 360],
+      "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}
+    },
+    {
+      "parameters": {
+        "method": "DELETE",
+        "url": "=https://api.hubapi.com/crm/v3/objects/leads/{{ $json.leadId || $json.id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {},
+        "toolDescription": "DELETE a lead by ID. Moves lead to recycle bin (can be restored within 90 days). DESTRUCTIVE WRITE OPERATION - respect dry_run."
+      },
+      "id": "tool-delete-lead",
+      "name": "Delete Lead",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [520, 360],
+      "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.hubapi.com/crm/v3/objects/leads/merge",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "contentType": "json",
+        "options": {},
+        "toolDescription": "MERGE two leads into one. Body: {primaryObjectId: 'leadIdToKeep', objectIdToMerge: 'leadIdToArchive'}. Primary lead is kept, secondary is merged and archived. All associations transferred. DESTRUCTIVE WRITE OPERATION - respect dry_run."
+      },
+      "id": "tool-merge-leads",
+      "name": "Merge Leads",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [640, 360],
+      "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "=https://api.hubapi.com/crm/v4/objects/leads/{{ $json.leadId }}/associations/{{ $json.toObjectType }}/{{ $json.toObjectId }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "contentType": "json",
+        "options": {},
+        "toolDescription": "Associate a lead with another object (contact, company, deal). Body: [{associationCategory: 'HUBSPOT_DEFINED', associationTypeId: number}]. WRITE OPERATION - respect dry_run."
+      },
+      "id": "tool-assoc-lead",
+      "name": "Associate Lead",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [760, 360],
+      "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}
+    },
+    {
+      "parameters": {
+        "method": "DELETE",
+        "url": "=https://api.hubapi.com/crm/v4/objects/leads/{{ $json.leadId }}/associations/{{ $json.toObjectType }}/{{ $json.toObjectId }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {},
+        "toolDescription": "Remove association between a lead and another object. WRITE OPERATION - respect dry_run."
+      },
+      "id": "tool-remove-assoc",
+      "name": "Remove Lead Association",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [880, 360],
+      "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.hubapi.com/crm/v3/objects/leads/batch/create",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "contentType": "json",
+        "options": {},
+        "toolDescription": "Batch create multiple leads. Body: {inputs: [{properties: {...}, associations: [...]}]}. Max 100 per batch. WRITE OPERATION - respect dry_run."
+      },
+      "id": "tool-batch-create",
+      "name": "Batch Create Leads",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [1000, 360],
+      "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.hubapi.com/crm/v3/objects/leads/batch/update",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "contentType": "json",
+        "options": {},
+        "toolDescription": "Batch update multiple leads. Body: {inputs: [{id: 'leadId', properties: {...}}]}. Max 100 per batch. WRITE OPERATION - respect dry_run."
+      },
+      "id": "tool-batch-update",
+      "name": "Batch Update Leads",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [1120, 360],
+      "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.hubapi.com/crm/v3/objects/leads/batch/archive",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "contentType": "json",
+        "options": {},
+        "toolDescription": "Batch delete multiple leads. Body: {inputs: [{id: 'leadId'}]}. Moves to recycle bin. Max 100 per batch. DESTRUCTIVE WRITE OPERATION - respect dry_run."
+      },
+      "id": "tool-batch-archive",
+      "name": "Batch Archive Leads",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [160, 520],
+      "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}
+    },
+    {
+      "parameters": {
+        "name": "Call Contacts Agent",
+        "description": "Call the HubSpot Contacts Agent to look up contacts, search contacts, or perform contact-related operations. Use when you need contact information for a lead.",
+        "workflowId": {"__rl": true, "mode": "list", "value": "bX-PPv4n2Utwj1Mj7JHYR", "cachedResultName": "AI Agent - HubSpot Contacts"},
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "request_id": "={{ $execution.id }}",
+            "session_id": "={{ $json.session_id || '' }}",
+            "chat_id": "={{ $json.chat_id || '' }}",
+            "user_id": "={{ $json.user_id || '' }}",
+            "user_message": "={{ $fromAI('request', 'What to ask the Contacts Agent') }}",
+            "object_type": "contacts",
+            "contact_id": "={{ $json.contact_id || '' }}",
+            "company_id": "={{ $json.company_id || '' }}",
+            "deal_id": "={{ $json.deal_id || '' }}",
+            "conversation_id": "={{ $json.conversation_id || $execution.id }}",
+            "dry_run": "={{ $json.dry_run ?? true }}",
+            "caller_workflow_id": "={{ $workflow.id }}",
+            "caller_execution_id": "={{ $execution.id }}",
+            "tool_name": "hubspot.contacts"
+          }
+        }
+      },
+      "id": "tool-call-contacts",
+      "name": "Call Contacts Agent",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.1,
+      "position": [280, 520]
+    },
+    {
+      "parameters": {
+        "name": "Call Companies Agent",
+        "description": "Call the HubSpot Companies Agent to look up companies, search companies, or perform company-related operations. Use when you need company information for a lead.",
+        "workflowId": {"__rl": true, "mode": "list", "value": "qH4NDSqFePk33A_MlzYcY", "cachedResultName": "AI Agent - HubSpot Companies"},
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "request_id": "={{ $execution.id }}",
+            "session_id": "={{ $json.session_id || '' }}",
+            "chat_id": "={{ $json.chat_id || '' }}",
+            "user_id": "={{ $json.user_id || '' }}",
+            "user_message": "={{ $fromAI('request', 'What to ask the Companies Agent') }}",
+            "object_type": "companies",
+            "contact_id": "={{ $json.contact_id || '' }}",
+            "company_id": "={{ $json.company_id || '' }}",
+            "deal_id": "={{ $json.deal_id || '' }}",
+            "conversation_id": "={{ $json.conversation_id || $execution.id }}",
+            "dry_run": "={{ $json.dry_run ?? true }}",
+            "caller_workflow_id": "={{ $workflow.id }}",
+            "caller_execution_id": "={{ $execution.id }}",
+            "tool_name": "hubspot.companies"
+          }
+        }
+      },
+      "id": "tool-call-companies",
+      "name": "Call Companies Agent",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.1,
+      "position": [400, 520]
+    },
+    {
+      "parameters": {
+        "name": "Call Deals Agent",
+        "description": "Call the HubSpot Deals Agent to look up deals, search deals, or perform deal-related operations. Use when you need deal information for a lead.",
+        "workflowId": {"__rl": true, "mode": "list", "value": "4J19cZdd4aLVDxOZCwmKB", "cachedResultName": "AI Agent - HubSpot Deals"},
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "request_id": "={{ $execution.id }}",
+            "session_id": "={{ $json.session_id || '' }}",
+            "chat_id": "={{ $json.chat_id || '' }}",
+            "user_id": "={{ $json.user_id || '' }}",
+            "user_message": "={{ $fromAI('request', 'What to ask the Deals Agent') }}",
+            "object_type": "deals",
+            "contact_id": "={{ $json.contact_id || '' }}",
+            "company_id": "={{ $json.company_id || '' }}",
+            "deal_id": "={{ $json.deal_id || '' }}",
+            "conversation_id": "={{ $json.conversation_id || $execution.id }}",
+            "dry_run": "={{ $json.dry_run ?? true }}",
+            "caller_workflow_id": "={{ $workflow.id }}",
+            "caller_execution_id": "={{ $execution.id }}",
+            "tool_name": "hubspot.deals"
+          }
+        }
+      },
+      "id": "tool-call-deals",
+      "name": "Call Deals Agent",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.1,
+      "position": [520, 520]
+    },
+    {
+      "parameters": {
+        "name": "Call Engagements Agent",
+        "description": "Call the HubSpot Engagements Agent to log notes, create tasks, view activity history, or manage communications on a lead. Use for activity logging and engagement tracking.",
+        "workflowId": {"__rl": true, "mode": "list", "value": "N10BUVD9S-4ZyIsEtnKfp", "cachedResultName": "AI Agent - HubSpot Engagements"},
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "request_id": "={{ $execution.id }}",
+            "session_id": "={{ $json.session_id || '' }}",
+            "chat_id": "={{ $json.chat_id || '' }}",
+            "user_id": "={{ $json.user_id || '' }}",
+            "user_message": "={{ $fromAI('request', 'What to ask the Engagements Agent') }}",
+            "object_type": "engagements",
+            "contact_id": "={{ $json.contact_id || '' }}",
+            "company_id": "={{ $json.company_id || '' }}",
+            "deal_id": "={{ $json.deal_id || '' }}",
+            "conversation_id": "={{ $json.conversation_id || $execution.id }}",
+            "dry_run": "={{ $json.dry_run ?? true }}",
+            "caller_workflow_id": "={{ $workflow.id }}",
+            "caller_execution_id": "={{ $execution.id }}",
+            "tool_name": "hubspot.engagements"
+          }
+        }
+      },
+      "id": "tool-call-engagements",
+      "name": "Call Engagements Agent",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.1,
+      "position": [640, 520]
+    },
+    {
+      "parameters": {
+        "jsCode": "const base = $('Assemble Context Pack').first().json;\n\nconst started = Number(base._started_ms || Date.now());\nconst duration_ms = Math.max(0, Date.now() - started);\n\nlet agentRaw = $('AI Agent - Leads').first().json;\n\nconst coerceJson = (val) => {\n  if (val === null || val === undefined) return null;\n  if (typeof val === 'object') return val;\n  if (typeof val !== 'string') return { value: val };\n  const s = val.trim().replace(/^```json\\s*/i, '').replace(/```$/,'').trim();\n  try { return JSON.parse(s); } catch { return { raw: val }; }\n};\n\nconst agentOut = coerceJson(agentRaw.output ?? agentRaw.text ?? agentRaw);\n\nconst ok = !(agentOut?.errors && agentOut.errors.length);\n\nconst esc = (s) => String(s ?? '').replace(/'/g, \"''\");\n\nconst final = {\n  ok,\n  tool_name: base.tool_name,\n  tool_execution_id: base.tool_execution_id,\n  session_id: base.session_id,\n  conversation_id: base.conversation_id,\n  dry_run: base.dry_run,\n  summary: agentOut?.summary ?? (ok ? 'ok' : 'error'),\n  data: agentOut?.data ?? null,\n  tool_calls: agentOut?.tool_calls ?? [],\n  errors: agentOut?.errors ?? [],\n  notes_to_save: agentOut?.notes_to_save ?? null,\n  context_used: base.context_pack ?? {},\n  duration_ms\n};\n\nconst outJson = esc(JSON.stringify(final));\nconst errText = final.errors?.length ? esc(JSON.stringify(final.errors)) : null;\n\nfinal.log_end_sql = `\nUPDATE tool_execution_log\nSET\n  output_data = '${outJson}'::jsonb,\n  success = ${final.ok ? 'true' : 'false'},\n  error = ${errText ? `'${errText}'` : 'null'},\n  duration_ms = ${Number.isFinite(final.duration_ms) ? final.duration_ms : 'null'}\nWHERE id = '${esc(base.tool_execution_id)}'::uuid;\n`;\n\nconst note_scope = base.note_scope || 'hubspot';\nconst note_key = base.note_key || (base.lead_id ? `lead.${base.lead_id}` : 'lead.general');\n\nif (final.notes_to_save && typeof final.notes_to_save === 'string' && final.notes_to_save.trim() !== '') {\n  const noteObj = { text: final.notes_to_save.trim() };\n  const noteJson = esc(JSON.stringify(noteObj));\n  final.save_notes_sql = `\nINSERT INTO agent_notes (scope, note_key, note)\nVALUES ('${esc(note_scope)}', '${esc(note_key)}', '${noteJson}'::jsonb);\n`;\n}\n\nreturn [{ json: final }];"
+      },
+      "id": "parse-output-1",
+      "name": "Parse + Finalize Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [400, 0]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{$json.log_end_sql}}",
+        "options": {"queryReplacement": "={{ $json.log_end_params }}"}
+      },
+      "id": "log-end-1",
+      "name": "Log End (tool_execution_log)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [640, 0],
+      "credentials": {"postgres": {"id": "BwXy2JHETe47vH1I", "name": "Postgres account 2"}},
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {"options": {}},
+      "type": "@n8n/n8n-nodes-langchain.chatTrigger",
+      "typeVersion": 1.4,
+      "position": [-800, -200],
+      "id": "chat-trigger-1",
+      "name": "When chat message received",
+      "webhookId": "leads-chat-test"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\n\nconst chatText =\n  input.chatInput ||\n  input.message?.text ||\n  input.text ||\n  input.body?.message ||\n  input.body?.text ||\n  '';\n\nreturn [{\n  json: {\n    user_message: String(chatText || ''),\n    dry_run: true,\n    tool_name: 'hubspot.leads',\n    session_id: input.sessionId || input.session_id || 'chat_test',\n    conversation_id: input.conversationId || input.conversation_id || 'chat_test',\n    chat_id: input.chatId || input.chat_id || null,\n    user_id: input.userId || input.user_id || null,\n    request_id: input.request_id || null,\n    caller_workflow_id: input.caller_workflow_id || null,\n    caller_execution_id: input.caller_execution_id || null,\n    company_id: input.company_id || null,\n    contact_id: input.contact_id || null,\n    deal_id: input.deal_id || null,\n    lead_id: input.lead_id || null,\n    hs_portal_id: input.hs_portal_id || null,\n    object_type: 'leads',\n    object_id: null\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-560, -200],
+      "id": "chat-normalize-1",
+      "name": "Normalize Chat Input"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {"caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 1},
+          "conditions": [{"id": "has_notes", "leftValue": "={{ $json.save_notes_sql }}", "rightValue": "", "operator": {"type": "string", "operation": "notEmpty"}}],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [640, -120],
+      "id": "has-notes-1",
+      "name": "Has Notes to Save?",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{$json.save_notes_sql}}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [880, -160],
+      "id": "save-notes-1",
+      "name": "Save Agent Notes",
+      "credentials": {"postgres": {"id": "BwXy2JHETe47vH1I", "name": "Postgres account 2"}},
+      "onError": "continueRegularOutput"
+    }
+  ],
+  "connections": {
+    "When Executed by Another Workflow": {"main": [[{"node": "Normalize + Build SQL", "type": "main", "index": 0}]]},
+    "When chat message received": {"main": [[{"node": "Normalize Chat Input", "type": "main", "index": 0}]]},
+    "Normalize Chat Input": {"main": [[{"node": "Normalize + Build SQL", "type": "main", "index": 0}]]},
+    "Normalize + Build SQL": {"main": [[{"node": "Log Start (tool_execution_log)", "type": "main", "index": 0}, {"node": "Load Context", "type": "main", "index": 0}]]},
+    "Log Start (tool_execution_log)": {"main": [[{"node": "Assemble Context Pack", "type": "main", "index": 0}]]},
+    "Load Context": {"main": [[{"node": "Assemble Context Pack", "type": "main", "index": 0}]]},
+    "Assemble Context Pack": {"main": [[{"node": "AI Agent - Leads", "type": "main", "index": 0}]]},
+    "AI Agent - Leads": {"main": [[{"node": "Parse + Finalize Output", "type": "main", "index": 0}]]},
+    "Parse + Finalize Output": {"main": [[{"node": "Log End (tool_execution_log)", "type": "main", "index": 0}, {"node": "Has Notes to Save?", "type": "main", "index": 0}]]},
+    "Has Notes to Save?": {"main": [[{"node": "Save Agent Notes", "type": "main", "index": 0}]]},
+    "OpenAI Chat Model": {"ai_languageModel": [[{"node": "AI Agent - Leads", "type": "ai_languageModel", "index": 0}]]},
+    "Memory": {"ai_memory": [[{"node": "AI Agent - Leads", "type": "ai_memory", "index": 0}]]},
+    "List All Leads": {"ai_tool": [[{"node": "AI Agent - Leads", "type": "ai_tool", "index": 0}]]},
+    "Get Lead by ID": {"ai_tool": [[{"node": "AI Agent - Leads", "type": "ai_tool", "index": 0}]]},
+    "Search Leads": {"ai_tool": [[{"node": "AI Agent - Leads", "type": "ai_tool", "index": 0}]]},
+    "List Lead Properties": {"ai_tool": [[{"node": "AI Agent - Leads", "type": "ai_tool", "index": 0}]]},
+    "Get Lead Property": {"ai_tool": [[{"node": "AI Agent - Leads", "type": "ai_tool", "index": 0}]]},
+    "Get Lead Property History": {"ai_tool": [[{"node": "AI Agent - Leads", "type": "ai_tool", "index": 0}]]},
+    "Get Lead Associations": {"ai_tool": [[{"node": "AI Agent - Leads", "type": "ai_tool", "index": 0}]]},
+    "Get Lead Association Labels": {"ai_tool": [[{"node": "AI Agent - Leads", "type": "ai_tool", "index": 0}]]},
+    "List Owners": {"ai_tool": [[{"node": "AI Agent - Leads", "type": "ai_tool", "index": 0}]]},
+    "Batch Read Leads": {"ai_tool": [[{"node": "AI Agent - Leads", "type": "ai_tool", "index": 0}]]},
+    "Create Lead": {"ai_tool": [[{"node": "AI Agent - Leads", "type": "ai_tool", "index": 0}]]},
+    "Update Lead": {"ai_tool": [[{"node": "AI Agent - Leads", "type": "ai_tool", "index": 0}]]},
+    "Delete Lead": {"ai_tool": [[{"node": "AI Agent - Leads", "type": "ai_tool", "index": 0}]]},
+    "Merge Leads": {"ai_tool": [[{"node": "AI Agent - Leads", "type": "ai_tool", "index": 0}]]},
+    "Associate Lead": {"ai_tool": [[{"node": "AI Agent - Leads", "type": "ai_tool", "index": 0}]]},
+    "Remove Lead Association": {"ai_tool": [[{"node": "AI Agent - Leads", "type": "ai_tool", "index": 0}]]},
+    "Batch Create Leads": {"ai_tool": [[{"node": "AI Agent - Leads", "type": "ai_tool", "index": 0}]]},
+    "Batch Update Leads": {"ai_tool": [[{"node": "AI Agent - Leads", "type": "ai_tool", "index": 0}]]},
+    "Batch Archive Leads": {"ai_tool": [[{"node": "AI Agent - Leads", "type": "ai_tool", "index": 0}]]},
+    "Call Contacts Agent": {"ai_tool": [[{"node": "AI Agent - Leads", "type": "ai_tool", "index": 0}]]},
+    "Call Companies Agent": {"ai_tool": [[{"node": "AI Agent - Leads", "type": "ai_tool", "index": 0}]]},
+    "Call Deals Agent": {"ai_tool": [[{"node": "AI Agent - Leads", "type": "ai_tool", "index": 0}]]},
+    "Call Engagements Agent": {"ai_tool": [[{"node": "AI Agent - Leads", "type": "ai_tool", "index": 0}]]}
+  },
+  "settings": {"executionOrder": "v1"},
+  "tags": [],
+  "pinData": {}
+}

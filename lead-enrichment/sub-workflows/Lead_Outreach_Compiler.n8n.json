@@ -1,0 +1,432 @@
+{
+  "name": "📤 Lead Outreach Compiler — Prepare for Sales",
+  "nodes": [
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "research_run_id"
+            },
+            {
+              "name": "company_id"
+            },
+            {
+              "name": "airtable_id"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        -288,
+        368
+      ],
+      "id": "7e1b4ea7-9198-41b1-ac14-e7ce970011a2",
+      "name": "When Executed by Another Workflow"
+    },
+    {
+      "parameters": {
+        "jsCode": "// 📦 Finalize Single Run Payload - cleaned (no self-reference)\nconst allInputs = ($input && $input.all && $input.all()) || [];\n\n// If the merge upstream gave the canonical shape, use it\nconst firstJson = (allInputs[0] && allInputs[0].json) || {};\n\n// attempt to pull fields from firstJson, else fall back to scanning inputs\nlet enriched = firstJson.enrichedRow || {};\nlet ctxRow = firstJson.ctxRow || {};\nlet stepLogs = Array.isArray(firstJson.stepLogs) ? firstJson.stepLogs.slice() : [];\n\n// fallback to ctxRow.context_jsonb.tech_and_metrics.logs if empty\nif ((!stepLogs || stepLogs.length === 0) &&\n    ctxRow.context_jsonb &&\n    ctxRow.context_jsonb.tech_and_metrics &&\n    Array.isArray(ctxRow.context_jsonb.tech_and_metrics.logs)) {\n  stepLogs = ctxRow.context_jsonb.tech_and_metrics.logs.slice();\n}\n\n// if any source still empty, scan all inputs to find likely candidates\nif ((Object.keys(enriched).length === 0 || Object.keys(ctxRow).length === 0 || stepLogs.length === 0) && allInputs.length) {\n  const jsons = allInputs.map(i => i.json || {});\n  if (Object.keys(enriched).length === 0) {\n    const cand = jsons.find(j => j && (j.research_run_id || j.company_id || j.company_name));\n    if (cand) enriched = cand;\n  }\n  if (Object.keys(ctxRow).length === 0) {\n    const cand = jsons.find(j => j && (j.context_jsonb || j.context_summary));\n    if (cand) {\n      ctxRow = cand;\n      if (ctxRow.context_jsonb && typeof ctxRow.context_jsonb === 'string') {\n        try { ctxRow.context_jsonb = JSON.parse(ctxRow.context_jsonb); } catch(e) { /* leave as-is */ }\n      }\n    }\n  }\n  if (!Array.isArray(stepLogs) || stepLogs.length === 0) {\n    const agg = jsons.find(j => j && Array.isArray(j.step_logs));\n    if (agg) stepLogs = agg.step_logs;\n    else {\n      const logs = jsons.filter(j => j && j.log_id).map(j => j);\n      if (logs.length) stepLogs = logs;\n    }\n  }\n}\n\n// normalize\nstepLogs = Array.isArray(stepLogs) ? stepLogs : [];\nctxRow.context_jsonb = ctxRow.context_jsonb || {};\n\n// dedupe step logs by log_id or JSON\nconst seen = new Set();\nconst deduped = [];\nfor (const l of stepLogs) {\n  if (!l) continue;\n  const id = l.log_id || (l.metadata && l.metadata.log_id) || JSON.stringify(l);\n  if (!seen.has(id)) { seen.add(id); deduped.push(l); }\n}\n\n// sort by best-known timestamp\nfunction getTs(l){ return l && (l.started_at || l.timestamp || l.startedAt || l.completed_at || l.iso_date || null); }\ndeduped.sort((a,b) => {\n  const A = getTs(a), B = getTs(b);\n  if (A && B) return new Date(A) - new Date(B);\n  if (A) return -1;\n  if (B) return 1;\n  return 0;\n});\n\n// canonical phone/address heuristics\nfunction pickPhone(){\n  if (enriched && enriched.company_phone) return enriched.company_phone;\n  if (ctxRow && ctxRow.company_phone) return ctxRow.company_phone;\n  try {\n    const phones = ctxRow.context_jsonb && ctxRow.context_jsonb.contacts && ctxRow.context_jsonb.contacts.phones;\n    if (Array.isArray(phones) && phones.length) return phones[0];\n  } catch(e) {}\n  return null;\n}\nfunction pickAddress(){\n  if (ctxRow && ctxRow.company_address) return ctxRow.company_address;\n  try {\n    const placeAddr = ctxRow.context_jsonb && ctxRow.context_jsonb.digital_footprint && ctxRow.context_jsonb.digital_footprint.place_info && ctxRow.context_jsonb.digital_footprint.place_info.address;\n    if (placeAddr) return placeAddr;\n    const addrs = ctxRow.context_jsonb && ctxRow.context_jsonb.contacts && ctxRow.context_jsonb.contacts.addresses;\n    if (Array.isArray(addrs) && addrs.length) return addrs[0];\n  } catch(e) {}\n  return null;\n}\n\n// owner verification heuristic\nlet ownerName = (ctxRow.context_jsonb && ctxRow.context_jsonb.identity && ctxRow.context_jsonb.identity.owner_name) || null;\nlet ownerVerified = false;\ntry {\n  const emails = ctxRow.context_jsonb && ctxRow.context_jsonb.contacts && ctxRow.context_jsonb.contacts.emails;\n  if (ownerName && Array.isArray(emails) && emails.length) ownerVerified = true;\n} catch(e) {}\n\nctxRow = { ...ctxRow, step_logs: deduped, owner: ownerName, owner_verified: !!ownerVerified };\nenriched = { ...enriched, raw_step_logs: enriched.raw_step_logs || deduped, canonical_phone: pickPhone(), canonical_address: pickAddress() };\n\nreturn [{\n  json: {\n    enrichedRow: enriched,\n    ctxRow,\n    stepLogs: deduped\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        400,
+        368
+      ],
+      "id": "aa66ed7b-cb0c-4474-ab28-a2d401807490",
+      "name": "📦 Assemble Single Run Payload"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT COALESCE(context_jsonb, '{}'::jsonb) AS context_jsonb, COALESCE(context_summary, '') AS context_summary, updated_at FROM public.company_contexts WHERE company_id = $1 LIMIT 1;",
+        "options": {
+          "queryReplacement": "={{ [ $('When Executed by Another Workflow').first().json.company_id ] }}"
+        }
+      },
+      "id": "64447b6b-a059-4d6b-b9ea-85523eb4be8d",
+      "name": "📥 Get Company Context",
+      "type": "n8n-nodes-base.postgres",
+      "position": [
+        -64,
+        368
+      ],
+      "typeVersion": 2.6,
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "BwXy2JHETe47vH1I",
+          "name": "Postgres account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT * FROM public.enriched_leads WHERE research_run_id = $1 LIMIT 1;",
+        "options": {
+          "queryReplacement": "={{ [ $('When Executed by Another Workflow').first().json.research_run_id ] }}"
+        }
+      },
+      "id": "62a7165a-dd9c-4da7-ad8a-dba5275e445c",
+      "name": "📥 Get Enriched Lead",
+      "type": "n8n-nodes-base.postgres",
+      "position": [
+        -64,
+        224
+      ],
+      "typeVersion": 2.6,
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "BwXy2JHETe47vH1I",
+          "name": "Postgres account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "numberInputs": 3,
+        "options": {
+          "includeUnpaired": true
+        }
+      },
+      "id": "deab8ded-1450-4f4d-9c70-eb91b83a9e11",
+      "name": "🤝 Merge DB Results",
+      "type": "n8n-nodes-base.merge",
+      "position": [
+        176,
+        352
+      ],
+      "typeVersion": 3.2
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "models/gemini-2.5-flash",
+          "mode": "list",
+          "cachedResultName": "models/gemini-2.5-flash"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "={{ $json.prompt }}"
+            }
+          ]
+        },
+        "builtInTools": {},
+        "options": {
+          "systemMessage": "You are a structured data extraction assistant. Given messy company context JSON and step logs, return ONLY JSON in the exact schema requested. Do not add any text outside the JSON."
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.googleGemini",
+      "typeVersion": 1.1,
+      "position": [
+        1232,
+        368
+      ],
+      "id": "0f27a17e-77c6-4f7a-8665-4de899077578",
+      "name": "🧠 AI Candidate Extractor",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "k7o7AgCLGREP3jWo",
+          "name": "Google Gemini Chat API Key"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// 📜 Build AI Prompt - updated to accept ai_candidate + ctxRow + stepLogs\nconst aiCandidate = $input.first().json.ai_candidate || {};\nconst enriched = $input.first().json.enrichedRow || {};\nconst ctxRow = $input.first().json.ctxRow || {};\nconst stepLogs = $input.first().json.stepLogs || [];\n\n// Build a prompt that gives the model candidate context and asks for structured extraction/enrichment\nconst payload = {\n  candidate: aiCandidate,\n  company_context: ctxRow.context_jsonb || {},\n  stepLogs: stepLogs || []\n};\n\nconst prompt =\n  'You are a structured assistant. For the given candidate and company context, return ONLY JSON with this root:\\\\n' +\n  '{ \"candidates\": { \"<field>\": [{ \"value\": \"...\", \"provenance\":[{ \"log_id\": \"...\", \"node_id\": \"...\", \"node_name\":\"...\", \"node_type\":\"...\", \"created_at\":\"...\", \"snippet\":\"...\" }], \"tool\":\"hunter|other\", \"confidence\": 0-100, \"meta\": {} }] }, \"warnings\": [] }\\\\n\\\\n' +\n  'Fields to extract / enrich (if available): company_name, company_address, company_city, company_state, company_zip, company_phone, company_website, company_domain, google_place_id, contact_firstname, contact_lastname, contact_title, contact_email, contact_phone, contact_linkedin, dcs_score, dcs_tier, personalization_hooks, pain_points, buying_signals, red_flags, talking_points, recommended_channel, best_time_to_contact\\\\n\\\\n' +\n  'Candidate metadata (pass-through): ' + JSON.stringify({ score: aiCandidate.score, manual_review: aiCandidate.manual_review, metadata: aiCandidate.metadata }, null, 2) + '\\\\n\\\\n' +\n  'INPUT_DOCUMENT:\\\\n' + JSON.stringify(payload, null, 2);\n\nreturn [{ json: { prompt } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1024,
+        368
+      ],
+      "id": "bc420d59-624f-4fb9-9e58-2f6a5a286b73",
+      "name": "📜 Build AI Prompt"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ⚙️ Parse AI Candidates (robust for Gemini/OpenAI)\nconst ai = $input.first().json || {};\nlet text = '';\n\n// common places to find model text\nif (ai.choices?.[0]?.message?.content) text = ai.choices[0].message.content;\nelse if (ai.choices?.[0]?.text) text = ai.choices[0].text;\nelse if (ai.output?.[0]?.content?.[0]?.text) text = ai.output[0].content[0].text;\nelse if (ai.output?.[0]?.content?.[0]?.chunks) {\n  // some Gemini shapes\n  const chunks = ai.output[0].content[0].chunks.map(c => c.text || '').join('');\n  text = chunks;\n} else if (ai.response?.[0]?.content?.[0]?.text) text = ai.response[0].content[0].text;\nelse if (ai.message?.content) text = ai.message.content;\nelse if (typeof ai === 'string') text = ai;\n\n// clean fences\ntext = (text || '').replace(/```json/g,'').replace(/```/g,'').trim();\n\n// try to JSON.parse; fallback: try to extract first {...}\nlet parsed = {};\ntry {\n  parsed = JSON.parse(text);\n} catch (e) {\n  // attempt to extract first JSON object from text\n  const m = text.match(/\\{[\\s\\S]*\\}\\s*$/m) || text.match(/\\{[\\s\\S]*\\}/m);\n  if (m) {\n    try { parsed = JSON.parse(m[0]); }\n    catch (err) {\n      throw new Error('AI parse failed: ' + err.message + ' -- preview: ' + text.slice(0,1000));\n    }\n  } else {\n    throw new Error('AI parse failed: not valid JSON. Preview: ' + text.slice(0,1000));\n  }\n}\n\nreturn [{\n  json: {\n    candidates: parsed.candidates || {},\n    warnings: parsed.warnings || [],\n    _raw_ai_text_preview: text.slice(0,200)\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1584,
+        368
+      ],
+      "id": "fae4761f-a96c-4c8f-9554-96255479ac46",
+      "name": "⚙️ Parse AI Candidates"
+    },
+    {
+      "parameters": {
+        "jsCode": "// 🧮 Candidate Scorer (fixed: merge parse outputs across all parse items)\nconst parseItems = ($input && $input.all && $input.all()) || []; // all items coming from ⚙️ Parse AI Candidates\n\n// Merge candidates across all parse items\nconst merged = {}; // { field: [candidateObj, ...] }\nfor (const itm of parseItems) {\n  const cands = (itm && itm.json && itm.json.candidates) || {};\n  for (const [field, arr] of Object.entries(cands)) {\n    if (!Array.isArray(arr)) continue;\n    merged[field] = (merged[field] || []).concat(arr);\n  }\n}\n\n// scoring helpers\nconst toolPriority = { 'HUNTER':9, 'LINKEDIN':8, 'FIRECRAWL':7, 'SERPAPI':6, 'APIFY':6, 'OTHER':4 };\nfunction provCount(c){ return Array.isArray(c.provenance) ? c.provenance.length : 0; }\nfunction latestProvenanceTime(c){\n  const prov = (c.provenance||[]).map(p => new Date(p.created_at || p.timestamp || 0)).filter(d=>!isNaN(d));\n  if (!prov.length) return 0;\n  return Math.max(...prov.map(d=>d.getTime()));\n}\nfunction scoreCandidate(candidate){\n  const prov = provCount(candidate);\n  const tool = (candidate.tool || 'OTHER').toUpperCase();\n  const tp = toolPriority[tool] || toolPriority.OTHER;\n  const tool_conf = Number(candidate.meta?.tool_confidence || 0);\n  const llm_conf = Number(candidate.confidence || 50);\n  const latest = latestProvenanceTime(candidate);\n  const freshnessDays = latest ? ((Date.now() - latest) / (1000*60*60*24)) : 9999;\n  const freshnessScore = freshnessDays < 1 ? 10 : freshnessDays < 7 ? 6 : freshnessDays < 30 ? 3 : 0;\n  return prov*3 + tp + Math.round(tool_conf*0.2) + Math.round(llm_conf*0.1) + freshnessScore;\n}\n\n// Build final_values and scored lists\nconst final_values = {};\nconst ai_candidates = {};\n\nfor (const field of Object.keys(merged)) {\n  const arr = Array.isArray(merged[field]) ? merged[field] : [];\n  const scored = arr.map(item => ({ ...item, _score: scoreCandidate(item) })).sort((a,b) => b._score - a._score);\n  final_values[field] = scored.length ? scored[0].value : null;\n  ai_candidates[field] = scored;\n}\n\n// Return a single item with aggregated results\nreturn [{ json: { final_values, ai_candidates } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1792,
+        368
+      ],
+      "id": "9b68c76f-ea2f-4edb-891b-e8ffb284aa53",
+      "name": "🧮 Candidate Scorer"
+    },
+    {
+      "parameters": {
+        "jsCode": "// 🧾 Build Final Enriched Row\nconst payload = $node['📦 Assemble Single Run Payload'].item.json || {};\nconst enriched = payload.enrichedRow || {};\nconst ctxRow = payload.ctxRow || {};\nconst final_values = $node['🧮 Candidate Scorer'].item.json.final_values || {};\nconst ai_candidates = $node['🧮 Candidate Scorer'].item.json.ai_candidates || {};\n\n// pick preference: final_values -> enriched DB row -> ctxRow.context_jsonb\nfunction pick(key){\n  if (final_values[key] !== undefined && final_values[key] !== null) return final_values[key];\n  if (enriched[key] !== undefined && enriched[key] !== null) return enriched[key];\n  if (ctxRow.context_jsonb && ctxRow.context_jsonb[key] !== undefined && ctxRow.context_jsonb[key] !== null) return ctxRow.context_jsonb[key];\n  return null;\n}\n\nconst final = {\n  research_run_id: enriched.research_run_id || payload.research_run_id || null,\n  company_id: enriched.company_id || payload.company_id || null,\n  airtable_id: enriched.airtable_id || payload.airtable_id || null,\n\n  company_name: pick('company_name'),\n  company_domain: pick('company_domain'),\n  company_website: pick('company_website'),\n  company_phone: pick('company_phone'),\n  company_address: pick('company_address'),\n  company_city: pick('company_city'),\n  company_state: pick('company_state'),\n  company_zip: pick('company_zip'),\n  google_place_id: pick('google_place_id'),\n\n  contact_firstname: pick('contact_firstname'),\n  contact_lastname: pick('contact_lastname'),\n  contact_title: pick('contact_title'),\n  contact_email: pick('contact_email'),\n  contact_phone: pick('contact_phone'),\n  contact_linkedin: pick('contact_linkedin'),\n\n  dcs_score: pick('dcs_score') || enriched.dcs_score || null,\n  dcs_tier: pick('dcs_tier') || enriched.dcs_tier || null,\n  dcs_breakdown: pick('dcs_breakdown') || enriched.dcs_breakdown || null,\n\n  personalization_hooks: pick('personalization_hooks') || enriched.personalization_hooks || [],\n  pain_points: pick('pain_points') || enriched.pain_points || [],\n  buying_signals: pick('buying_signals') || enriched.buying_signals || [],\n  red_flags: pick('red_flags') || enriched.red_flags || [],\n  talking_points: pick('talking_points') || enriched.talking_points || [],\n  recommended_channel: pick('recommended_channel') || enriched.recommended_channel || null,\n  best_time_to_contact: pick('best_time_to_contact') || enriched.best_time_to_contact || null,\n  intel_summary: pick('intel_summary') || enriched.intel_summary || null,\n\n  outreach_ready: (pick('contact_email') || pick('company_phone')) ? true : (enriched.outreach_ready !== undefined ? enriched.outreach_ready : false),\n\n  ai_candidates,\n  raw_step_logs: payload.stepLogs || [],\n  hubspot_payload: {\n    company: {\n      name: pick('company_name'),\n      domain: pick('company_domain'),\n      website: pick('company_website'),\n      phone: pick('company_phone'),\n      address: pick('company_address'),\n      city: pick('company_city'),\n      state: pick('company_state'),\n      zip: pick('company_zip')\n    },\n    contact: {\n      firstname: pick('contact_firstname'),\n      lastname: pick('contact_lastname'),\n      email: pick('contact_email'),\n      phone: pick('contact_phone'),\n      jobtitle: pick('contact_title'),\n      linkedin: pick('contact_linkedin')\n    }\n  }\n};\n\nreturn [{ json: final }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2000,
+        368
+      ],
+      "id": "1446f237-d6c0-48eb-b892-ddded8939bdd",
+      "name": "🧾 Build Final Enriched Row"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE public.enriched_leads SET\n  company_name = COALESCE(NULLIF($2,'') , company_name),\n  company_domain = COALESCE(NULLIF($3,''), company_domain),\n  company_phone = COALESCE(NULLIF($4,''), company_phone),\n  company_address = COALESCE(NULLIF($5,''), company_address),\n  company_city = COALESCE(NULLIF($6,''), company_city),\n  company_state = COALESCE(NULLIF($7,''), company_state),\n  company_zip = COALESCE(NULLIF($8,''), company_zip),\n  company_rating = COALESCE(NULLIF($9,'')::numeric, company_rating),\n  company_review_count = COALESCE(NULLIF($10,'')::integer, company_review_count),\n  company_employee_count = COALESCE(NULLIF($11,'')::integer, company_employee_count),\n  company_specialties = COALESCE(NULLIF($12::text[],'{}'::text[]), company_specialties),\n\n  google_place_id = COALESCE(NULLIF($13,''), google_place_id),\n  google_rating = COALESCE(NULLIF($14,'')::numeric, google_rating),\n  google_review_count = COALESCE(NULLIF($15,'')::integer, google_review_count),\n\n  contact_firstname = COALESCE(NULLIF($16,''), contact_firstname),\n  contact_lastname = COALESCE(NULLIF($17,''), contact_lastname),\n  contact_title = COALESCE(NULLIF($18,''), contact_title),\n  contact_email = COALESCE(NULLIF($19,''), contact_email),\n  contact_phone = COALESCE(NULLIF($20,''), contact_phone),\n  contact_linkedin = COALESCE(NULLIF($21,''), contact_linkedin),\n  contact_source = COALESCE(NULLIF($22,''), contact_source),\n  contact_confidence = COALESCE(NULLIF($23,'')::integer, contact_confidence),\n\n  dcs_score = COALESCE(NULLIF($24,'')::integer, dcs_score),\n  dcs_tier = COALESCE(NULLIF($25,''), dcs_tier),\n  dcs_breakdown = COALESCE(NULLIF($26::jsonb,'{}'::jsonb), dcs_breakdown),\n\n  personalization_hooks = COALESCE(NULLIF($27::jsonb,'[]'::jsonb), personalization_hooks),\n  pain_points = COALESCE(NULLIF($28::jsonb,'[]'::jsonb), pain_points),\n  buying_signals = COALESCE(NULLIF($29::jsonb,'[]'::jsonb), buying_signals),\n  red_flags = COALESCE(NULLIF($30::jsonb,'[]'::jsonb), red_flags),\n  talking_points = COALESCE(NULLIF($31::jsonb,'[]'::jsonb), talking_points),\n  recommended_channel = COALESCE(NULLIF($32,''), recommended_channel),\n  best_time_to_contact = COALESCE(NULLIF($33,''), best_time_to_contact),\n  intel_summary = COALESCE(NULLIF($34,''), intel_summary),\n\n  outreach_ready = COALESCE($35::boolean, outreach_ready),\n\n  raw_step_logs = COALESCE(NULLIF($36::jsonb,'[]'::jsonb), raw_step_logs),\n  ai_candidates = COALESCE(NULLIF($37::jsonb,'{}'::jsonb), ai_candidates),\n  hubspot_payload = COALESCE(NULLIF($38::jsonb,'{}'::jsonb), hubspot_payload),\n\n  enriched_at = NOW(),\n  updated_at = NOW()\nWHERE research_run_id = $1\nRETURNING *;",
+        "options": {
+          "queryReplacement": "={{\n[\n  $json.research_run_id,           // $1\n  $json.company_name || null,      // $2\n  $json.company_domain || null,    // $3\n  $json.company_phone || null,     // $4\n  $json.company_address || null,   // $5\n  $json.company_city || null,      // $6\n  $json.company_state || null,     // $7\n  $json.company_zip || null,       // $8\n  $json.company_rating || null,    // $9\n  $json.company_review_count || null,\n  $json.company_employee_count || null,\n  $json.company_specialties ? '{' + $json.company_specialties.map(s => '\\\"' + s.replace(/\\\"/g,'\\\\\\\"') + '\\\"').join(',') + '}' : null,\n  $json.google_place_id || null,\n  $json.google_rating || null,\n  $json.google_review_count || null,\n  $json.contact_firstname || null,\n  $json.contact_lastname || null,\n  $json.contact_title || null,\n  $json.contact_email || null,\n  $json.contact_phone || null,\n  $json.contact_linkedin || null,\n  $json.contact_source || null,\n  $json.contact_confidence || null,\n  $json.dcs_score || null,\n  $json.dcs_tier || null,\n  JSON.stringify($json.dcs_breakdown || {}),          // $26\n  JSON.stringify($json.personalization_hooks||[]),    // $27\n  JSON.stringify($json.pain_points||[]),\n  JSON.stringify($json.buying_signals||[]),\n  JSON.stringify($json.red_flags||[]),\n  JSON.stringify($json.talking_points||[]),\n  $json.recommended_channel || null,\n  $json.best_time_to_contact || null,\n  $json.intel_summary || null,\n  $json.outreach_ready === undefined ? null : $json.outreach_ready, // $35\n  JSON.stringify($json.raw_step_logs || []),         // $36\n  JSON.stringify($json.ai_candidates || {}),         // $37\n  JSON.stringify($json.hubspot_payload || {})        // $38\n]\n}}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        2208,
+        368
+      ],
+      "id": "bd65a605-3fbe-4c5f-a14d-036d5a79c39f",
+      "name": "🗄️ Update enriched_leads",
+      "credentials": {
+        "postgres": {
+          "id": "BwXy2JHETe47vH1I",
+          "name": "Postgres account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT COALESCE(\n  json_agg(t ORDER BY COALESCE(t.completed_at, t.started_at) ASC, t.log_id ASC),\n  '[]'::json\n) AS step_logs\nFROM (\n  SELECT\n    log_id,\n    node_name,\n    node_id,\n    node_type,\n    stage,\n    status,\n    started_at,\n    completed_at,\n    duration_ms,\n    api_call_count,\n    estimated_cost_usd,\n    metadata,\n    output_data,\n    error_details\n  FROM public.workflow_step_logs\n  WHERE research_run_id = $1\n  ORDER BY COALESCE(completed_at, started_at) ASC, log_id ASC\n) t;",
+        "options": {
+          "queryReplacement": "={{ [ $('When Executed by Another Workflow').first().json.research_run_id ] }}"
+        }
+      },
+      "id": "fab7eec5-9d32-4eee-a10b-05b8bcfb6d46",
+      "name": "📥 Get Step Logs For Run",
+      "type": "n8n-nodes-base.postgres",
+      "position": [
+        -64,
+        512
+      ],
+      "typeVersion": 2.6,
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "BwXy2JHETe47vH1I",
+          "name": "Postgres account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// 🧭 Build AI Candidate Context\nconst inItem = ($input.all && $input.all()[0] && $input.all()[0].json) || {};\nconst enriched = inItem.enrichedRow || {};\nconst ctxRow = inItem.ctxRow || {};\nconst stepLogs = inItem.stepLogs || [];\n\n// helper safe getters\nconst list = v => Array.isArray(v) ? v : (v ? [v] : []);\nconst textOrNull = v => (v === undefined ? null : v);\n\n// Build base candidate\nconst candidate = {\n  candidate_id: ctxRow.company_id || enriched.company_id || (enriched.id || null),\n  company_id: ctxRow.company_id || enriched.company_id || null,\n  company_name: enriched.company_name || ctxRow.company_name || (ctxRow.context_jsonb && ctxRow.context_jsonb.digital_footprint && ctxRow.context_jsonb.digital_footprint.place_info && ctxRow.context_jsonb.digital_footprint.place_info.title) || null,\n  canonical_phone: enriched.canonical_phone || ctxRow.company_phone || null,\n  canonical_address: enriched.canonical_address || ctxRow.company_address || null,\n  contact_methods: {\n    phone: enriched.canonical_phone || ctxRow.company_phone || null,\n    emails: (ctxRow.context_jsonb && ctxRow.context_jsonb.contacts && ctxRow.context_jsonb.contacts.emails) || [],\n    contact_form: (ctxRow.context_jsonb && ctxRow.context_jsonb.digital_footprint && ctxRow.context_jsonb.digital_footprint.known_sites && ctxRow.context_jsonb.digital_footprint.known_sites.website && (ctxRow.context_jsonb.digital_footprint.known_sites.website + '/contact')) || enriched.context_jsonb?.contact_info?.form_url || null\n  },\n  outreach_ready: enriched.outreach_ready !== undefined ? enriched.outreach_ready : ctxRow.outreach_ready || true,\n  recommended_channel: enriched.recommended_channel || ctxRow.recommended_channel || 'call',\n  best_time_to_contact: enriched.best_time_to_contact || ctxRow.best_time_to_contact || 'morning',\n  personalization_hooks: enriched.personalization_hooks || ctxRow.personalization_hooks || (ctxRow.context_jsonb && ctxRow.context_jsonb.digital_footprint && ctxRow.context_jsonb.digital_footprint.place_info && ctxRow.context_jsonb.digital_footprint.place_info.user_reviews && []),\n  talking_points: enriched.talking_points || ctxRow.talking_points || [],\n  pain_points: enriched.pain_points || ctxRow.pain_points || [],\n  buying_signals: enriched.buying_signals || ctxRow.buying_signals || [],\n  red_flags: enriched.red_flags || ctxRow.red_flags || [],\n  owner: ctxRow.owner || null,\n  owner_verified: !!ctxRow.owner_verified,\n  step_log_count: Array.isArray(stepLogs) ? stepLogs.length : 0,\n  context_summary: enriched.context_summary || ctxRow.context_summary || (ctxRow.context_jsonb && ctxRow.context_jsonb.notes && ctxRow.context_jsonb.notes.slice(0,3)),\n  source_run_id: ctxRow.research_run_id || enriched.research_run_id || null,\n  created_at: new Date().toISOString()\n};\n\n// simple scoring:\nlet score = 0;\nif (candidate.outreach_ready) score += 25;\nif (candidate.buying_signals && candidate.buying_signals.length) score += Math.min(30, candidate.buying_signals.length * 8);\nif (candidate.personalization_hooks && candidate.personalization_hooks.length) score += Math.min(15, candidate.personalization_hooks.length * 3);\nif (candidate.context_summary) score += 5;\nif (candidate.red_flags && candidate.red_flags.length) score -= Math.min(40, candidate.red_flags.length * 15);\n\n// rating bump\ntry {\n  const rating = (ctxRow.context_jsonb && ctxRow.context_jsonb.digital_footprint && ctxRow.context_jsonb.digital_footprint.place_info && ctxRow.context_jsonb.digital_footprint.place_info.rating) || enriched.company_rating || null;\n  if (rating && Number(rating) >= 4.6) score += 15;\n} catch(e){}\n\nscore = Math.max(0, Math.min(100, Math.round(score)));\ncandidate.score = score;\n\n// attach outreach snippet\ncandidate.outreach_snippet = {\n  call: `Hi — this is [Your Name] with [Your Company]. I noticed ${candidate.company_name || 'your company'} has a strong reputation and I have a quick idea to help capture more bookings. Quick question: are you handling listings and bookings internally?`,\n  email_subject: `Quick listings & booking idea for ${candidate.company_name || 'your company'}`,\n  email_intro: `Hi ${candidate.owner || 'there'},\\n\\nI saw ${candidate.company_name || 'your company'} has a notable presence. We help teams consolidate duplicate listings and capture more bookings. Would you be open to a 10-minute listings audit?`\n};\n\nconst ai_candidates = [candidate];\n\nreturn [{\n  json: {\n    ai_candidates,\n    enrichedRow: enriched,\n    ctxRow,\n    stepLogs\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        608,
+        368
+      ],
+      "id": "480af025-60d8-4a8a-8e14-2f3037859268",
+      "name": "🧭 Build AI Candidate Context"
+    },
+    {
+      "parameters": {
+        "jsCode": "// 🔍 Filter & Enrich AI Candidates (fixed: carry stepLogs)\nconst inItem = ($input.all && $input.all()[0] && $input.all()[0].json) || {};\nconst aiCandidates = Array.isArray(inItem.ai_candidates) ? inItem.ai_candidates.slice() : [];\nconst enriched = inItem.enrichedRow || {};\nconst ctx = inItem.ctxRow || {};\nconst stepLogs = inItem.stepLogs || [];  // <--- carry this forward\n\n// dedupe by candidate_id or company_id\nconst seen = new Set();\nconst deduped = [];\nfor (const c of aiCandidates) {\n  const id = c.candidate_id || c.company_id || JSON.stringify(c);\n  if (!seen.has(id)) { seen.add(id); deduped.push(c); }\n}\n\nconst MIN_SCORE = 20;\nconst outputCandidates = [];\nconst needs_review = [];\n\nfor (const c of deduped) {\n  const manualReview = (c.red_flags && c.red_flags.length > 0) || (ctx.context_jsonb && Array.isArray(ctx.context_jsonb.locations) && ctx.context_jsonb.locations.length > 1);\n  if (c.score < MIN_SCORE && manualReview) {\n    needs_review.push({ candidate: c, reason: 'low_score_and_redflags' });\n    continue;\n  }\n  if (c.score < MIN_SCORE) c.low_priority = true;\n  c.manual_review = manualReview || false;\n\n  c.metadata = {\n    recommended_channel: c.recommended_channel || 'call',\n    best_time_to_contact: c.best_time_to_contact || 'morning',\n    owner_verified: !!c.owner_verified,\n    step_log_count: c.step_log_count || 0\n  };\n\n  if (ctx.context_jsonb && ctx.context_jsonb.locations && ctx.context_jsonb.locations.length > 1) {\n    c.notes = c.notes || [];\n    c.notes.push('Multiple unverified location claims detected; recommend validating before verifying.');\n  }\n\n  outputCandidates.push(c);\n}\n\nconst db_upsert_payload = {\n  company_id: ctx.company_id || enriched.company_id || null,\n  enrichedRow: enriched,\n  ctxRow: ctx,\n  upsert_at: new Date().toISOString()\n};\n\nif (outputCandidates.length === 0 && needs_review.length > 0) {\n  const fallback = needs_review[0].candidate;\n  fallback.manual_review = true;\n  fallback.low_priority = true;\n  outputCandidates.push(fallback);\n}\n\n// Return items: one per candidate (AI node expects an item-per-candidate)\nconst results = outputCandidates.map(c => ({\n  json: {\n    ai_candidate: c,\n    enrichedRow: enriched,\n    ctxRow: ctx,\n    stepLogs,               // <-- IMPORTANT: include step logs\n    db_upsert_payload\n  }\n}));\n\nreturn results;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        816,
+        368
+      ],
+      "id": "aad9df45-d3f9-4dfe-a481-0fe899e0dbf3",
+      "name": "🔍 Filter & Enrich AI Candidates"
+    }
+  ],
+  "connections": {
+    "When Executed by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "📥 Get Enriched Lead",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "📥 Get Company Context",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "📥 Get Step Logs For Run",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📦 Assemble Single Run Payload": {
+      "main": [
+        [
+          {
+            "node": "🧭 Build AI Candidate Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📥 Get Company Context": {
+      "main": [
+        [
+          {
+            "node": "🤝 Merge DB Results",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "📥 Get Enriched Lead": {
+      "main": [
+        [
+          {
+            "node": "🤝 Merge DB Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🤝 Merge DB Results": {
+      "main": [
+        [
+          {
+            "node": "📦 Assemble Single Run Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🧠 AI Candidate Extractor": {
+      "main": [
+        [
+          {
+            "node": "⚙️ Parse AI Candidates",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📜 Build AI Prompt": {
+      "main": [
+        [
+          {
+            "node": "🧠 AI Candidate Extractor",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "⚙️ Parse AI Candidates": {
+      "main": [
+        [
+          {
+            "node": "🧮 Candidate Scorer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🧮 Candidate Scorer": {
+      "main": [
+        [
+          {
+            "node": "🧾 Build Final Enriched Row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🧾 Build Final Enriched Row": {
+      "main": [
+        [
+          {
+            "node": "🗄️ Update enriched_leads",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📥 Get Step Logs For Run": {
+      "main": [
+        [
+          {
+            "node": "🤝 Merge DB Results",
+            "type": "main",
+            "index": 2
+          }
+        ]
+      ]
+    },
+    "🧭 Build AI Candidate Context": {
+      "main": [
+        [
+          {
+            "node": "🔍 Filter & Enrich AI Candidates",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔍 Filter & Enrich AI Candidates": {
+      "main": [
+        [
+          {
+            "node": "📜 Build AI Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "2d82e0d27c2a88970c7ba9693b6bad225f1d31f9cf0d392d33dd9cabf99f185f"
+  }
+}

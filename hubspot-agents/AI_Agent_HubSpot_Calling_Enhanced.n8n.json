@@ -1,0 +1,84 @@
+{
+  "name": "AI Agent - HubSpot Calling (Enhanced)",
+  "nodes": [
+    {
+      "parameters": {"workflowInputs": {"values": [{"name": "request_id", "type": "string"}, {"name": "session_id", "type": "string"}, {"name": "user_id", "type": "string"}, {"name": "user_message", "type": "string"}, {"name": "call_id", "type": "string"}, {"name": "tool_name", "type": "string"}, {"name": "dry_run", "type": "boolean"}, {"name": "conversation_id", "type": "string"}]}},
+      "id": "trigger-1",
+      "name": "When Executed by Another Workflow",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [-800, 0]
+    },
+    {
+      "parameters": {"jsCode": "const input = $input.first().json;\nconst tool_name = input.tool_name || 'hubspot.calling';\nconst dry_run = input.dry_run ?? true;\nconst q = v => v == null || v === '' ? null : String(v);\nconst payload = {...input, tool_name, dry_run, _started_ms: Date.now()};\nconst log_sql = `INSERT INTO tool_execution_log (tool_name, input_data, success, conversation_id, user_id, required_approval) VALUES ($1, $2::jsonb, false, $3, $4, $5) RETURNING id;`;\nreturn [{json: {...payload, log_start_sql: log_sql, log_start_params: [tool_name, JSON.stringify(payload), q(input.conversation_id), q(input.user_id), !dry_run]}}];"},
+      "id": "normalize-1",
+      "name": "Normalize",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-560, 0]
+    },
+    {"parameters": {"operation": "executeQuery", "query": "={{$json.log_start_sql}}", "options": {"queryReplacement": "={{ $json.log_start_params }}"}}, "id": "log-start-1", "name": "Log Start", "type": "n8n-nodes-base.postgres", "typeVersion": 2.5, "position": [-320, 0], "credentials": {"postgres": {"id": "BwXy2JHETe47vH1I", "name": "Postgres account 2"}}},
+    {"parameters": {"jsCode": "const base = $('Normalize').first().json;\nconst logStart = $('Log Start').first().json;\nreturn [{json: {...base, tool_execution_id: logStart?.id || null}}];"}, "id": "assemble-1", "name": "Assemble", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [-80, 0]},
+    {
+      "parameters": {
+        "text": "={{ ['USER_REQUEST:', $json.user_message, 'RUNTIME:', JSON.stringify({tool_name: $json.tool_name, dry_run: $json.dry_run, call_id: $json.call_id})].join('\\n') }}",
+        "options": {
+          "maxIterations": 15,
+          "systemMessage": "You are the HubSpot CALLING Agent.\n\nYour job:\n- Manage call records in HubSpot CRM\n- Access call recordings and transcripts\n- Configure calling settings\n- Work with phone numbers\n\nAVAILABLE TOOLS:\n\nCALL RECORDS (CRM):\n- List Calls - Get call records\n- Get Call by ID - Single call details\n- Create Call - Log a call\n- Update Call - Modify call record\n- Delete Call - Remove call record\n- Search Calls - Search call records\n- List Call Properties - Call property definitions\n\nRECORDINGS:\n- Get Call Recording - Get recording URL for a call\n- Get Call Transcript - Get transcript if available\n\nCALLING SETTINGS:\n- Get Calling Settings - Portal calling configuration\n- Update Calling Settings - Modify calling config\n- List Phone Numbers - Get configured phone numbers\n\nOUTPUT FORMAT:\n{\"summary\": \"...\", \"data\": {}, \"errors\": []}"
+        },
+        "promptType": "define"
+      },
+      "id": "agent-1",
+      "name": "AI Agent - Calling",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [160, 0],
+      "alwaysOutputData": true,
+      "retryOnFail": true,
+      "onError": "continueRegularOutput"
+    },
+    {"parameters": {"model": {"__rl": true, "mode": "list", "value": "gpt-4o"}, "options": {}}, "id": "llm-1", "name": "OpenAI Chat Model", "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi", "typeVersion": 1.3, "position": [-80, 200], "credentials": {"openAiApi": {"id": "Lb7LQd5GQa1bZ9yX", "name": "OpenAi account 4"}}},
+    {"parameters": {"sessionKey": "session_id", "sessionIdType": "customKey"}, "id": "memory-1", "name": "Memory", "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow", "typeVersion": 1.3, "position": [40, 200]},
+    {"parameters": {"url": "https://api.hubapi.com/crm/v3/objects/calls", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "sendQuery": true, "specifyQuery": "json", "options": {}, "toolDescription": "List call records from CRM."}, "id": "tool-list-calls", "name": "List Calls", "type": "n8n-nodes-base.httpRequestTool", "typeVersion": 4.3, "position": [160, 200], "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}},
+    {"parameters": {"url": "=https://api.hubapi.com/crm/v3/objects/calls/{{ $json.callId }}", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "options": {}, "toolDescription": "Get call by ID with properties."}, "id": "tool-get-call", "name": "Get Call by ID", "type": "n8n-nodes-base.httpRequestTool", "typeVersion": 4.3, "position": [280, 200], "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}},
+    {"parameters": {"method": "POST", "url": "https://api.hubapi.com/crm/v3/objects/calls", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "sendBody": true, "specifyBody": "json", "options": {}, "toolDescription": "Create call record. Body: {properties: {hs_call_title, hs_call_body, hs_call_duration, hs_call_from_number, hs_call_to_number, hs_call_status, ...}}. WRITE."}, "id": "tool-create-call", "name": "Create Call", "type": "n8n-nodes-base.httpRequestTool", "typeVersion": 4.3, "position": [400, 200], "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}},
+    {"parameters": {"method": "PATCH", "url": "=https://api.hubapi.com/crm/v3/objects/calls/{{ $json.callId }}", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "sendBody": true, "specifyBody": "json", "options": {}, "toolDescription": "Update call. WRITE."}, "id": "tool-update-call", "name": "Update Call", "type": "n8n-nodes-base.httpRequestTool", "typeVersion": 4.3, "position": [520, 200], "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}},
+    {"parameters": {"method": "DELETE", "url": "=https://api.hubapi.com/crm/v3/objects/calls/{{ $json.callId }}", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "options": {}, "toolDescription": "Delete call. WRITE."}, "id": "tool-delete-call", "name": "Delete Call", "type": "n8n-nodes-base.httpRequestTool", "typeVersion": 4.3, "position": [640, 200], "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}},
+    {"parameters": {"method": "POST", "url": "https://api.hubapi.com/crm/v3/objects/calls/search", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "sendBody": true, "specifyBody": "json", "options": {}, "toolDescription": "Search calls. Body: {filterGroups, sorts, properties, limit}."}, "id": "tool-search-calls", "name": "Search Calls", "type": "n8n-nodes-base.httpRequestTool", "typeVersion": 4.3, "position": [760, 200], "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}},
+    {"parameters": {"url": "https://api.hubapi.com/crm/v3/properties/calls", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "options": {}, "toolDescription": "List call property definitions."}, "id": "tool-call-props", "name": "List Call Properties", "type": "n8n-nodes-base.httpRequestTool", "typeVersion": 4.3, "position": [880, 200], "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}},
+    {"parameters": {"url": "=https://api.hubapi.com/crm/v3/objects/calls/{{ $json.callId }}?properties=hs_call_recording_url", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "options": {}, "toolDescription": "Get call recording URL (from hs_call_recording_url property)."}, "id": "tool-recording", "name": "Get Call Recording", "type": "n8n-nodes-base.httpRequestTool", "typeVersion": 4.3, "position": [1000, 200], "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}},
+    {"parameters": {"url": "=https://api.hubapi.com/calling/v1/recordings/{{ $json.callId }}/transcript", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "options": {}, "toolDescription": "Get call transcript if available."}, "id": "tool-transcript", "name": "Get Call Transcript", "type": "n8n-nodes-base.httpRequestTool", "typeVersion": 4.3, "position": [1120, 200], "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}},
+    {"parameters": {"url": "https://api.hubapi.com/calling/v1/settings", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "options": {}, "toolDescription": "Get portal calling settings."}, "id": "tool-settings", "name": "Get Calling Settings", "type": "n8n-nodes-base.httpRequestTool", "typeVersion": 4.3, "position": [160, 360], "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}},
+    {"parameters": {"method": "PATCH", "url": "https://api.hubapi.com/calling/v1/settings", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "sendBody": true, "specifyBody": "json", "options": {}, "toolDescription": "Update calling settings. WRITE."}, "id": "tool-update-settings", "name": "Update Calling Settings", "type": "n8n-nodes-base.httpRequestTool", "typeVersion": 4.3, "position": [280, 360], "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}},
+    {"parameters": {"jsCode": "const base = $('Assemble').first().json;\nconst agentRaw = $('AI Agent - Calling').first().json;\nlet agentOut = {};\ntry { agentOut = typeof agentRaw.output === 'object' ? agentRaw.output : JSON.parse((agentRaw.output||'{}').replace(/^```json|```$/g,'')); } catch {}\nconst ok = !agentOut?.errors?.length;\nconst esc = s => String(s??'').replace(/'/g,\"''\");\nconst final = {ok, summary: agentOut?.summary || 'done', data: agentOut?.data, errors: agentOut?.errors || []};\nfinal.log_end_sql = `UPDATE tool_execution_log SET output_data = '${esc(JSON.stringify(final))}'::jsonb, success = ${ok} WHERE id = '${esc(base.tool_execution_id)}'::uuid;`;\nreturn [{json: final}];"}, "id": "parse-1", "name": "Parse Output", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [400, 0]},
+    {"parameters": {"operation": "executeQuery", "query": "={{$json.log_end_sql}}", "options": {}}, "id": "log-end-1", "name": "Log End", "type": "n8n-nodes-base.postgres", "typeVersion": 2.5, "position": [640, 0], "credentials": {"postgres": {"id": "BwXy2JHETe47vH1I", "name": "Postgres account 2"}}, "onError": "continueRegularOutput"},
+    {"parameters": {"options": {}}, "type": "@n8n/n8n-nodes-langchain.chatTrigger", "typeVersion": 1.4, "position": [-800, -200], "id": "chat-trigger-1", "name": "Chat Trigger", "webhookId": "calling-test"},
+    {"parameters": {"jsCode": "return [{json: {user_message: $input.first().json.chatInput || '', dry_run: true, tool_name: 'hubspot.calling', session_id: 'test'}}];"}, "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [-560, -200], "id": "chat-norm", "name": "Normalize Chat"}
+  ],
+  "connections": {
+    "When Executed by Another Workflow": {"main": [[{"node": "Normalize", "type": "main", "index": 0}]]},
+    "Chat Trigger": {"main": [[{"node": "Normalize Chat", "type": "main", "index": 0}]]},
+    "Normalize Chat": {"main": [[{"node": "Normalize", "type": "main", "index": 0}]]},
+    "Normalize": {"main": [[{"node": "Log Start", "type": "main", "index": 0}]]},
+    "Log Start": {"main": [[{"node": "Assemble", "type": "main", "index": 0}]]},
+    "Assemble": {"main": [[{"node": "AI Agent - Calling", "type": "main", "index": 0}]]},
+    "AI Agent - Calling": {"main": [[{"node": "Parse Output", "type": "main", "index": 0}]]},
+    "Parse Output": {"main": [[{"node": "Log End", "type": "main", "index": 0}]]},
+    "OpenAI Chat Model": {"ai_languageModel": [[{"node": "AI Agent - Calling", "type": "ai_languageModel", "index": 0}]]},
+    "Memory": {"ai_memory": [[{"node": "AI Agent - Calling", "type": "ai_memory", "index": 0}]]},
+    "List Calls": {"ai_tool": [[{"node": "AI Agent - Calling", "type": "ai_tool", "index": 0}]]},
+    "Get Call by ID": {"ai_tool": [[{"node": "AI Agent - Calling", "type": "ai_tool", "index": 0}]]},
+    "Create Call": {"ai_tool": [[{"node": "AI Agent - Calling", "type": "ai_tool", "index": 0}]]},
+    "Update Call": {"ai_tool": [[{"node": "AI Agent - Calling", "type": "ai_tool", "index": 0}]]},
+    "Delete Call": {"ai_tool": [[{"node": "AI Agent - Calling", "type": "ai_tool", "index": 0}]]},
+    "Search Calls": {"ai_tool": [[{"node": "AI Agent - Calling", "type": "ai_tool", "index": 0}]]},
+    "List Call Properties": {"ai_tool": [[{"node": "AI Agent - Calling", "type": "ai_tool", "index": 0}]]},
+    "Get Call Recording": {"ai_tool": [[{"node": "AI Agent - Calling", "type": "ai_tool", "index": 0}]]},
+    "Get Call Transcript": {"ai_tool": [[{"node": "AI Agent - Calling", "type": "ai_tool", "index": 0}]]},
+    "Get Calling Settings": {"ai_tool": [[{"node": "AI Agent - Calling", "type": "ai_tool", "index": 0}]]},
+    "Update Calling Settings": {"ai_tool": [[{"node": "AI Agent - Calling", "type": "ai_tool", "index": 0}]]}
+  },
+  "settings": {"executionOrder": "v1"},
+  "tags": [],
+  "pinData": {}
+}

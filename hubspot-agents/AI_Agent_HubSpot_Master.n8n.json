@@ -1,0 +1,713 @@
+{
+  "name": "AI Agent - HubSpot Master (God Mode)",
+  "nodes": [
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {"name": "request_id", "type": "string"},
+            {"name": "session_id", "type": "string"},
+            {"name": "chat_id", "type": "string"},
+            {"name": "user_id", "type": "string"},
+            {"name": "user_message", "type": "string"},
+            {"name": "contact_id", "type": "string"},
+            {"name": "company_id", "type": "string"},
+            {"name": "deal_id", "type": "string"},
+            {"name": "ticket_id", "type": "string"},
+            {"name": "tool_name", "type": "string"},
+            {"name": "dry_run", "type": "boolean"},
+            {"name": "conversation_id", "type": "string"},
+            {"name": "hs_portal_id", "type": "string"}
+          ]
+        }
+      },
+      "id": "trigger-1",
+      "name": "When Executed by Another Workflow",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [-1000, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst tool_name = input.tool_name || 'hubspot.master';\nconst dry_run = input.dry_run ?? true;\nconst q = v => v == null || v === '' ? null : String(v);\nconst note_scope = 'hubspot';\nconst note_key = 'master.orchestrator';\nconst payload = {\n  ...input,\n  tool_name,\n  dry_run,\n  note_scope,\n  note_key,\n  _started_ms: Date.now(),\n  started_at: new Date().toISOString()\n};\n\nconst log_sql = `INSERT INTO tool_execution_log (tool_name, input_data, success, conversation_id, user_id, required_approval) VALUES ($1, $2::jsonb, false, $3, $4, $5) RETURNING id;`;\n\nconst ctx_sql = `\nSELECT jsonb_build_object(\n  'recent_executions', (\n    SELECT COALESCE(jsonb_agg(jsonb_build_object(\n      'tool_name', t.tool_name,\n      'summary', t.output_data->>'summary',\n      'success', t.success,\n      'created_at', t.created_at\n    ) ORDER BY t.created_at DESC), '[]'::jsonb)\n    FROM tool_execution_log t\n    WHERE t.conversation_id = $1\n    LIMIT 10\n  ),\n  'agent_notes', (\n    SELECT COALESCE(jsonb_agg(n ORDER BY n.updated_at DESC), '[]'::jsonb)\n    FROM agent_notes n\n    WHERE n.scope = 'hubspot'\n    LIMIT 20\n  ),\n  'contact_context', (\n    SELECT to_jsonb(c)\n    FROM hubspot_contacts c\n    WHERE c.id = $2\n    LIMIT 1\n  ),\n  'company_context', (\n    SELECT to_jsonb(co)\n    FROM hubspot_companies co\n    WHERE co.id = $3\n    LIMIT 1\n  ),\n  'deal_context', (\n    SELECT to_jsonb(d)\n    FROM hubspot_deals d\n    WHERE d.id = $4\n    LIMIT 1\n  )\n) AS context;\n`;\n\nreturn [{json: {\n  ...payload,\n  log_start_sql: log_sql,\n  log_start_params: [tool_name, JSON.stringify(payload), q(input.conversation_id), q(input.user_id), !dry_run],\n  ctx_sql,\n  ctx_params: [q(input.conversation_id), q(input.contact_id), q(input.company_id), q(input.deal_id)]\n}}];"
+      },
+      "id": "normalize-1",
+      "name": "Normalize + Build SQL",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-760, 0]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{$json.log_start_sql}}",
+        "options": {"queryReplacement": "={{ $json.log_start_params }}"}
+      },
+      "id": "log-start-1",
+      "name": "Log Start",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [-520, -80],
+      "credentials": {"postgres": {"id": "BwXy2JHETe47vH1I", "name": "Postgres account 2"}}
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{$json.ctx_sql}}",
+        "options": {"queryReplacement": "={{ $json.ctx_params }}"}
+      },
+      "id": "load-context-1",
+      "name": "Load Context",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [-520, 80],
+      "credentials": {"postgres": {"id": "BwXy2JHETe47vH1I", "name": "Postgres account 2"}}
+    },
+    {
+      "parameters": {
+        "jsCode": "const base = $('Normalize + Build SQL').first().json;\nconst logStart = $('Log Start').first().json;\nconst ctxRows = $('Load Context').first().json;\nreturn [{json: {\n  ...base,\n  tool_execution_id: logStart?.id || null,\n  context_pack: ctxRows?.context || {}\n}}];"
+      },
+      "id": "assemble-1",
+      "name": "Assemble Context Pack",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-280, 0]
+    },
+    {
+      "parameters": {
+        "text": "={{ [\n  '=== HUBSPOT GOD MODE AGENT ===',\n  '',\n  'USER REQUEST:',\n  $json.user_message || '(no message)',\n  '',\n  'RUNTIME CONTEXT:',\n  JSON.stringify({\n    dry_run: $json.dry_run,\n    contact_id: $json.contact_id,\n    company_id: $json.company_id,\n    deal_id: $json.deal_id,\n    ticket_id: $json.ticket_id,\n    session_id: $json.session_id,\n    conversation_id: $json.conversation_id\n  }, null, 2),\n  '',\n  'DATABASE CONTEXT:',\n  JSON.stringify($json.context_pack || {}, null, 2)\n].join('\\n') }}",
+        "options": {
+          "maxIterations": 50,
+          "systemMessage": "# HUBSPOT GOD MODE AGENT\n\nYou are the MASTER ORCHESTRATOR for HubSpot. You have COMPLETE ACCESS to the entire HubSpot platform through 21 specialized sub-agents. You can do ANYTHING that's possible with HubSpot's APIs.\n\n## YOUR CAPABILITIES\n\nYou control these specialized agents, each with 15-30 tools:\n\n### CRM AGENTS (Core Data)\n1. **Contacts Agent** - Full contact management (30 tools)\n   - CRUD operations, batch operations, merge contacts\n   - Property management, property history\n   - Associations to companies, deals, tickets\n   - Search, filter, segment contacts\n\n2. **Companies Agent** - Company/account management (22 tools)\n   - CRUD, batch operations, merge\n   - Hierarchies (parent/child companies)\n   - Domain-based lookup\n   - Property management\n\n3. **Deals Agent** - Sales pipeline management (24 tools)\n   - Full deal lifecycle management\n   - Pipeline and stage management\n   - Deal property history (track stage changes)\n   - Revenue forecasting data\n\n4. **Tickets Agent** - Support ticket management (25 tools)\n   - Ticket CRUD and batch operations\n   - Pipeline management\n   - SLA tracking\n   - Associations to contacts/companies\n\n5. **Leads Agent** - Lead management (23 tools)\n   - Lead qualification\n   - Lead-to-contact conversion\n   - Property management\n   - Owner assignment\n\n### ENGAGEMENT AGENTS\n6. **Engagements Agent** - Activity tracking (14 tools)\n   - Notes, calls, emails, meetings, tasks\n   - Activity timeline\n   - Logging interactions\n\n7. **Conversations Agent** - Chat/messaging (16 tools)\n   - Inbox management\n   - Thread management\n   - Chatflows\n   - Channel configuration\n\n8. **Calling Agent** - Phone/calls (11 tools)\n   - Call records\n   - Recordings and transcripts\n   - Calling settings\n\n9. **Meetings Agent** - Scheduling (13 tools)\n   - Scheduling pages\n   - Meeting links\n   - Calendar integration\n\n10. **Email Agent** - Email operations (18 tools)\n    - Transactional emails\n    - Marketing emails\n    - Templates\n    - Subscription management\n\n### AUTOMATION AGENTS\n11. **Workflows Agent** - Automation (17 tools)\n    - Create/manage workflows\n    - Enrollment management\n    - Performance tracking\n    - Enable/disable workflows\n\n12. **Sequences Agent** - Sales sequences (14 tools)\n    - Email sequence management\n    - Enrollment/unenrollment\n    - Pause/resume\n    - Performance stats\n\n13. **Lists Agent** - List management (17 tools)\n    - Static and dynamic lists\n    - Membership management\n    - Segmentation\n\n### COMMERCE AGENTS\n14. **Commerce Agent** - E-commerce (21 tools)\n    - Products and line items\n    - Quotes and invoices\n    - Payment links\n    - Discounts\n\n15. **Billing Agent** - Subscriptions/billing (18 tools)\n    - Subscription management\n    - Payment processing\n    - Invoicing\n\n### CONTENT & MARKETING\n16. **CMS Agent** - Website/content (22 tools)\n    - Site pages and landing pages\n    - Blog posts\n    - HubDB (structured data)\n    - URL redirects\n    - Domains\n\n17. **Marketing Agent** - Marketing tools (16 tools)\n    - Forms and CTAs\n    - Campaigns\n    - Social media\n    - Ads\n\n18. **Files Agent** - File management (15 tools)\n    - Upload/download\n    - Folder management\n    - Signed URLs\n\n### PLATFORM AGENTS\n19. **Account Agent** - Account settings (14 tools)\n    - Users and teams\n    - Portal settings\n    - API usage\n\n20. **Schema Agent** - Custom objects (18 tools)\n    - Custom object definitions\n    - Property groups\n    - Association definitions\n\n21. **Analytics Agent** - Reporting (15 tools)\n    - Custom reports\n    - Attribution\n    - Web analytics\n    - Performance metrics\n\n## HOW TO THINK\n\n### Step 1: UNDERSTAND THE REQUEST\n- What is the user trying to accomplish?\n- What data do they need?\n- What actions do they want to take?\n- Are there any constraints (dry_run mode)?\n\n### Step 2: PLAN YOUR APPROACH\n- Which agents do I need to call?\n- In what order?\n- What information do I need from each?\n- How do results from one agent feed into another?\n\n### Step 3: EXECUTE INTELLIGENTLY\n- Call agents with clear, specific requests\n- Pass relevant context (IDs, filters, etc.)\n- Chain results together when needed\n- Handle errors gracefully\n\n### Step 4: SYNTHESIZE AND RESPOND\n- Combine results from multiple agents\n- Provide a coherent, complete answer\n- Suggest next steps if appropriate\n\n## EXAMPLES OF WHAT YOU CAN DO\n\n**Simple queries:**\n- \"Show me all deals closing this month\" → Deals Agent\n- \"Find contact by email john@example.com\" → Contacts Agent\n- \"What workflows are active?\" → Workflows Agent\n\n**Cross-agent operations:**\n- \"Show me all open tickets for company Acme Corp\"\n  1. Companies Agent → find Acme Corp ID\n  2. Tickets Agent → search tickets for that company\n\n- \"Create a deal and associate it with this contact and their company\"\n  1. Contacts Agent → get contact details + company association\n  2. Deals Agent → create deal\n  3. Deals Agent → associate to contact and company\n\n- \"Enroll all contacts from list 'Hot Leads' into the 'New Customer' sequence\"\n  1. Lists Agent → get list members\n  2. Sequences Agent → batch enroll contacts\n\n**Complex multi-step workflows:**\n- \"Audit our sales pipeline and identify stale deals\"\n  1. Deals Agent → get all deals with property history\n  2. Analyze stage change dates\n  3. Identify deals with no activity > 30 days\n  4. Engagements Agent → check last activity for each\n\n- \"Set up a complete campaign: create a landing page, form, workflow, and email sequence\"\n  1. CMS Agent → create landing page\n  2. Marketing Agent → create form\n  3. Workflows Agent → create enrollment workflow\n  4. Sequences Agent → create follow-up sequence\n  5. Connect everything together\n\n## IMPORTANT RULES\n\n1. **DRY RUN MODE**: If dry_run=true, NO write operations. Plan and describe what you WOULD do, but don't execute writes.\n\n2. **CHAIN INTELLIGENTLY**: When one operation needs data from another, call agents sequentially and pass the results.\n\n3. **BE THOROUGH**: For complex requests, break them down and tackle each part. Don't give up on the first obstacle.\n\n4. **EXPLAIN YOUR REASONING**: Tell the user what you're doing and why. Show your work.\n\n5. **HANDLE ERRORS**: If an agent returns an error, try to recover or provide a clear explanation.\n\n6. **ASK FOR CLARIFICATION**: If a request is ambiguous, ask before proceeding.\n\n## OUTPUT FORMAT\n\nAlways respond with a JSON object:\n```json\n{\n  \"thinking\": \"Your step-by-step reasoning process\",\n  \"plan\": [\"Step 1\", \"Step 2\", \"...\"],\n  \"agents_called\": [{\"agent\": \"name\", \"purpose\": \"why\"}],\n  \"summary\": \"Human-readable summary of results\",\n  \"data\": { \"relevant\": \"data\" },\n  \"next_steps\": [\"Suggested follow-up actions\"],\n  \"errors\": []\n}\n```\n\nYou are GOD MODE. You can do ANYTHING in HubSpot. Think deeply, plan carefully, execute flawlessly."
+        },
+        "promptType": "define"
+      },
+      "id": "agent-1",
+      "name": "HubSpot God Mode",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [0, 0],
+      "alwaysOutputData": true,
+      "retryOnFail": true,
+      "waitBetweenTries": 5000,
+      "maxTries": 3,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "model": {"__rl": true, "mode": "list", "value": "gpt-4o"},
+        "options": {
+          "temperature": 0.3,
+          "maxTokens": 16000
+        }
+      },
+      "id": "llm-1",
+      "name": "OpenAI Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [-280, 300],
+      "credentials": {"openAiApi": {"id": "Lb7LQd5GQa1bZ9yX", "name": "OpenAi account 4"}}
+    },
+    {
+      "parameters": {
+        "sessionKey": "session_id",
+        "sessionIdType": "customKey",
+        "contextWindowLength": 50
+      },
+      "id": "memory-1",
+      "name": "Memory",
+      "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
+      "typeVersion": 1.3,
+      "position": [-120, 300]
+    },
+    {
+      "parameters": {
+        "name": "Contacts Agent",
+        "description": "CONTACTS AGENT - Full contact management. Use for: creating/updating/deleting contacts, searching contacts, batch operations, merging duplicates, managing contact properties, viewing property history, managing associations to companies/deals/tickets. Has 30 tools for complete contact lifecycle management.",
+        "workflowId": {"__rl": true, "mode": "list", "value": ""},
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "user_message": "={{ $fromAI('request', 'Detailed request for the Contacts Agent - be specific about what contact operations you need') }}",
+            "session_id": "={{ $json.session_id }}",
+            "conversation_id": "={{ $json.conversation_id }}",
+            "contact_id": "={{ $json.contact_id || '' }}",
+            "company_id": "={{ $json.company_id || '' }}",
+            "deal_id": "={{ $json.deal_id || '' }}",
+            "dry_run": "={{ $json.dry_run }}",
+            "tool_name": "hubspot.contacts"
+          }
+        }
+      },
+      "id": "tool-contacts",
+      "name": "Contacts Agent",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.1,
+      "position": [0, 300]
+    },
+    {
+      "parameters": {
+        "name": "Companies Agent",
+        "description": "COMPANIES AGENT - Company/account management. Use for: creating/updating/deleting companies, searching companies, batch operations, merging companies, managing hierarchies (parent/child), domain lookups, property management, associations. Has 22 tools.",
+        "workflowId": {"__rl": true, "mode": "list", "value": ""},
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "user_message": "={{ $fromAI('request', 'Detailed request for the Companies Agent') }}",
+            "session_id": "={{ $json.session_id }}",
+            "conversation_id": "={{ $json.conversation_id }}",
+            "company_id": "={{ $json.company_id || '' }}",
+            "dry_run": "={{ $json.dry_run }}",
+            "tool_name": "hubspot.companies"
+          }
+        }
+      },
+      "id": "tool-companies",
+      "name": "Companies Agent",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.1,
+      "position": [120, 300]
+    },
+    {
+      "parameters": {
+        "name": "Deals Agent",
+        "description": "DEALS AGENT - Sales pipeline management. Use for: creating/updating/deleting deals, managing pipelines and stages, tracking deal progression (property history), batch operations, merging deals, forecasting data, associations to contacts/companies. Has 24 tools.",
+        "workflowId": {"__rl": true, "mode": "list", "value": ""},
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "user_message": "={{ $fromAI('request', 'Detailed request for the Deals Agent') }}",
+            "session_id": "={{ $json.session_id }}",
+            "conversation_id": "={{ $json.conversation_id }}",
+            "deal_id": "={{ $json.deal_id || '' }}",
+            "contact_id": "={{ $json.contact_id || '' }}",
+            "company_id": "={{ $json.company_id || '' }}",
+            "dry_run": "={{ $json.dry_run }}",
+            "tool_name": "hubspot.deals"
+          }
+        }
+      },
+      "id": "tool-deals",
+      "name": "Deals Agent",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "name": "Tickets Agent",
+        "description": "TICKETS AGENT - Support ticket management. Use for: creating/updating/deleting tickets, managing ticket pipelines, SLA tracking, batch operations, merging tickets, associations. Has 25 tools.",
+        "workflowId": {"__rl": true, "mode": "list", "value": ""},
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "user_message": "={{ $fromAI('request', 'Detailed request for the Tickets Agent') }}",
+            "session_id": "={{ $json.session_id }}",
+            "conversation_id": "={{ $json.conversation_id }}",
+            "ticket_id": "={{ $json.ticket_id || '' }}",
+            "contact_id": "={{ $json.contact_id || '' }}",
+            "dry_run": "={{ $json.dry_run }}",
+            "tool_name": "hubspot.tickets"
+          }
+        }
+      },
+      "id": "tool-tickets",
+      "name": "Tickets Agent",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.1,
+      "position": [360, 300]
+    },
+    {
+      "parameters": {
+        "name": "Leads Agent",
+        "description": "LEADS AGENT - Lead management. Use for: lead CRUD, qualification, conversion to contacts, batch operations, property management, owner assignment. Has 23 tools.",
+        "workflowId": {"__rl": true, "mode": "list", "value": ""},
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "user_message": "={{ $fromAI('request', 'Detailed request for the Leads Agent') }}",
+            "session_id": "={{ $json.session_id }}",
+            "conversation_id": "={{ $json.conversation_id }}",
+            "dry_run": "={{ $json.dry_run }}",
+            "tool_name": "hubspot.leads"
+          }
+        }
+      },
+      "id": "tool-leads",
+      "name": "Leads Agent",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.1,
+      "position": [480, 300]
+    },
+    {
+      "parameters": {
+        "name": "Engagements Agent",
+        "description": "ENGAGEMENTS AGENT - Activity tracking. Use for: notes, calls, emails, meetings, tasks. Creating and viewing engagement history on records. Activity timeline. Has 14 tools.",
+        "workflowId": {"__rl": true, "mode": "list", "value": ""},
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "user_message": "={{ $fromAI('request', 'Detailed request for the Engagements Agent') }}",
+            "session_id": "={{ $json.session_id }}",
+            "conversation_id": "={{ $json.conversation_id }}",
+            "contact_id": "={{ $json.contact_id || '' }}",
+            "company_id": "={{ $json.company_id || '' }}",
+            "deal_id": "={{ $json.deal_id || '' }}",
+            "dry_run": "={{ $json.dry_run }}",
+            "tool_name": "hubspot.engagements"
+          }
+        }
+      },
+      "id": "tool-engagements",
+      "name": "Engagements Agent",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.1,
+      "position": [600, 300]
+    },
+    {
+      "parameters": {
+        "name": "Workflows Agent",
+        "description": "WORKFLOWS AGENT - Automation management. Use for: creating/updating/deleting workflows, enrolling/unenrolling contacts, enabling/disabling workflows, cloning, viewing performance stats, execution history. Has 17 tools.",
+        "workflowId": {"__rl": true, "mode": "list", "value": ""},
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "user_message": "={{ $fromAI('request', 'Detailed request for the Workflows Agent') }}",
+            "session_id": "={{ $json.session_id }}",
+            "conversation_id": "={{ $json.conversation_id }}",
+            "contact_id": "={{ $json.contact_id || '' }}",
+            "dry_run": "={{ $json.dry_run }}",
+            "tool_name": "hubspot.workflows"
+          }
+        }
+      },
+      "id": "tool-workflows",
+      "name": "Workflows Agent",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.1,
+      "position": [720, 300]
+    },
+    {
+      "parameters": {
+        "name": "Sequences Agent",
+        "description": "SEQUENCES AGENT - Sales sequences (automated email outreach). Use for: viewing sequences, enrolling/unenrolling contacts, pausing/resuming enrollments, batch enrollment, performance stats. Has 14 tools.",
+        "workflowId": {"__rl": true, "mode": "list", "value": ""},
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "user_message": "={{ $fromAI('request', 'Detailed request for the Sequences Agent') }}",
+            "session_id": "={{ $json.session_id }}",
+            "conversation_id": "={{ $json.conversation_id }}",
+            "contact_id": "={{ $json.contact_id || '' }}",
+            "dry_run": "={{ $json.dry_run }}",
+            "tool_name": "hubspot.sequences"
+          }
+        }
+      },
+      "id": "tool-sequences",
+      "name": "Sequences Agent",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.1,
+      "position": [840, 300]
+    },
+    {
+      "parameters": {
+        "name": "Lists Agent",
+        "description": "LISTS AGENT - Contact list management. Use for: creating/updating/deleting lists (static and dynamic), managing memberships, adding/removing contacts, checking membership, segmentation. Has 17 tools.",
+        "workflowId": {"__rl": true, "mode": "list", "value": ""},
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "user_message": "={{ $fromAI('request', 'Detailed request for the Lists Agent') }}",
+            "session_id": "={{ $json.session_id }}",
+            "conversation_id": "={{ $json.conversation_id }}",
+            "contact_id": "={{ $json.contact_id || '' }}",
+            "dry_run": "={{ $json.dry_run }}",
+            "tool_name": "hubspot.lists"
+          }
+        }
+      },
+      "id": "tool-lists",
+      "name": "Lists Agent",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.1,
+      "position": [0, 460]
+    },
+    {
+      "parameters": {
+        "name": "Email Agent",
+        "description": "EMAIL AGENT - Email operations. Use for: transactional emails, marketing emails, email templates, subscription management, email events. Has 18 tools.",
+        "workflowId": {"__rl": true, "mode": "list", "value": ""},
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "user_message": "={{ $fromAI('request', 'Detailed request for the Email Agent') }}",
+            "session_id": "={{ $json.session_id }}",
+            "conversation_id": "={{ $json.conversation_id }}",
+            "contact_id": "={{ $json.contact_id || '' }}",
+            "dry_run": "={{ $json.dry_run }}",
+            "tool_name": "hubspot.email"
+          }
+        }
+      },
+      "id": "tool-email",
+      "name": "Email Agent",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.1,
+      "position": [120, 460]
+    },
+    {
+      "parameters": {
+        "name": "Conversations Agent",
+        "description": "CONVERSATIONS AGENT - Chat and messaging. Use for: inbox management, thread management, sending messages, chatflow configuration, channel management. Has 16 tools.",
+        "workflowId": {"__rl": true, "mode": "list", "value": ""},
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "user_message": "={{ $fromAI('request', 'Detailed request for the Conversations Agent') }}",
+            "session_id": "={{ $json.session_id }}",
+            "conversation_id": "={{ $json.conversation_id }}",
+            "dry_run": "={{ $json.dry_run }}",
+            "tool_name": "hubspot.conversations"
+          }
+        }
+      },
+      "id": "tool-conversations",
+      "name": "Conversations Agent",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.1,
+      "position": [240, 460]
+    },
+    {
+      "parameters": {
+        "name": "Meetings Agent",
+        "description": "MEETINGS AGENT - Meeting/scheduling management. Use for: scheduling pages, meeting links, meeting records, calendar integration. Has 13 tools.",
+        "workflowId": {"__rl": true, "mode": "list", "value": ""},
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "user_message": "={{ $fromAI('request', 'Detailed request for the Meetings Agent') }}",
+            "session_id": "={{ $json.session_id }}",
+            "conversation_id": "={{ $json.conversation_id }}",
+            "dry_run": "={{ $json.dry_run }}",
+            "tool_name": "hubspot.meetings"
+          }
+        }
+      },
+      "id": "tool-meetings",
+      "name": "Meetings Agent",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.1,
+      "position": [360, 460]
+    },
+    {
+      "parameters": {
+        "name": "Calling Agent",
+        "description": "CALLING AGENT - Phone/call management. Use for: call records, recordings, transcripts, calling settings. Has 11 tools.",
+        "workflowId": {"__rl": true, "mode": "list", "value": ""},
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "user_message": "={{ $fromAI('request', 'Detailed request for the Calling Agent') }}",
+            "session_id": "={{ $json.session_id }}",
+            "conversation_id": "={{ $json.conversation_id }}",
+            "dry_run": "={{ $json.dry_run }}",
+            "tool_name": "hubspot.calling"
+          }
+        }
+      },
+      "id": "tool-calling",
+      "name": "Calling Agent",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.1,
+      "position": [480, 460]
+    },
+    {
+      "parameters": {
+        "name": "Files Agent",
+        "description": "FILES AGENT - File management. Use for: uploading/downloading files, folder management, signed URLs, file search. Has 15 tools.",
+        "workflowId": {"__rl": true, "mode": "list", "value": ""},
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "user_message": "={{ $fromAI('request', 'Detailed request for the Files Agent') }}",
+            "session_id": "={{ $json.session_id }}",
+            "conversation_id": "={{ $json.conversation_id }}",
+            "dry_run": "={{ $json.dry_run }}",
+            "tool_name": "hubspot.files"
+          }
+        }
+      },
+      "id": "tool-files",
+      "name": "Files Agent",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.1,
+      "position": [600, 460]
+    },
+    {
+      "parameters": {
+        "name": "CMS Agent",
+        "description": "CMS AGENT - Website/content management. Use for: site pages, landing pages, blog posts, HubDB tables, URL redirects, domains. Has 22 tools.",
+        "workflowId": {"__rl": true, "mode": "list", "value": ""},
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "user_message": "={{ $fromAI('request', 'Detailed request for the CMS Agent') }}",
+            "session_id": "={{ $json.session_id }}",
+            "conversation_id": "={{ $json.conversation_id }}",
+            "dry_run": "={{ $json.dry_run }}",
+            "tool_name": "hubspot.cms"
+          }
+        }
+      },
+      "id": "tool-cms",
+      "name": "CMS Agent",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.1,
+      "position": [720, 460]
+    },
+    {
+      "parameters": {
+        "name": "Marketing Agent",
+        "description": "MARKETING AGENT - Marketing tools. Use for: forms, CTAs, campaigns, social media, ads. Has 16 tools.",
+        "workflowId": {"__rl": true, "mode": "list", "value": ""},
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "user_message": "={{ $fromAI('request', 'Detailed request for the Marketing Agent') }}",
+            "session_id": "={{ $json.session_id }}",
+            "conversation_id": "={{ $json.conversation_id }}",
+            "dry_run": "={{ $json.dry_run }}",
+            "tool_name": "hubspot.marketing"
+          }
+        }
+      },
+      "id": "tool-marketing",
+      "name": "Marketing Agent",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.1,
+      "position": [840, 460]
+    },
+    {
+      "parameters": {
+        "name": "Commerce Agent",
+        "description": "COMMERCE AGENT - E-commerce. Use for: products, line items, quotes, invoices, payment links, discounts. Has 21 tools.",
+        "workflowId": {"__rl": true, "mode": "list", "value": ""},
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "user_message": "={{ $fromAI('request', 'Detailed request for the Commerce Agent') }}",
+            "session_id": "={{ $json.session_id }}",
+            "conversation_id": "={{ $json.conversation_id }}",
+            "dry_run": "={{ $json.dry_run }}",
+            "tool_name": "hubspot.commerce"
+          }
+        }
+      },
+      "id": "tool-commerce",
+      "name": "Commerce Agent",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.1,
+      "position": [0, 620]
+    },
+    {
+      "parameters": {
+        "name": "Billing Agent",
+        "description": "BILLING AGENT - Subscriptions and billing. Use for: subscription management, payment processing, invoicing. Has 18 tools.",
+        "workflowId": {"__rl": true, "mode": "list", "value": ""},
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "user_message": "={{ $fromAI('request', 'Detailed request for the Billing Agent') }}",
+            "session_id": "={{ $json.session_id }}",
+            "conversation_id": "={{ $json.conversation_id }}",
+            "dry_run": "={{ $json.dry_run }}",
+            "tool_name": "hubspot.billing"
+          }
+        }
+      },
+      "id": "tool-billing",
+      "name": "Billing Agent",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.1,
+      "position": [120, 620]
+    },
+    {
+      "parameters": {
+        "name": "Account Agent",
+        "description": "ACCOUNT AGENT - Account/portal settings. Use for: users, teams, portal settings, API usage monitoring. Has 14 tools.",
+        "workflowId": {"__rl": true, "mode": "list", "value": ""},
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "user_message": "={{ $fromAI('request', 'Detailed request for the Account Agent') }}",
+            "session_id": "={{ $json.session_id }}",
+            "conversation_id": "={{ $json.conversation_id }}",
+            "dry_run": "={{ $json.dry_run }}",
+            "tool_name": "hubspot.account"
+          }
+        }
+      },
+      "id": "tool-account",
+      "name": "Account Agent",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.1,
+      "position": [240, 620]
+    },
+    {
+      "parameters": {
+        "name": "Schema Agent",
+        "description": "SCHEMA AGENT - Custom objects and schema. Use for: custom object definitions, property groups, association definitions. Has 18 tools.",
+        "workflowId": {"__rl": true, "mode": "list", "value": ""},
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "user_message": "={{ $fromAI('request', 'Detailed request for the Schema Agent') }}",
+            "session_id": "={{ $json.session_id }}",
+            "conversation_id": "={{ $json.conversation_id }}",
+            "dry_run": "={{ $json.dry_run }}",
+            "tool_name": "hubspot.schema"
+          }
+        }
+      },
+      "id": "tool-schema",
+      "name": "Schema Agent",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.1,
+      "position": [360, 620]
+    },
+    {
+      "parameters": {
+        "name": "Analytics Agent",
+        "description": "ANALYTICS AGENT - Reporting and analytics. Use for: custom reports, attribution, web analytics, email/form stats, performance metrics. Has 15 tools.",
+        "workflowId": {"__rl": true, "mode": "list", "value": ""},
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "user_message": "={{ $fromAI('request', 'Detailed request for the Analytics Agent') }}",
+            "session_id": "={{ $json.session_id }}",
+            "conversation_id": "={{ $json.conversation_id }}",
+            "dry_run": "={{ $json.dry_run }}",
+            "tool_name": "hubspot.analytics"
+          }
+        }
+      },
+      "id": "tool-analytics",
+      "name": "Analytics Agent",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.1,
+      "position": [480, 620]
+    },
+    {
+      "parameters": {
+        "jsCode": "const base = $('Assemble Context Pack').first().json;\nconst started = Number(base._started_ms || Date.now());\nconst duration_ms = Math.max(0, Date.now() - started);\n\nconst agentRaw = $('HubSpot God Mode').first().json;\n\nconst coerceJson = (val) => {\n  if (val === null || val === undefined) return null;\n  if (typeof val === 'object') return val;\n  if (typeof val !== 'string') return { value: val };\n  const s = val.trim().replace(/^```json\\s*/i, '').replace(/```$/,'').trim();\n  try { return JSON.parse(s); } catch { return { raw: val }; }\n};\n\nconst agentOut = coerceJson(agentRaw.output ?? agentRaw.text ?? agentRaw);\nconst ok = !(agentOut?.errors && agentOut.errors.length);\nconst esc = (s) => String(s ?? '').replace(/'/g, \"''\");\n\nconst final = {\n  ok,\n  tool_name: base.tool_name,\n  tool_execution_id: base.tool_execution_id,\n  session_id: base.session_id,\n  conversation_id: base.conversation_id,\n  dry_run: base.dry_run,\n  thinking: agentOut?.thinking ?? null,\n  plan: agentOut?.plan ?? [],\n  agents_called: agentOut?.agents_called ?? [],\n  summary: agentOut?.summary ?? (ok ? 'Completed successfully' : 'Completed with errors'),\n  data: agentOut?.data ?? null,\n  next_steps: agentOut?.next_steps ?? [],\n  errors: agentOut?.errors ?? [],\n  duration_ms\n};\n\nconst outJson = esc(JSON.stringify(final));\nconst errText = final.errors?.length ? esc(JSON.stringify(final.errors)) : null;\n\nfinal.log_end_sql = `\nUPDATE tool_execution_log\nSET\n  output_data = '${outJson}'::jsonb,\n  success = ${final.ok ? 'true' : 'false'},\n  error = ${errText ? `'${errText}'` : 'null'},\n  duration_ms = ${Number.isFinite(final.duration_ms) ? final.duration_ms : 'null'}\nWHERE id = '${esc(base.tool_execution_id)}'::uuid;\n`;\n\nif (agentOut?.notes_to_save) {\n  const noteObj = { text: String(agentOut.notes_to_save).trim() };\n  final.save_notes_sql = `INSERT INTO agent_notes (scope, note_key, note) VALUES ('hubspot', 'master.orchestrator', '${esc(JSON.stringify(noteObj))}'::jsonb);`;\n}\n\nreturn [{ json: final }];"
+      },
+      "id": "parse-output-1",
+      "name": "Parse + Finalize Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [300, 0]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{$json.log_end_sql}}",
+        "options": {}
+      },
+      "id": "log-end-1",
+      "name": "Log End",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [540, -80],
+      "credentials": {"postgres": {"id": "BwXy2JHETe47vH1I", "name": "Postgres account 2"}},
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {"caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 1},
+          "conditions": [{"id": "has_notes", "leftValue": "={{ $json.save_notes_sql }}", "rightValue": "", "operator": {"type": "string", "operation": "notEmpty"}}],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [540, 80],
+      "id": "has-notes-1",
+      "name": "Has Notes?",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{$json.save_notes_sql}}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [780, 80],
+      "id": "save-notes-1",
+      "name": "Save Notes",
+      "credentials": {"postgres": {"id": "BwXy2JHETe47vH1I", "name": "Postgres account 2"}},
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {"options": {}},
+      "type": "@n8n/n8n-nodes-langchain.chatTrigger",
+      "typeVersion": 1.4,
+      "position": [-1000, -300],
+      "id": "chat-trigger-1",
+      "name": "Chat Trigger",
+      "webhookId": "hubspot-god-mode"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\n\nconst chatText =\n  input.chatInput ||\n  input.message?.text ||\n  input.text ||\n  input.body?.message ||\n  '';\n\nreturn [{\n  json: {\n    user_message: String(chatText || ''),\n    dry_run: false,  // God Mode defaults to live execution\n    tool_name: 'hubspot.master',\n    session_id: input.sessionId || input.session_id || `god_mode_${Date.now()}`,\n    conversation_id: input.conversationId || input.conversation_id || `god_mode_${Date.now()}`,\n    chat_id: input.chatId || input.chat_id || null,\n    user_id: input.userId || input.user_id || 'god_mode_user',\n    request_id: `god_${Date.now()}`,\n    contact_id: input.contact_id || null,\n    company_id: input.company_id || null,\n    deal_id: input.deal_id || null,\n    ticket_id: input.ticket_id || null,\n    hs_portal_id: input.hs_portal_id || null\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-760, -300],
+      "id": "chat-normalize-1",
+      "name": "Normalize Chat Input"
+    }
+  ],
+  "connections": {
+    "When Executed by Another Workflow": {"main": [[{"node": "Normalize + Build SQL", "type": "main", "index": 0}]]},
+    "Chat Trigger": {"main": [[{"node": "Normalize Chat Input", "type": "main", "index": 0}]]},
+    "Normalize Chat Input": {"main": [[{"node": "Normalize + Build SQL", "type": "main", "index": 0}]]},
+    "Normalize + Build SQL": {"main": [[{"node": "Log Start", "type": "main", "index": 0}, {"node": "Load Context", "type": "main", "index": 0}]]},
+    "Log Start": {"main": [[{"node": "Assemble Context Pack", "type": "main", "index": 0}]]},
+    "Load Context": {"main": [[{"node": "Assemble Context Pack", "type": "main", "index": 0}]]},
+    "Assemble Context Pack": {"main": [[{"node": "HubSpot God Mode", "type": "main", "index": 0}]]},
+    "HubSpot God Mode": {"main": [[{"node": "Parse + Finalize Output", "type": "main", "index": 0}]]},
+    "Parse + Finalize Output": {"main": [[{"node": "Log End", "type": "main", "index": 0}, {"node": "Has Notes?", "type": "main", "index": 0}]]},
+    "Has Notes?": {"main": [[{"node": "Save Notes", "type": "main", "index": 0}]]},
+    "OpenAI Chat Model": {"ai_languageModel": [[{"node": "HubSpot God Mode", "type": "ai_languageModel", "index": 0}]]},
+    "Memory": {"ai_memory": [[{"node": "HubSpot God Mode", "type": "ai_memory", "index": 0}]]},
+    "Contacts Agent": {"ai_tool": [[{"node": "HubSpot God Mode", "type": "ai_tool", "index": 0}]]},
+    "Companies Agent": {"ai_tool": [[{"node": "HubSpot God Mode", "type": "ai_tool", "index": 0}]]},
+    "Deals Agent": {"ai_tool": [[{"node": "HubSpot God Mode", "type": "ai_tool", "index": 0}]]},
+    "Tickets Agent": {"ai_tool": [[{"node": "HubSpot God Mode", "type": "ai_tool", "index": 0}]]},
+    "Leads Agent": {"ai_tool": [[{"node": "HubSpot God Mode", "type": "ai_tool", "index": 0}]]},
+    "Engagements Agent": {"ai_tool": [[{"node": "HubSpot God Mode", "type": "ai_tool", "index": 0}]]},
+    "Workflows Agent": {"ai_tool": [[{"node": "HubSpot God Mode", "type": "ai_tool", "index": 0}]]},
+    "Sequences Agent": {"ai_tool": [[{"node": "HubSpot God Mode", "type": "ai_tool", "index": 0}]]},
+    "Lists Agent": {"ai_tool": [[{"node": "HubSpot God Mode", "type": "ai_tool", "index": 0}]]},
+    "Email Agent": {"ai_tool": [[{"node": "HubSpot God Mode", "type": "ai_tool", "index": 0}]]},
+    "Conversations Agent": {"ai_tool": [[{"node": "HubSpot God Mode", "type": "ai_tool", "index": 0}]]},
+    "Meetings Agent": {"ai_tool": [[{"node": "HubSpot God Mode", "type": "ai_tool", "index": 0}]]},
+    "Calling Agent": {"ai_tool": [[{"node": "HubSpot God Mode", "type": "ai_tool", "index": 0}]]},
+    "Files Agent": {"ai_tool": [[{"node": "HubSpot God Mode", "type": "ai_tool", "index": 0}]]},
+    "CMS Agent": {"ai_tool": [[{"node": "HubSpot God Mode", "type": "ai_tool", "index": 0}]]},
+    "Marketing Agent": {"ai_tool": [[{"node": "HubSpot God Mode", "type": "ai_tool", "index": 0}]]},
+    "Commerce Agent": {"ai_tool": [[{"node": "HubSpot God Mode", "type": "ai_tool", "index": 0}]]},
+    "Billing Agent": {"ai_tool": [[{"node": "HubSpot God Mode", "type": "ai_tool", "index": 0}]]},
+    "Account Agent": {"ai_tool": [[{"node": "HubSpot God Mode", "type": "ai_tool", "index": 0}]]},
+    "Schema Agent": {"ai_tool": [[{"node": "HubSpot God Mode", "type": "ai_tool", "index": 0}]]},
+    "Analytics Agent": {"ai_tool": [[{"node": "HubSpot God Mode", "type": "ai_tool", "index": 0}]]}
+  },
+  "settings": {"executionOrder": "v1"},
+  "tags": [],
+  "pinData": {}
+}

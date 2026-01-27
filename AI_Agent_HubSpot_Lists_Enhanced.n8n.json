@@ -1,0 +1,114 @@
+{
+  "name": "AI Agent - HubSpot Lists (Enhanced)",
+  "nodes": [
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {"name": "request_id", "type": "string"},
+            {"name": "session_id", "type": "string"},
+            {"name": "chat_id", "type": "string"},
+            {"name": "user_id", "type": "string"},
+            {"name": "user_message", "type": "string"},
+            {"name": "list_id", "type": "string"},
+            {"name": "contact_id", "type": "string"},
+            {"name": "tool_name", "type": "string"},
+            {"name": "dry_run", "type": "boolean"},
+            {"name": "conversation_id", "type": "string"}
+          ]
+        }
+      },
+      "id": "trigger-1",
+      "name": "When Executed by Another Workflow",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [-800, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst tool_name = input.tool_name || 'hubspot.lists';\nconst dry_run = input.dry_run ?? true;\nconst q = v => v == null || v === '' ? null : String(v);\nconst note_scope = 'hubspot';\nconst note_key = input.list_id ? `list.${input.list_id}` : 'lists.general';\nconst payload = {...input, tool_name, dry_run, note_scope, note_key, _started_ms: Date.now()};\nconst log_sql = `INSERT INTO tool_execution_log (tool_name, input_data, success, conversation_id, user_id, required_approval) VALUES ($1, $2::jsonb, false, $3, $4, $5) RETURNING id;`;\nreturn [{json: {...payload, log_start_sql: log_sql, log_start_params: [tool_name, JSON.stringify(payload), q(input.conversation_id), q(input.user_id), !dry_run]}}];"
+      },
+      "id": "normalize-1",
+      "name": "Normalize + Build SQL",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-560, 0]
+    },
+    {"parameters": {"operation": "executeQuery", "query": "={{$json.log_start_sql}}", "options": {"queryReplacement": "={{ $json.log_start_params }}"}}, "id": "log-start-1", "name": "Log Start", "type": "n8n-nodes-base.postgres", "typeVersion": 2.5, "position": [-320, 0], "credentials": {"postgres": {"id": "BwXy2JHETe47vH1I", "name": "Postgres account 2"}}},
+    {"parameters": {"jsCode": "const base = $('Normalize + Build SQL').first().json;\nconst logStart = $('Log Start').first().json;\nreturn [{json: {...base, tool_execution_id: logStart?.id || null}}];"}, "id": "assemble-1", "name": "Assemble", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [-80, 0]},
+    {
+      "parameters": {
+        "text": "={{ ['USER_REQUEST:', $json.user_message, 'RUNTIME:', JSON.stringify({tool_name: $json.tool_name, dry_run: $json.dry_run, list_id: $json.list_id, contact_id: $json.contact_id})].join('\\n') }}",
+        "options": {
+          "maxIterations": 15,
+          "systemMessage": "You are the HubSpot LISTS Agent.\n\nYour job:\n- Manage HubSpot lists (MANUAL, DYNAMIC, SNAPSHOT)\n- Control list memberships (add/remove contacts)\n- Search and query lists\n\nAVAILABLE TOOLS:\n\nLIST OPERATIONS:\n- List All Lists - Get all lists with pagination\n- Get List by ID - Get single list details\n- Get List by Name - Find list by name\n- Search Lists - Search lists with filters\n- Get List Filters - Get filter definition for DYNAMIC lists\n- Create List - Create new list (WRITE)\n- Update List - Update list name/filters (WRITE)\n- Delete List - Delete a list (WRITE)\n- Restore List - Restore deleted list (WRITE)\n\nMEMBERSHIP OPERATIONS:\n- Get List Members - Get contacts in a list\n- Get All List Members - Get all members (paginated)\n- Check Membership - Check if contact is in list\n- Check Contact Lists - Get all lists a contact belongs to\n- Add Contacts to List - Add contacts to MANUAL list (WRITE)\n- Remove Contacts from List - Remove contacts (WRITE)\n- Add Contacts Batch - Batch add with validation (WRITE)\n- Remove Contacts Batch - Batch remove (WRITE)\n\nLIST TYPES:\n- MANUAL: Static list, manually add/remove members\n- DYNAMIC: Auto-updates based on filter criteria\n- SNAPSHOT: Point-in-time copy, can be modified\n\nOBJECT TYPE IDS:\n- 0-1: Contacts\n- 0-2: Companies\n- 0-3: Deals\n- 0-5: Tickets\n\nOUTPUT FORMAT:\n{\"summary\": \"...\", \"data\": {}, \"errors\": []}"
+        },
+        "promptType": "define"
+      },
+      "id": "agent-1",
+      "name": "AI Agent - Lists",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [160, 0],
+      "alwaysOutputData": true,
+      "retryOnFail": true,
+      "waitBetweenTries": 3000,
+      "onError": "continueRegularOutput"
+    },
+    {"parameters": {"model": {"__rl": true, "mode": "list", "value": "gpt-4o"}, "options": {}}, "id": "llm-1", "name": "OpenAI Chat Model", "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi", "typeVersion": 1.3, "position": [-80, 200], "credentials": {"openAiApi": {"id": "Lb7LQd5GQa1bZ9yX", "name": "OpenAi account 4"}}},
+    {"parameters": {"sessionKey": "session_id", "sessionIdType": "customKey"}, "id": "memory-1", "name": "Memory", "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow", "typeVersion": 1.3, "position": [40, 200]},
+    {"parameters": {"url": "https://api.hubapi.com/crm/v3/lists", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "sendQuery": true, "specifyQuery": "json", "options": {}, "toolDescription": "List all lists. Query: limit (max 100), offset, includeFilters."}, "id": "tool-list-all", "name": "List All Lists", "type": "n8n-nodes-base.httpRequestTool", "typeVersion": 4.3, "position": [160, 200], "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}},
+    {"parameters": {"url": "=https://api.hubapi.com/crm/v3/lists/{{ $json.listId }}", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "sendQuery": true, "specifyQuery": "json", "options": {}, "toolDescription": "Get list by ID. Query: includeFilters=true for filter definition."}, "id": "tool-get-list", "name": "Get List by ID", "type": "n8n-nodes-base.httpRequestTool", "typeVersion": 4.3, "position": [280, 200], "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}},
+    {"parameters": {"method": "POST", "url": "https://api.hubapi.com/crm/v3/lists/search", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "sendBody": true, "specifyBody": "json", "options": {}, "toolDescription": "Search lists. Body: {query: 'name', listIds: [], processingTypes: ['MANUAL','DYNAMIC'], offset, limit}."}, "id": "tool-search-lists", "name": "Search Lists", "type": "n8n-nodes-base.httpRequestTool", "typeVersion": 4.3, "position": [400, 200], "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}},
+    {"parameters": {"method": "POST", "url": "https://api.hubapi.com/crm/v3/lists/search", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "sendBody": true, "specifyBody": "json", "jsonBody": "={{ JSON.stringify({query: $json.name, limit: 1}) }}", "options": {}, "toolDescription": "Get list by name. Provide name to search for exact match."}, "id": "tool-get-by-name", "name": "Get List by Name", "type": "n8n-nodes-base.httpRequestTool", "typeVersion": 4.3, "position": [520, 200], "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}},
+    {"parameters": {"url": "=https://api.hubapi.com/crm/v3/lists/{{ $json.listId }}?includeFilters=true", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "options": {}, "toolDescription": "Get filter definition for a DYNAMIC list."}, "id": "tool-get-filters", "name": "Get List Filters", "type": "n8n-nodes-base.httpRequestTool", "typeVersion": 4.3, "position": [640, 200], "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}},
+    {"parameters": {"url": "=https://api.hubapi.com/crm/v3/lists/{{ $json.listId }}/memberships", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "sendQuery": true, "specifyQuery": "json", "options": {}, "toolDescription": "Get list members. Query: limit (max 100), after (cursor)."}, "id": "tool-get-members", "name": "Get List Members", "type": "n8n-nodes-base.httpRequestTool", "typeVersion": 4.3, "position": [760, 200], "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}},
+    {"parameters": {"url": "=https://api.hubapi.com/crm/v3/lists/{{ $json.listId }}/memberships/join", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "sendQuery": true, "specifyQuery": "json", "options": {}, "toolDescription": "Get all list members with full pagination. Returns all members for large lists."}, "id": "tool-get-all-members", "name": "Get All List Members", "type": "n8n-nodes-base.httpRequestTool", "typeVersion": 4.3, "position": [880, 200], "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}},
+    {"parameters": {"url": "=https://api.hubapi.com/crm/v3/lists/{{ $json.listId }}/memberships/{{ $json.contactId }}", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "options": {}, "toolDescription": "Check if a contact is a member of a list. Returns 200 if member, 404 if not."}, "id": "tool-check-membership", "name": "Check Membership", "type": "n8n-nodes-base.httpRequestTool", "typeVersion": 4.3, "position": [1000, 200], "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}},
+    {"parameters": {"url": "=https://api.hubapi.com/crm/v3/objects/contacts/{{ $json.contactId }}/associations/lists", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "options": {}, "toolDescription": "Get all lists a contact belongs to."}, "id": "tool-contact-lists", "name": "Check Contact Lists", "type": "n8n-nodes-base.httpRequestTool", "typeVersion": 4.3, "position": [1120, 200], "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}},
+    {"parameters": {"method": "POST", "url": "https://api.hubapi.com/crm/v3/lists", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "sendBody": true, "specifyBody": "json", "options": {}, "toolDescription": "Create list. Body: {name, objectTypeId: '0-1', processingType: 'MANUAL'|'DYNAMIC', filterBranch: {...} for DYNAMIC}. WRITE."}, "id": "tool-create-list", "name": "Create List", "type": "n8n-nodes-base.httpRequestTool", "typeVersion": 4.3, "position": [160, 360], "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}},
+    {"parameters": {"method": "PATCH", "url": "=https://api.hubapi.com/crm/v3/lists/{{ $json.listId }}", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "sendBody": true, "specifyBody": "json", "options": {}, "toolDescription": "Update list. Body: {name, filterBranch}. WRITE."}, "id": "tool-update-list", "name": "Update List", "type": "n8n-nodes-base.httpRequestTool", "typeVersion": 4.3, "position": [280, 360], "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}},
+    {"parameters": {"method": "DELETE", "url": "=https://api.hubapi.com/crm/v3/lists/{{ $json.listId }}", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "options": {}, "toolDescription": "Delete list. WRITE."}, "id": "tool-delete-list", "name": "Delete List", "type": "n8n-nodes-base.httpRequestTool", "typeVersion": 4.3, "position": [400, 360], "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}},
+    {"parameters": {"method": "PUT", "url": "=https://api.hubapi.com/crm/v3/lists/{{ $json.listId }}/restore", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "options": {}, "toolDescription": "Restore a deleted list. WRITE."}, "id": "tool-restore-list", "name": "Restore List", "type": "n8n-nodes-base.httpRequestTool", "typeVersion": 4.3, "position": [520, 360], "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}},
+    {"parameters": {"method": "PUT", "url": "=https://api.hubapi.com/crm/v3/lists/{{ $json.listId }}/memberships/add", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "sendBody": true, "specifyBody": "json", "options": {}, "toolDescription": "Add contacts to MANUAL/SNAPSHOT list. Body: [contactId1, contactId2, ...]. Max 500. WRITE."}, "id": "tool-add-contacts", "name": "Add Contacts to List", "type": "n8n-nodes-base.httpRequestTool", "typeVersion": 4.3, "position": [640, 360], "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}},
+    {"parameters": {"method": "PUT", "url": "=https://api.hubapi.com/crm/v3/lists/{{ $json.listId }}/memberships/remove", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "sendBody": true, "specifyBody": "json", "options": {}, "toolDescription": "Remove contacts from MANUAL/SNAPSHOT list. Body: [contactId1, ...]. WRITE."}, "id": "tool-remove-contacts", "name": "Remove Contacts from List", "type": "n8n-nodes-base.httpRequestTool", "typeVersion": 4.3, "position": [760, 360], "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}},
+    {"parameters": {"method": "PUT", "url": "=https://api.hubapi.com/crm/v3/lists/{{ $json.listId }}/memberships/add-from-list-id/{{ $json.sourceListId }}", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "options": {}, "toolDescription": "Add all members from another list. Params: listId (target), sourceListId. WRITE."}, "id": "tool-add-from-list", "name": "Add Contacts from List", "type": "n8n-nodes-base.httpRequestTool", "typeVersion": 4.3, "position": [880, 360], "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}},
+    {"parameters": {"method": "PUT", "url": "=https://api.hubapi.com/crm/v3/lists/{{ $json.listId }}/memberships/remove-all", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "options": {}, "toolDescription": "Remove ALL contacts from a list. DESTRUCTIVE WRITE."}, "id": "tool-remove-all", "name": "Remove All Contacts", "type": "n8n-nodes-base.httpRequestTool", "typeVersion": 4.3, "position": [1000, 360], "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}},
+    {"parameters": {"jsCode": "const base = $('Assemble').first().json;\nconst agentRaw = $('AI Agent - Lists').first().json;\nlet agentOut = {};\ntry { agentOut = typeof agentRaw.output === 'object' ? agentRaw.output : JSON.parse((agentRaw.output||'{}').replace(/^```json|```$/g,'')); } catch {}\nconst ok = !agentOut?.errors?.length;\nconst esc = s => String(s??'').replace(/'/g,\"''\");\nconst final = {ok, summary: agentOut?.summary || 'done', data: agentOut?.data, errors: agentOut?.errors || []};\nfinal.log_end_sql = `UPDATE tool_execution_log SET output_data = '${esc(JSON.stringify(final))}'::jsonb, success = ${ok} WHERE id = '${esc(base.tool_execution_id)}'::uuid;`;\nreturn [{json: final}];"}, "id": "parse-1", "name": "Parse Output", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [400, 0]},
+    {"parameters": {"operation": "executeQuery", "query": "={{$json.log_end_sql}}", "options": {}}, "id": "log-end-1", "name": "Log End", "type": "n8n-nodes-base.postgres", "typeVersion": 2.5, "position": [640, 0], "credentials": {"postgres": {"id": "BwXy2JHETe47vH1I", "name": "Postgres account 2"}}, "onError": "continueRegularOutput"},
+    {"parameters": {"options": {}}, "type": "@n8n/n8n-nodes-langchain.chatTrigger", "typeVersion": 1.4, "position": [-800, -200], "id": "chat-trigger-1", "name": "Chat Trigger", "webhookId": "lists-test"},
+    {"parameters": {"jsCode": "return [{json: {user_message: $input.first().json.chatInput || '', dry_run: true, tool_name: 'hubspot.lists', session_id: 'test'}}];"}, "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [-560, -200], "id": "chat-norm", "name": "Normalize Chat"}
+  ],
+  "connections": {
+    "When Executed by Another Workflow": {"main": [[{"node": "Normalize + Build SQL", "type": "main", "index": 0}]]},
+    "Chat Trigger": {"main": [[{"node": "Normalize Chat", "type": "main", "index": 0}]]},
+    "Normalize Chat": {"main": [[{"node": "Normalize + Build SQL", "type": "main", "index": 0}]]},
+    "Normalize + Build SQL": {"main": [[{"node": "Log Start", "type": "main", "index": 0}]]},
+    "Log Start": {"main": [[{"node": "Assemble", "type": "main", "index": 0}]]},
+    "Assemble": {"main": [[{"node": "AI Agent - Lists", "type": "main", "index": 0}]]},
+    "AI Agent - Lists": {"main": [[{"node": "Parse Output", "type": "main", "index": 0}]]},
+    "Parse Output": {"main": [[{"node": "Log End", "type": "main", "index": 0}]]},
+    "OpenAI Chat Model": {"ai_languageModel": [[{"node": "AI Agent - Lists", "type": "ai_languageModel", "index": 0}]]},
+    "Memory": {"ai_memory": [[{"node": "AI Agent - Lists", "type": "ai_memory", "index": 0}]]},
+    "List All Lists": {"ai_tool": [[{"node": "AI Agent - Lists", "type": "ai_tool", "index": 0}]]},
+    "Get List by ID": {"ai_tool": [[{"node": "AI Agent - Lists", "type": "ai_tool", "index": 0}]]},
+    "Search Lists": {"ai_tool": [[{"node": "AI Agent - Lists", "type": "ai_tool", "index": 0}]]},
+    "Get List by Name": {"ai_tool": [[{"node": "AI Agent - Lists", "type": "ai_tool", "index": 0}]]},
+    "Get List Filters": {"ai_tool": [[{"node": "AI Agent - Lists", "type": "ai_tool", "index": 0}]]},
+    "Get List Members": {"ai_tool": [[{"node": "AI Agent - Lists", "type": "ai_tool", "index": 0}]]},
+    "Get All List Members": {"ai_tool": [[{"node": "AI Agent - Lists", "type": "ai_tool", "index": 0}]]},
+    "Check Membership": {"ai_tool": [[{"node": "AI Agent - Lists", "type": "ai_tool", "index": 0}]]},
+    "Check Contact Lists": {"ai_tool": [[{"node": "AI Agent - Lists", "type": "ai_tool", "index": 0}]]},
+    "Create List": {"ai_tool": [[{"node": "AI Agent - Lists", "type": "ai_tool", "index": 0}]]},
+    "Update List": {"ai_tool": [[{"node": "AI Agent - Lists", "type": "ai_tool", "index": 0}]]},
+    "Delete List": {"ai_tool": [[{"node": "AI Agent - Lists", "type": "ai_tool", "index": 0}]]},
+    "Restore List": {"ai_tool": [[{"node": "AI Agent - Lists", "type": "ai_tool", "index": 0}]]},
+    "Add Contacts to List": {"ai_tool": [[{"node": "AI Agent - Lists", "type": "ai_tool", "index": 0}]]},
+    "Remove Contacts from List": {"ai_tool": [[{"node": "AI Agent - Lists", "type": "ai_tool", "index": 0}]]},
+    "Add Contacts from List": {"ai_tool": [[{"node": "AI Agent - Lists", "type": "ai_tool", "index": 0}]]},
+    "Remove All Contacts": {"ai_tool": [[{"node": "AI Agent - Lists", "type": "ai_tool", "index": 0}]]}
+  },
+  "settings": {"executionOrder": "v1"},
+  "tags": [],
+  "pinData": {}
+}

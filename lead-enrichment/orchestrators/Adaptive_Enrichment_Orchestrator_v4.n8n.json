@@ -1,0 +1,577 @@
+{
+  "name": "Adaptive Enrichment Orchestrator v4",
+  "nodes": [
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [-1600, 0],
+      "id": "trigger-external",
+      "name": "When Executed by Another Workflow"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [-1600, 160],
+      "id": "trigger-manual",
+      "name": "When clicking 'Execute workflow'"
+    },
+    {
+      "parameters": {
+        "operation": "search",
+        "base": {
+          "__rl": true,
+          "value": "appUmr7c5VACTjiJj",
+          "mode": "list",
+          "cachedResultName": "ASM Lead Intelligence Hub (Copy)"
+        },
+        "table": {
+          "__rl": true,
+          "value": "tblLxOBg1zHfLYyUJ",
+          "mode": "list",
+          "cachedResultName": "Companies (Canonical)"
+        },
+        "filterByFormula": "AND({research_status}=BLANK())",
+        "returnAll": false,
+        "limit": 1,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2.1,
+      "position": [-1376, 160],
+      "id": "airtable-search",
+      "name": "🔍 Search Airtable Records",
+      "credentials": {
+        "airtableTokenApi": {
+          "id": "mP0iHEaWU9UB0y9B",
+          "name": "Jonah's n8n Personal Access Token Confirmed"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Normalize Airtable record to standard schema\nconst item = $input.first();\nconst j = item.json;\nconst f = (j.fields && typeof j.fields === 'object') ? j.fields : j;\n\nconst safe = (v) => (v === null || v === undefined) ? '' : String(v);\nconst normalizeDomain = (urlOrDomain) =>\n  safe(urlOrDomain).replace(/^https?:\\/\\//i, '').replace(/^www\\./i, '').split('/')[0].trim();\n\nconst hq = safe(f['HQ Address'] || f['Address'] || f['Location'] || '');\nconst parts = hq.split(',').map(s => s.trim());\n\nconst out = {\n  airtable_id: safe(j.id || f.id || ''),\n  company_name: safe(f['Company Name'] || f['company_name'] || f['name'] || ''),\n  location: hq,\n  city: parts[1] || '',\n  state: (parts[2] || '').split(' ')[0] || '',\n  domain: safe(f['Website'] || f['website'] || f['domain'] || ''),\n  search_domain: normalizeDomain(f['Website'] || f['website'] || f['domain'] || ''),\n  phone: safe(f['Phone'] || f['phone'] || ''),\n  address: hq,\n  timestamp: new Date().toISOString(),\n  enrichment_id: `${Date.now()}-${safe(f['Company Name'] || 'unknown').replace(/[^a-zA-Z0-9]/g, '').slice(0,20)}`\n};\n\nreturn [{ json: out }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-1152, 80],
+      "id": "normalize-record",
+      "name": "🧱 Normalize Airtable Record"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Initialize the enrichment loop context\nconst input = $json;\n\nconst loopContext = {\n  // Identity\n  company_id: input.airtable_id || 'unknown',\n  research_run_id: $execution.id.toString(),\n  enrichment_id: input.enrichment_id,\n\n  // Initial context from input\n  context: {\n    company_name: input.company_name || null,\n    domain: input.search_domain || input.domain || null,\n    phone: input.phone || null,\n    address: input.address || input.location || null,\n    city: input.city || null,\n    state: input.state || null\n  },\n\n  // Loop state\n  current_phase: 'phase_1',\n  current_iteration: 0,\n  stages_completed: [],\n  stages_failed: [],\n  stages_to_retry: [],\n\n  // Scoring\n  confidence_score: 0,\n  key_fields_found: 0,\n\n  // Config\n  max_phase_1_stages: 11,  // All 11 stages in phase 1\n  max_phase_2_iterations: 5,  // Up to 5 retries in phase 2\n  confidence_threshold: 0.80,\n  key_fields_threshold: 3,\n\n  // Timing\n  started_at: new Date().toISOString()\n};\n\nreturn [{ json: loopContext }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-928, 80],
+      "id": "init-loop-context",
+      "name": "🧾 Init Loop Context"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO enrichment_loop_runs (research_run_id, company_id, current_phase, status) VALUES ($1, $2, 'phase_1', 'running') RETURNING id;",
+        "options": {
+          "queryReplacement": "={{ [$json.research_run_id, $json.company_id] }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [-704, 80],
+      "id": "register-loop-run",
+      "name": "🗄️ Register Loop Run",
+      "credentials": {
+        "postgres": {
+          "id": "xogKD739Qe4gqWBU",
+          "name": "Postgres account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT stage_id, stage_name, workflow_id, goal, target_fields, required_context, optional_context FROM enrichment_stages WHERE is_active = true AND phase_1_order IS NOT NULL ORDER BY phase_1_order;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [-480, 80],
+      "id": "load-phase-1-stages",
+      "name": "📋 Load Phase 1 Stages",
+      "credentials": {
+        "postgres": {
+          "id": "xogKD739Qe4gqWBU",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Prepare for Phase 1 execution\n// We'll execute stages one by one using SplitInBatches\n\nconst loopContext = $('🧾 Init Loop Context').first().json;\nconst stages = $input.all().map(item => item.json);\n\n// Return context with stages to execute\nreturn [{\n  json: {\n    ...loopContext,\n    phase_1_stages: stages,\n    phase_1_total: stages.length,\n    phase_1_current_index: 0\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-256, 80],
+      "id": "prepare-phase-1",
+      "name": "⚙️ Prepare Phase 1"
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3.1,
+      "position": [-32, 80],
+      "id": "phase-1-loop",
+      "name": "🔄 Phase 1 Loop"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Get current stage to execute\nconst loopData = $('⚙️ Prepare Phase 1').first().json;\nconst batchItem = $json;\nconst currentIndex = $('🔄 Phase 1 Loop').context.currentRunIndex || 0;\nconst stage = loopData.phase_1_stages[currentIndex];\n\nif (!stage) {\n  return [{ json: { skip: true, reason: 'no_stage_at_index' } }];\n}\n\n// Check if we have minimum required context\nconst context = loopData.context;\nconst requiredContext = stage.required_context || [];\nconst hasMinContext = requiredContext.length === 0 || \n  requiredContext.some(field => context[field] && context[field] !== '');\n\nreturn [{\n  json: {\n    stage_id: stage.stage_id,\n    stage_name: stage.stage_name,\n    workflow_id: stage.workflow_id,\n    goal: stage.goal,\n    target_fields: stage.target_fields,\n    can_execute: hasMinContext,\n    skip_reason: hasMinContext ? null : 'missing_required_context',\n    context: context,\n    loop_context: loopData,\n    iteration: currentIndex + 1\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [192, 80],
+      "id": "get-current-stage",
+      "name": "📍 Get Current Stage"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [
+            {
+              "id": "can-execute",
+              "leftValue": "={{ $json.can_execute }}",
+              "rightValue": true,
+              "operator": { "type": "boolean", "operation": "equals" }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [416, 80],
+      "id": "check-can-execute",
+      "name": "🔀 Can Execute?"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Execute the stage by calling its sub-workflow\n// This is a dynamic executor based on workflow_id\n\nconst stageData = $json;\nconst context = stageData.context;\nconst workflowId = stageData.workflow_id;\n\n// Build the input payload for the sub-workflow\nconst workflowInput = {\n  airtable_id: stageData.loop_context.company_id,\n  company_id: stageData.loop_context.company_id,\n  research_run_id: stageData.loop_context.research_run_id,\n  enrichment_id: stageData.loop_context.enrichment_id,\n  company_name: context.company_name || '',\n  domain: context.domain || '',\n  search_domain: context.domain || '',\n  location: context.address || '',\n  city: context.city || '',\n  state: context.state || '',\n  phone: context.phone || '',\n  timestamp: new Date().toISOString(),\n  \n  // Pass full context for stages that can use it\n  _context: context\n};\n\nreturn [{\n  json: {\n    ...stageData,\n    workflow_input: workflowInput,\n    execute_workflow_id: workflowId,\n    started_at: new Date().toISOString()\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [640, 0],
+      "id": "prepare-stage-execution",
+      "name": "⚙️ Prepare Stage Execution"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "={{ $json.execute_workflow_id }}",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "airtable_id": "={{ $json.workflow_input.airtable_id }}",
+            "company_id": "={{ $json.workflow_input.company_id }}",
+            "research_run_id": "={{ $json.workflow_input.research_run_id }}",
+            "enrichment_id": "={{ $json.workflow_input.enrichment_id }}",
+            "company_name": "={{ $json.workflow_input.company_name }}",
+            "domain": "={{ $json.workflow_input.domain }}",
+            "search_domain": "={{ $json.workflow_input.search_domain }}",
+            "location": "={{ $json.workflow_input.location }}",
+            "city": "={{ $json.workflow_input.city }}",
+            "state": "={{ $json.workflow_input.state }}",
+            "phone": "={{ $json.workflow_input.phone }}",
+            "timestamp": "={{ $json.workflow_input.timestamp }}"
+          },
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [864, 0],
+      "id": "execute-stage",
+      "name": "🚀 Execute Stage",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Process stage results and update context\nconst stageData = $('⚙️ Prepare Stage Execution').first().json;\nconst stageResult = $json;\nconst loopContext = stageData.loop_context;\n\n// Determine if stage succeeded\nconst hasError = stageResult.error || stageResult.status === 'error';\nconst success = !hasError;\n\n// Extract new data from result\nlet newData = {};\nlet fieldsFound = [];\n\nif (success && stageResult) {\n  // Try to extract data from common result patterns\n  const resultData = stageResult.data || stageResult.result || stageResult.output || stageResult.run_summary || stageResult;\n  \n  // Map common fields\n  const fieldMappings = {\n    domain: ['domain', 'website', 'normalized_domain'],\n    owner_name: ['owner_name', 'owner', 'contact_name'],\n    owner_email: ['owner_email', 'email', 'contact_email'],\n    owner_linkedin: ['owner_linkedin', 'linkedin', 'linkedin_url'],\n    phone: ['phone', 'phone_number', 'business_phone'],\n    employee_count: ['employee_count', 'employees', 'company_size'],\n    revenue: ['revenue', 'annual_revenue'],\n    industry: ['industry', 'business_type'],\n    about: ['about', 'description', 'company_description'],\n    services: ['services', 'products'],\n    google_rating: ['google_rating', 'rating'],\n    review_count: ['review_count', 'reviews'],\n    contact_emails: ['contact_emails', 'emails'],\n    job_postings: ['job_postings', 'jobs'],\n    is_hiring: ['is_hiring', 'hiring']\n  };\n  \n  for (const [targetField, sourceFields] of Object.entries(fieldMappings)) {\n    for (const sourceField of sourceFields) {\n      const value = resultData[sourceField];\n      if (value !== undefined && value !== null && value !== '') {\n        newData[targetField] = value;\n        fieldsFound.push(targetField);\n        break;\n      }\n    }\n  }\n}\n\n// Update context with new data\nconst updatedContext = {\n  ...loopContext.context,\n  ...newData\n};\n\n// Update loop tracking\nconst stagesCompleted = [...(loopContext.stages_completed || []), stageData.stage_id];\nconst stagesFailed = success ? loopContext.stages_failed : [...(loopContext.stages_failed || []), stageData.stage_id];\n\nreturn [{\n  json: {\n    ...loopContext,\n    context: updatedContext,\n    stages_completed: stagesCompleted,\n    stages_failed: stagesFailed,\n    last_stage: {\n      stage_id: stageData.stage_id,\n      stage_name: stageData.stage_name,\n      success: success,\n      fields_found: fieldsFound,\n      error: hasError ? (stageResult.error || 'Unknown error') : null\n    },\n    current_iteration: loopContext.current_iteration + 1\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1088, 0],
+      "id": "process-stage-result",
+      "name": "⚙️ Process Stage Result"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Stage was skipped - pass through with updated tracking\nconst stageData = $json;\nconst loopContext = stageData.loop_context;\n\nreturn [{\n  json: {\n    ...loopContext,\n    last_stage: {\n      stage_id: stageData.stage_id,\n      stage_name: stageData.stage_name,\n      success: false,\n      fields_found: [],\n      skipped: true,\n      skip_reason: stageData.skip_reason\n    },\n    current_iteration: loopContext.current_iteration + 1\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [640, 160],
+      "id": "stage-skipped",
+      "name": "⚠️ Stage Skipped"
+    },
+    {
+      "parameters": {
+        "mode": "chooseBranch"
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [1312, 80],
+      "id": "merge-stage-result",
+      "name": "🤝 Merge Stage Result"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "A4-U5nCoP9WMSikDE3qdi",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/A4-U5nCoP9WMSikDE3qdi",
+          "cachedResultName": "🧠 Context Updater"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "company_id": "={{ $json.company_id }}",
+            "research_run_id": "={{ $json.research_run_id }}"
+          },
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [1536, 80],
+      "id": "update-context-db",
+      "name": "🧠 Update Context (DB)",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Check if Phase 1 is complete\nconst loopContext = $('🤝 Merge Stage Result').first().json;\nconst totalStages = loopContext.phase_1_total || 11;\nconst completedCount = (loopContext.stages_completed || []).length;\n\n// Also check iteration count\nconst phase1Complete = completedCount >= totalStages || loopContext.current_iteration >= totalStages;\n\nreturn [{\n  json: {\n    ...loopContext,\n    phase_1_complete: phase1Complete\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1760, 80],
+      "id": "check-phase-1-complete",
+      "name": "🔍 Phase 1 Complete?"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [
+            {
+              "id": "phase1-check",
+              "leftValue": "={{ $json.phase_1_complete }}",
+              "rightValue": true,
+              "operator": { "type": "boolean", "operation": "equals" }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [1984, 80],
+      "id": "branch-phase-1-complete",
+      "name": "🔀 Phase 1 Done?"
+    },
+    {
+      "parameters": {
+        "jsCode": "// PHASE 2: ASSESSMENT\n// Calculate confidence score and identify gaps\n\nconst loopContext = $json;\nconst context = loopContext.context;\n\n// Key fields and their weights\nconst keyFields = {\n  owner_email: 0.20,\n  owner_name: 0.15,\n  phone: 0.12,\n  employee_count: 0.10,\n  domain: 0.08,\n  google_rating: 0.08,\n  owner_linkedin: 0.07,\n  revenue: 0.06,\n  services: 0.05,\n  industry: 0.05,\n  contact_emails: 0.04\n};\n\n// Calculate confidence\nlet confidenceScore = 0;\nlet keyFieldsFound = 0;\nlet foundFields = [];\nlet missingFields = [];\n\nfor (const [field, weight] of Object.entries(keyFields)) {\n  const value = context[field];\n  if (value !== undefined && value !== null && value !== '' && \n      !(Array.isArray(value) && value.length === 0)) {\n    confidenceScore += weight;\n    keyFieldsFound++;\n    foundFields.push(field);\n  } else {\n    missingFields.push(field);\n  }\n}\n\n// Check exit criteria\nconst shouldExit = \n  confidenceScore >= loopContext.confidence_threshold ||\n  keyFieldsFound >= loopContext.key_fields_threshold;\n\n// Identify stages that could benefit from retry\nconst stagesToRetry = [];\n\n// If we now have domain but didn't before, retry email discovery\nif (context.domain && !loopContext.stages_completed.includes('email_discovery')) {\n  stagesToRetry.push('email_discovery');\n}\n\n// If we now have owner_name, retry email discovery for owner-specific search\nif (context.owner_name && loopContext.stages_completed.includes('email_discovery')) {\n  stagesToRetry.push('email_discovery');  // Retry with owner context\n}\n\n// If we have linkedin_url, retry owner discovery\nif (context.linkedin_url && loopContext.stages_completed.includes('owner_discovery')) {\n  stagesToRetry.push('owner_discovery');\n}\n\nreturn [{\n  json: {\n    ...loopContext,\n    current_phase: 'assessment',\n    confidence_score: Math.round(confidenceScore * 100) / 100,\n    key_fields_found: keyFieldsFound,\n    found_fields: foundFields,\n    missing_fields: missingFields,\n    should_exit: shouldExit,\n    stages_to_retry: stagesToRetry,\n    assessment: {\n      total_fields_checked: Object.keys(keyFields).length,\n      fields_populated: keyFieldsFound,\n      confidence_threshold: loopContext.confidence_threshold,\n      key_fields_threshold: loopContext.key_fields_threshold,\n      meets_confidence: confidenceScore >= loopContext.confidence_threshold,\n      meets_key_fields: keyFieldsFound >= loopContext.key_fields_threshold\n    },\n    phase_1_completed_at: new Date().toISOString()\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2208, 0],
+      "id": "phase-2-assessment",
+      "name": "📊 Phase 2: Assessment"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [
+            {
+              "id": "exit-check",
+              "leftValue": "={{ $json.should_exit }}",
+              "rightValue": true,
+              "operator": { "type": "boolean", "operation": "equals" }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [2432, 0],
+      "id": "check-exit-criteria",
+      "name": "🔀 Exit Criteria Met?"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build final summary\nconst loopContext = $json;\n\nconst exitReason = loopContext.assessment.meets_confidence ? 'confidence_threshold' :\n                   loopContext.assessment.meets_key_fields ? 'key_fields_found' : 'unknown';\n\nreturn [{\n  json: {\n    status: 'completed',\n    exit_reason: exitReason,\n    research_run_id: loopContext.research_run_id,\n    company_id: loopContext.company_id,\n    company_name: loopContext.context.company_name,\n    \n    // Final scores\n    confidence_score: loopContext.confidence_score,\n    key_fields_found: loopContext.key_fields_found,\n    \n    // Context summary\n    final_context: loopContext.context,\n    found_fields: loopContext.found_fields,\n    missing_fields: loopContext.missing_fields,\n    \n    // Execution stats\n    stages_completed: loopContext.stages_completed,\n    stages_failed: loopContext.stages_failed,\n    total_iterations: loopContext.current_iteration,\n    \n    // Timing\n    started_at: loopContext.started_at,\n    completed_at: new Date().toISOString()\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2656, -80],
+      "id": "build-final-summary",
+      "name": "📤 Build Final Summary"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE enrichment_loop_runs SET status = 'completed', current_phase = 'completed', confidence_score = $2, key_fields_found = $3, exit_reason = $4, completed_at = NOW() WHERE research_run_id = $1;",
+        "options": {
+          "queryReplacement": "={{ [$json.research_run_id, $json.confidence_score, $json.key_fields_found, $json.exit_reason] }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [2880, -80],
+      "id": "mark-loop-complete",
+      "name": "🗄️ Mark Loop Complete",
+      "credentials": {
+        "postgres": {
+          "id": "xogKD739Qe4gqWBU",
+          "name": "Postgres account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Phase 2 Targeted Retries\n// Select which stages to retry based on new context\n\nconst loopContext = $json;\nconst stagesToRetry = loopContext.stages_to_retry || [];\nconst maxRetries = loopContext.max_phase_2_iterations || 5;\n\n// Check if we've exceeded retry limit\nconst phase2Iterations = loopContext.phase_2_iterations || 0;\nif (phase2Iterations >= maxRetries || stagesToRetry.length === 0) {\n  return [{\n    json: {\n      ...loopContext,\n      phase_2_complete: true,\n      exit_reason: stagesToRetry.length === 0 ? 'no_viable_retries' : 'max_retries_reached'\n    }\n  }];\n}\n\n// Get next stage to retry\nconst nextStage = stagesToRetry[0];\nconst remainingStages = stagesToRetry.slice(1);\n\nreturn [{\n  json: {\n    ...loopContext,\n    current_phase: 'phase_2',\n    phase_2_iterations: phase2Iterations + 1,\n    stages_to_retry: remainingStages,\n    retry_stage: nextStage,\n    phase_2_complete: false\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2656, 80],
+      "id": "phase-2-select-retry",
+      "name": "🔄 Phase 2: Select Retry"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [
+            {
+              "id": "phase2-complete",
+              "leftValue": "={{ $json.phase_2_complete }}",
+              "rightValue": true,
+              "operator": { "type": "boolean", "operation": "equals" }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [2880, 80],
+      "id": "check-phase-2-complete",
+      "name": "🔀 Phase 2 Done?"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Phase 2 complete without meeting exit criteria\nconst loopContext = $json;\n\nreturn [{\n  json: {\n    status: 'completed',\n    exit_reason: loopContext.exit_reason || 'phase_2_exhausted',\n    research_run_id: loopContext.research_run_id,\n    company_id: loopContext.company_id,\n    company_name: loopContext.context.company_name,\n    \n    confidence_score: loopContext.confidence_score,\n    key_fields_found: loopContext.key_fields_found,\n    final_context: loopContext.context,\n    found_fields: loopContext.found_fields,\n    missing_fields: loopContext.missing_fields,\n    \n    stages_completed: loopContext.stages_completed,\n    stages_failed: loopContext.stages_failed,\n    total_iterations: loopContext.current_iteration,\n    phase_2_retries: loopContext.phase_2_iterations,\n    \n    started_at: loopContext.started_at,\n    completed_at: new Date().toISOString()\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3104, 0],
+      "id": "phase-2-final-summary",
+      "name": "📤 Phase 2 Final Summary"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Note: In a real implementation, this would look up the workflow_id from the stage registry\n// For now, we'll use a hardcoded mapping\n\nconst loopContext = $json;\nconst retryStage = loopContext.retry_stage;\n\nconst stageWorkflows = {\n  'domain_discovery': 'ICy-FJLl7ZNFNQEzf3iKE',\n  'website_scrape': 'DVDTaG8QlJkivPVgFDx8Z',\n  'email_discovery': '4YgfhwtJDdVoBaQu',\n  'firmographics': 'Hl9aGZsO2GRt4eWGIkvxs',\n  'owner_discovery': 'LkcBjvdlGqBOYSdP',\n  'headhunter': 'IBw7IpH80m0TMa45KCJF5',\n  'review_scrape': 'I039785tdTuohF_CqRlIB'\n};\n\nconst workflowId = stageWorkflows[retryStage];\n\nif (!workflowId) {\n  return [{\n    json: {\n      ...loopContext,\n      retry_skipped: true,\n      skip_reason: 'unknown_stage'\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    ...loopContext,\n    execute_workflow_id: workflowId,\n    stage_id: retryStage,\n    is_retry: true,\n    workflow_input: {\n      airtable_id: loopContext.company_id,\n      company_id: loopContext.company_id,\n      research_run_id: loopContext.research_run_id,\n      enrichment_id: loopContext.enrichment_id,\n      company_name: loopContext.context.company_name || '',\n      domain: loopContext.context.domain || '',\n      search_domain: loopContext.context.domain || '',\n      location: loopContext.context.address || '',\n      city: loopContext.context.city || '',\n      state: loopContext.context.state || '',\n      phone: loopContext.context.phone || '',\n      owner_name: loopContext.context.owner_name || '',\n      timestamp: new Date().toISOString()\n    }\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3104, 160],
+      "id": "prepare-retry-execution",
+      "name": "⚙️ Prepare Retry Execution"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "={{ $json.execute_workflow_id }}",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "airtable_id": "={{ $json.workflow_input.airtable_id }}",
+            "company_id": "={{ $json.workflow_input.company_id }}",
+            "research_run_id": "={{ $json.workflow_input.research_run_id }}",
+            "enrichment_id": "={{ $json.workflow_input.enrichment_id }}",
+            "company_name": "={{ $json.workflow_input.company_name }}",
+            "domain": "={{ $json.workflow_input.domain }}",
+            "search_domain": "={{ $json.workflow_input.search_domain }}",
+            "location": "={{ $json.workflow_input.location }}",
+            "city": "={{ $json.workflow_input.city }}",
+            "state": "={{ $json.workflow_input.state }}",
+            "phone": "={{ $json.workflow_input.phone }}",
+            "owner_name": "={{ $json.workflow_input.owner_name }}",
+            "timestamp": "={{ $json.workflow_input.timestamp }}"
+          },
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [3328, 160],
+      "id": "execute-retry-stage",
+      "name": "🚀 Execute Retry Stage",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Process retry result - similar to phase 1 processing\nconst prepData = $('⚙️ Prepare Retry Execution').first().json;\nconst stageResult = $json;\nconst loopContext = prepData;\n\nconst hasError = stageResult.error || stageResult.status === 'error';\nconst success = !hasError;\n\nlet newData = {};\nlet fieldsFound = [];\n\nif (success && stageResult) {\n  const resultData = stageResult.data || stageResult.result || stageResult.output || stageResult.run_summary || stageResult;\n  \n  const fieldMappings = {\n    domain: ['domain', 'website', 'normalized_domain'],\n    owner_name: ['owner_name', 'owner', 'contact_name'],\n    owner_email: ['owner_email', 'email', 'contact_email'],\n    owner_linkedin: ['owner_linkedin', 'linkedin', 'linkedin_url'],\n    phone: ['phone', 'phone_number', 'business_phone'],\n    employee_count: ['employee_count', 'employees', 'company_size']\n  };\n  \n  for (const [targetField, sourceFields] of Object.entries(fieldMappings)) {\n    for (const sourceField of sourceFields) {\n      const value = resultData[sourceField];\n      if (value !== undefined && value !== null && value !== '') {\n        newData[targetField] = value;\n        fieldsFound.push(targetField);\n        break;\n      }\n    }\n  }\n}\n\nconst updatedContext = { ...loopContext.context, ...newData };\n\n// Re-run assessment with updated context\nreturn [{\n  json: {\n    ...loopContext,\n    context: updatedContext,\n    last_retry: {\n      stage_id: loopContext.stage_id,\n      success: success,\n      fields_found: fieldsFound\n    },\n    current_iteration: loopContext.current_iteration + 1\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3552, 160],
+      "id": "process-retry-result",
+      "name": "⚙️ Process Retry Result"
+    }
+  ],
+  "connections": {
+    "When Executed by Another Workflow": {
+      "main": [[{"node": "🧱 Normalize Airtable Record", "type": "main", "index": 0}]]
+    },
+    "When clicking 'Execute workflow'": {
+      "main": [[{"node": "🔍 Search Airtable Records", "type": "main", "index": 0}]]
+    },
+    "🔍 Search Airtable Records": {
+      "main": [[{"node": "🧱 Normalize Airtable Record", "type": "main", "index": 0}]]
+    },
+    "🧱 Normalize Airtable Record": {
+      "main": [[{"node": "🧾 Init Loop Context", "type": "main", "index": 0}]]
+    },
+    "🧾 Init Loop Context": {
+      "main": [[{"node": "🗄️ Register Loop Run", "type": "main", "index": 0}]]
+    },
+    "🗄️ Register Loop Run": {
+      "main": [[{"node": "📋 Load Phase 1 Stages", "type": "main", "index": 0}]]
+    },
+    "📋 Load Phase 1 Stages": {
+      "main": [[{"node": "⚙️ Prepare Phase 1", "type": "main", "index": 0}]]
+    },
+    "⚙️ Prepare Phase 1": {
+      "main": [[{"node": "🔄 Phase 1 Loop", "type": "main", "index": 0}]]
+    },
+    "🔄 Phase 1 Loop": {
+      "main": [
+        [{"node": "📍 Get Current Stage", "type": "main", "index": 0}],
+        [{"node": "🔍 Phase 1 Complete?", "type": "main", "index": 0}]
+      ]
+    },
+    "📍 Get Current Stage": {
+      "main": [[{"node": "🔀 Can Execute?", "type": "main", "index": 0}]]
+    },
+    "🔀 Can Execute?": {
+      "main": [
+        [{"node": "⚙️ Prepare Stage Execution", "type": "main", "index": 0}],
+        [{"node": "⚠️ Stage Skipped", "type": "main", "index": 0}]
+      ]
+    },
+    "⚙️ Prepare Stage Execution": {
+      "main": [[{"node": "🚀 Execute Stage", "type": "main", "index": 0}]]
+    },
+    "🚀 Execute Stage": {
+      "main": [[{"node": "⚙️ Process Stage Result", "type": "main", "index": 0}]]
+    },
+    "⚙️ Process Stage Result": {
+      "main": [[{"node": "🤝 Merge Stage Result", "type": "main", "index": 0}]]
+    },
+    "⚠️ Stage Skipped": {
+      "main": [[{"node": "🤝 Merge Stage Result", "type": "main", "index": 1}]]
+    },
+    "🤝 Merge Stage Result": {
+      "main": [[{"node": "🧠 Update Context (DB)", "type": "main", "index": 0}]]
+    },
+    "🧠 Update Context (DB)": {
+      "main": [[{"node": "🔄 Phase 1 Loop", "type": "main", "index": 0}]]
+    },
+    "🔍 Phase 1 Complete?": {
+      "main": [[{"node": "🔀 Phase 1 Done?", "type": "main", "index": 0}]]
+    },
+    "🔀 Phase 1 Done?": {
+      "main": [
+        [{"node": "📊 Phase 2: Assessment", "type": "main", "index": 0}],
+        [{"node": "🔄 Phase 1 Loop", "type": "main", "index": 0}]
+      ]
+    },
+    "📊 Phase 2: Assessment": {
+      "main": [[{"node": "🔀 Exit Criteria Met?", "type": "main", "index": 0}]]
+    },
+    "🔀 Exit Criteria Met?": {
+      "main": [
+        [{"node": "📤 Build Final Summary", "type": "main", "index": 0}],
+        [{"node": "🔄 Phase 2: Select Retry", "type": "main", "index": 0}]
+      ]
+    },
+    "📤 Build Final Summary": {
+      "main": [[{"node": "🗄️ Mark Loop Complete", "type": "main", "index": 0}]]
+    },
+    "🔄 Phase 2: Select Retry": {
+      "main": [[{"node": "🔀 Phase 2 Done?", "type": "main", "index": 0}]]
+    },
+    "🔀 Phase 2 Done?": {
+      "main": [
+        [{"node": "📤 Phase 2 Final Summary", "type": "main", "index": 0}],
+        [{"node": "⚙️ Prepare Retry Execution", "type": "main", "index": 0}]
+      ]
+    },
+    "📤 Phase 2 Final Summary": {
+      "main": [[{"node": "🗄️ Mark Loop Complete", "type": "main", "index": 0}]]
+    },
+    "⚙️ Prepare Retry Execution": {
+      "main": [[{"node": "🚀 Execute Retry Stage", "type": "main", "index": 0}]]
+    },
+    "🚀 Execute Retry Stage": {
+      "main": [[{"node": "⚙️ Process Retry Result", "type": "main", "index": 0}]]
+    },
+    "⚙️ Process Retry Result": {
+      "main": [[{"node": "📊 Phase 2: Assessment", "type": "main", "index": 0}]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "meta": {
+    "description": "Adaptive Enrichment Orchestrator v4 - Two-phase approach with initial blast and targeted retries",
+    "category": "lead_enrichment",
+    "version": "4.0"
+  }
+}

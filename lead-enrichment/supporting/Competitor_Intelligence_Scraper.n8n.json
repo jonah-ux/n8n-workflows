@@ -1,0 +1,689 @@
+{
+  "name": "⚙️ Competitor Intelligence Scraper",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 12
+            }
+          ]
+        }
+      },
+      "id": "trigger-schedule",
+      "name": "🔄 Every 12 Hours",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Get all competitor shops to monitor\nSELECT \n  cm.id as monitor_id,\n  cm.competitor_name,\n  cm.competitor_place_id,\n  cm.competitor_domain,\n  cm.our_company_id,\n  cm.monitor_config,\n  cm.last_scraped_at,\n  c.business_name as our_company_name\nFROM competitor_monitors cm\nJOIN companies c ON cm.our_company_id = c.place_id\nWHERE cm.is_active = true\nAND (cm.last_scraped_at IS NULL OR cm.last_scraped_at < NOW() - INTERVAL '12 hours')\nLIMIT 20",
+        "options": {}
+      },
+      "id": "get-competitors",
+      "name": "🗄️ Get Active Monitors",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        220,
+        0
+      ],
+      "credentials": {
+        "postgres": "={{$credentials.postgres}}"
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "has-competitors",
+              "leftValue": "={{ $json.length }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-has-competitors",
+      "name": "📋 Has Competitors?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.1,
+      "position": [
+        440,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## No Competitors to Monitor\n\nAll competitor monitors are either:\n- Already scraped recently\n- Set to inactive\n- No monitors configured",
+        "height": 120,
+        "width": 280,
+        "color": 5
+      },
+      "id": "no-competitors-note",
+      "name": "📝 No Competitors",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        440,
+        180
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "split-item",
+              "name": "competitor",
+              "value": "={{ $json }}",
+              "type": "object"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "split-competitors",
+      "name": "📋 Split Competitors",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        660,
+        -100
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://serpapi.com/search.json",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "engine",
+              "value": "google_maps"
+            },
+            {
+              "name": "place_id",
+              "value": "={{ $json.competitor.competitor_place_id }}"
+            },
+            {
+              "name": "api_key",
+              "value": "={{ $env.SERPAPI_API_KEY }}"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          }
+        }
+      },
+      "id": "serpapi-place-details",
+      "name": "🔍 SerpAPI Place Details",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        880,
+        -200
+      ],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://serpapi.com/search.json",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "engine",
+              "value": "google_maps_reviews"
+            },
+            {
+              "name": "place_id",
+              "value": "={{ $json.competitor.competitor_place_id }}"
+            },
+            {
+              "name": "sort_by",
+              "value": "newestFirst"
+            },
+            {
+              "name": "api_key",
+              "value": "={{ $env.SERPAPI_API_KEY }}"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          }
+        }
+      },
+      "id": "serpapi-reviews",
+      "name": "🔍 SerpAPI Reviews",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        880,
+        0
+      ],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "url": "=https://api.firecrawl.dev/v0/scrape",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.FIRECRAWL_API_KEY }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"url\": \"{{ $json.competitor.competitor_domain }}\",\n  \"formats\": [\"markdown\", \"html\"],\n  \"onlyMainContent\": true\n}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          }
+        }
+      },
+      "id": "firecrawl-website",
+      "name": "🔍 Firecrawl Website",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        880,
+        200
+      ],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineAll",
+        "options": {}
+      },
+      "id": "merge-intel",
+      "name": "🤝 Merge Intelligence",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [
+        1100,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Aggregate all competitor intelligence\nconst items = $input.all();\n\n// Get competitor info from first item\nconst competitor = items[0]?.json?.competitor || {};\n\n// Find place details (from SerpAPI)\nconst placeDetails = items.find(i => i.json?.body?.place_results)?.json?.body?.place_results || {};\n\n// Find reviews\nconst reviewsData = items.find(i => i.json?.body?.reviews)?.json?.body || {};\nconst reviews = reviewsData.reviews || [];\n\n// Find website content\nconst websiteData = items.find(i => i.json?.body?.data?.markdown)?.json?.body?.data || {};\n\n// Calculate metrics\nconst avgRating = placeDetails.rating || 0;\nconst totalReviews = placeDetails.reviews || 0;\nconst recentReviews = reviews.slice(0, 10);\n\n// Sentiment analysis on recent reviews\nconst sentimentCounts = { positive: 0, neutral: 0, negative: 0 };\nrecentReviews.forEach(r => {\n  if (r.rating >= 4) sentimentCounts.positive++;\n  else if (r.rating >= 3) sentimentCounts.neutral++;\n  else sentimentCounts.negative++;\n});\n\n// Extract pricing signals from website\nconst websiteMarkdown = websiteData.markdown || '';\nconst pricingKeywords = websiteMarkdown.match(/\\$\\d+|free|affordable|cheap|premium|discount|deal|special|offer/gi) || [];\nconst serviceKeywords = websiteMarkdown.match(/oil change|brake|tire|alignment|diagnostic|engine|transmission|ac repair|inspection/gi) || [];\n\n// Calculate competitive threat score (0-100)\nlet threatScore = 0;\nthreatScore += Math.min(avgRating * 10, 50); // Up to 50 points for rating\nthreatScore += Math.min(totalReviews / 100, 25); // Up to 25 points for review volume\nthreatScore += sentimentCounts.positive > sentimentCounts.negative ? 15 : 0; // 15 for positive sentiment\nthreatScore += pricingKeywords.length > 3 ? 10 : 0; // 10 for active pricing/promotions\n\nconst intelligence = {\n  monitor_id: competitor.monitor_id,\n  competitor_name: competitor.competitor_name,\n  competitor_place_id: competitor.competitor_place_id,\n  our_company_id: competitor.our_company_id,\n  scraped_at: new Date().toISOString(),\n  \n  // Place details\n  place_data: {\n    name: placeDetails.title || competitor.competitor_name,\n    address: placeDetails.address,\n    phone: placeDetails.phone,\n    website: placeDetails.website,\n    hours: placeDetails.hours,\n    type: placeDetails.type,\n    price_level: placeDetails.price\n  },\n  \n  // Reviews intelligence\n  review_data: {\n    avg_rating: avgRating,\n    total_reviews: totalReviews,\n    recent_reviews: recentReviews.map(r => ({\n      rating: r.rating,\n      text: r.snippet || r.text,\n      date: r.date,\n      author: r.user?.name\n    })),\n    sentiment: sentimentCounts,\n    review_velocity: totalReviews > 0 ? (totalReviews / 12) : 0 // Approx monthly\n  },\n  \n  // Website intelligence\n  website_data: {\n    has_website: !!websiteData.markdown,\n    content_length: websiteMarkdown.length,\n    pricing_signals: [...new Set(pricingKeywords)],\n    services_mentioned: [...new Set(serviceKeywords)],\n    has_online_booking: /book|schedule|appointment/i.test(websiteMarkdown),\n    has_specials: /special|deal|discount|coupon/i.test(websiteMarkdown)\n  },\n  \n  // Competitive analysis\n  competitive_analysis: {\n    threat_score: Math.round(threatScore),\n    threat_level: threatScore >= 70 ? 'high' : threatScore >= 40 ? 'medium' : 'low',\n    strengths: [],\n    weaknesses: []\n  }\n};\n\n// Identify strengths and weaknesses\nif (avgRating >= 4.5) intelligence.competitive_analysis.strengths.push('Excellent ratings');\nif (totalReviews > 500) intelligence.competitive_analysis.strengths.push('High review volume');\nif (intelligence.website_data.has_online_booking) intelligence.competitive_analysis.strengths.push('Online booking available');\nif (intelligence.website_data.has_specials) intelligence.competitive_analysis.strengths.push('Active promotions');\n\nif (avgRating < 4) intelligence.competitive_analysis.weaknesses.push('Below-average ratings');\nif (totalReviews < 50) intelligence.competitive_analysis.weaknesses.push('Low review volume');\nif (!intelligence.website_data.has_website) intelligence.competitive_analysis.weaknesses.push('No/poor website');\nif (sentimentCounts.negative > sentimentCounts.positive) intelligence.competitive_analysis.weaknesses.push('Negative sentiment trend');\n\nreturn [{ json: intelligence }];"
+      },
+      "id": "aggregate-intelligence",
+      "name": "⚙️ Aggregate Intelligence",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "model": "gpt-4o",
+        "options": {
+          "temperature": 0.3,
+          "maxTokens": 1500
+        },
+        "messages": {
+          "values": [
+            {
+              "role": "system",
+              "content": "You are a competitive intelligence analyst for auto repair shops. Analyze competitor data and provide actionable insights for our client."
+            },
+            {
+              "role": "user",
+              "content": "=Analyze this competitor intelligence for \"{{ $json.competitor_name }}\" competing against our client:\n\n## Place Data\n- Rating: {{ $json.review_data.avg_rating }}/5 ({{ $json.review_data.total_reviews }} reviews)\n- Address: {{ $json.place_data.address }}\n- Phone: {{ $json.place_data.phone }}\n\n## Recent Reviews (last 10)\n{{ $json.review_data.recent_reviews.map(r => `- ${r.rating}★: \"${r.text?.substring(0, 100) || 'No text'}...\"`).join('\\n') }}\n\n## Sentiment\n- Positive: {{ $json.review_data.sentiment.positive }}\n- Neutral: {{ $json.review_data.sentiment.neutral }}\n- Negative: {{ $json.review_data.sentiment.negative }}\n\n## Website Intelligence\n- Services: {{ $json.website_data.services_mentioned?.join(', ') || 'Unknown' }}\n- Pricing Signals: {{ $json.website_data.pricing_signals?.join(', ') || 'None found' }}\n- Online Booking: {{ $json.website_data.has_online_booking }}\n- Current Specials: {{ $json.website_data.has_specials }}\n\n## Current Threat Score: {{ $json.competitive_analysis.threat_score }}/100 ({{ $json.competitive_analysis.threat_level }})\n\nProvide:\n1. KEY INSIGHTS (3-5 bullet points about this competitor)\n2. COMPETITIVE ADVANTAGES they have over average shops\n3. VULNERABILITIES we can exploit\n4. RECOMMENDED ACTIONS for our client to compete better\n5. ALERT TRIGGERS (things to watch for changes)\n\nBe specific and actionable."
+            }
+          ]
+        }
+      },
+      "id": "ai-analysis",
+      "name": "🕵️ AI Competitive Analysis",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1.8,
+      "position": [
+        1540,
+        0
+      ],
+      "credentials": {
+        "openAiApi": "={{$credentials.openAiApi}}"
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "add-analysis",
+              "name": "ai_analysis",
+              "value": "={{ $json.message.content }}",
+              "type": "string"
+            },
+            {
+              "id": "keep-intel",
+              "name": "intelligence",
+              "value": "={{ $('⚙️ Aggregate Intelligence').item.json }}",
+              "type": "object"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "combine-with-analysis",
+      "name": "📋 Combine Results",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1760,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO competitor_intelligence (\n  monitor_id,\n  competitor_name,\n  competitor_place_id,\n  our_company_id,\n  scraped_at,\n  place_data,\n  review_data,\n  website_data,\n  competitive_analysis,\n  ai_analysis,\n  threat_score,\n  threat_level\n) VALUES (\n  $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12\n)\nON CONFLICT (monitor_id, DATE(scraped_at)) DO UPDATE SET\n  place_data = EXCLUDED.place_data,\n  review_data = EXCLUDED.review_data,\n  website_data = EXCLUDED.website_data,\n  competitive_analysis = EXCLUDED.competitive_analysis,\n  ai_analysis = EXCLUDED.ai_analysis,\n  threat_score = EXCLUDED.threat_score,\n  threat_level = EXCLUDED.threat_level,\n  scraped_at = EXCLUDED.scraped_at",
+        "options": {
+          "queryReplacement": "={{ [\n  $json.intelligence.monitor_id,\n  $json.intelligence.competitor_name,\n  $json.intelligence.competitor_place_id,\n  $json.intelligence.our_company_id,\n  $json.intelligence.scraped_at,\n  JSON.stringify($json.intelligence.place_data),\n  JSON.stringify($json.intelligence.review_data),\n  JSON.stringify($json.intelligence.website_data),\n  JSON.stringify($json.intelligence.competitive_analysis),\n  $json.ai_analysis,\n  $json.intelligence.competitive_analysis.threat_score,\n  $json.intelligence.competitive_analysis.threat_level\n] }}"
+        }
+      },
+      "id": "save-intelligence",
+      "name": "🗄️ Save Intelligence",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1980,
+        0
+      ],
+      "credentials": {
+        "postgres": "={{$credentials.postgres}}"
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE competitor_monitors\nSET last_scraped_at = $1\nWHERE id = $2",
+        "options": {
+          "queryReplacement": "={{ [$json.intelligence.scraped_at, $json.intelligence.monitor_id] }}"
+        }
+      },
+      "id": "update-monitor",
+      "name": "🗄️ Update Monitor Timestamp",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        2200,
+        0
+      ],
+      "credentials": {
+        "postgres": "={{$credentials.postgres}}"
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "high-threat",
+              "leftValue": "={{ $json.intelligence.competitive_analysis.threat_score }}",
+              "rightValue": 70,
+              "operator": {
+                "type": "number",
+                "operation": "gte"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-high-threat",
+      "name": "📋 High Threat?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.1,
+      "position": [
+        2420,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "url": "=https://api.salesmsg.com/v1/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.SALESMSG_API_KEY }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"to\": \"{{ $env.ALERT_PHONE_NUMBER }}\",\n  \"message\": \"🚨 HIGH THREAT COMPETITOR ALERT\\n\\nCompetitor: {{ $json.intelligence.competitor_name }}\\nThreat Score: {{ $json.intelligence.competitive_analysis.threat_score }}/100\\n\\nKey Intel:\\n- Rating: {{ $json.intelligence.review_data.avg_rating }}★ ({{ $json.intelligence.review_data.total_reviews }} reviews)\\n- {{ $json.intelligence.competitive_analysis.strengths?.slice(0, 2).join(', ') || 'See full report' }}\\n\\nCheck dashboard for full analysis.\"\n}",
+        "options": {}
+      },
+      "id": "alert-high-threat",
+      "name": "📤 Alert High Threat",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2640,
+        -100
+      ],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO communication_queue (\n  severity,\n  type,\n  title,\n  body,\n  channel,\n  status,\n  scheduled_for,\n  metadata\n) VALUES (\n  'high',\n  'competitor_alert',\n  $1,\n  $2,\n  'slack',\n  'pending',\n  NOW(),\n  $3\n)",
+        "options": {
+          "queryReplacement": "={{ [\n  `High Threat Competitor: ${$json.intelligence.competitor_name}`,\n  $json.ai_analysis,\n  JSON.stringify({\n    monitor_id: $json.intelligence.monitor_id,\n    threat_score: $json.intelligence.competitive_analysis.threat_score,\n    our_company_id: $json.intelligence.our_company_id\n  })\n] }}"
+        }
+      },
+      "id": "queue-alert",
+      "name": "🗄️ Queue Slack Alert",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        2640,
+        100
+      ],
+      "credentials": {
+        "postgres": "={{$credentials.postgres}}"
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Log workflow execution\nINSERT INTO workflow_executions (\n  execution_id,\n  workflow_id,\n  workflow_name,\n  status,\n  started_at,\n  finished_at,\n  duration_ms,\n  metadata\n) VALUES (\n  $1,\n  'competitor-intelligence-scraper',\n  '⚙️ Competitor Intelligence Scraper',\n  'success',\n  $2,\n  NOW(),\n  EXTRACT(EPOCH FROM (NOW() - $2::timestamp)) * 1000,\n  $3\n)",
+        "options": {
+          "queryReplacement": "={{ [\n  $execution.id,\n  $execution.startedAt || new Date().toISOString(),\n  JSON.stringify({\n    competitors_processed: $('📋 Split Competitors').all().length || 0,\n    high_threats_found: $('📋 High Threat?').all().filter(i => i.json?.intelligence?.competitive_analysis?.threat_score >= 70).length || 0\n  })\n] }}"
+        }
+      },
+      "id": "log-success",
+      "name": "🗄️ Log Success",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        2860,
+        0
+      ],
+      "credentials": {
+        "postgres": "={{$credentials.postgres}}"
+      }
+    },
+    {
+      "parameters": {
+        "content": "## Competitor Intelligence Scraper\n\n**Purpose:** Monitor competitor auto shops and gather actionable intelligence\n\n**Data Sources:**\n- SerpAPI (Place details + Reviews)\n- Firecrawl (Website scraping)\n- GPT-4o (Competitive analysis)\n\n**Outputs:**\n- competitor_intelligence table\n- High-threat SMS alerts\n- Slack notification queue\n\n**Schedule:** Every 12 hours",
+        "height": 280,
+        "width": 320,
+        "color": 4
+      },
+      "id": "workflow-note",
+      "name": "📝 Workflow Info",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -60,
+        -280
+      ]
+    }
+  ],
+  "connections": {
+    "🔄 Every 12 Hours": {
+      "main": [
+        [
+          {
+            "node": "🗄️ Get Active Monitors",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🗄️ Get Active Monitors": {
+      "main": [
+        [
+          {
+            "node": "📋 Has Competitors?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📋 Has Competitors?": {
+      "main": [
+        [
+          {
+            "node": "📋 Split Competitors",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "📋 Split Competitors": {
+      "main": [
+        [
+          {
+            "node": "🔍 SerpAPI Place Details",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "🔍 SerpAPI Reviews",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "🔍 Firecrawl Website",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔍 SerpAPI Place Details": {
+      "main": [
+        [
+          {
+            "node": "🤝 Merge Intelligence",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔍 SerpAPI Reviews": {
+      "main": [
+        [
+          {
+            "node": "🤝 Merge Intelligence",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔍 Firecrawl Website": {
+      "main": [
+        [
+          {
+            "node": "🤝 Merge Intelligence",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🤝 Merge Intelligence": {
+      "main": [
+        [
+          {
+            "node": "⚙️ Aggregate Intelligence",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "⚙️ Aggregate Intelligence": {
+      "main": [
+        [
+          {
+            "node": "🕵️ AI Competitive Analysis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🕵️ AI Competitive Analysis": {
+      "main": [
+        [
+          {
+            "node": "📋 Combine Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📋 Combine Results": {
+      "main": [
+        [
+          {
+            "node": "🗄️ Save Intelligence",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🗄️ Save Intelligence": {
+      "main": [
+        [
+          {
+            "node": "🗄️ Update Monitor Timestamp",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🗄️ Update Monitor Timestamp": {
+      "main": [
+        [
+          {
+            "node": "📋 High Threat?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📋 High Threat?": {
+      "main": [
+        [
+          {
+            "node": "📤 Alert High Threat",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "🗄️ Queue Slack Alert",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "🗄️ Log Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📤 Alert High Threat": {
+      "main": [
+        [
+          {
+            "node": "🗄️ Log Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🗄️ Queue Slack Alert": {
+      "main": [
+        [
+          {
+            "node": "🗄️ Log Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "id": "god-mode",
+      "name": "God Mode"
+    },
+    {
+      "id": "intelligence",
+      "name": "Intelligence"
+    }
+  ]
+}

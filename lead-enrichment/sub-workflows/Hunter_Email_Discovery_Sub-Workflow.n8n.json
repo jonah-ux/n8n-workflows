@@ -1,0 +1,1051 @@
+{
+  "nodes": [
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "airtable_id"
+            },
+            {
+              "name": "company_id"
+            },
+            {
+              "name": "company_name"
+            },
+            {
+              "name": "location"
+            },
+            {
+              "name": "city"
+            },
+            {
+              "name": "state"
+            },
+            {
+              "name": "domain"
+            },
+            {
+              "name": "search_domain"
+            },
+            {
+              "name": "phone"
+            },
+            {
+              "name": "timestamp"
+            },
+            {
+              "name": "enrichment_id"
+            },
+            {
+              "name": "research_run_id"
+            },
+            {
+              "name": "meta"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        -32
+      ],
+      "id": "2a79667f-e982-4d80-99e6-89698aa92de9",
+      "name": "When Executed by Another Workflow"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ `You are a Hunter.io Specialist. Your goal is to find valid email addresses using the provided context.\n\nINPUTS:\n- Company: ${$json.company_name}\n- Domain: ${$json.clean_domain}\n- Person Name (Optional): ${$json.target_person || 'N/A'}\n\nINSTRUCTIONS:\n1. CHECK INPUTS: Is a 'Person Name' provided above?\n   - YES: Use 'tool_hunter_email_finder' with the name and domain.\n   - NO: Skip to Step 3 (Domain Search).\n\n2. ANALYZE FINDER RESULT:\n   - Did 'tool_hunter_email_finder' return a specific email address string?\n     - YES: Use 'tool_hunter_verifier' to check that specific email.\n     - NO (or empty result): DO NOT VERIFY. Proceed immediately to Step 3.\n\n3. DOMAIN SEARCH (Fallback):\n   - Use 'tool_hunter_domain_search' to find the best generic or personal emails for the domain.\n   - You do NOT need to verify the list returned by domain search.\n\nOUTPUT JSON:\n{\n  \"email\": \"found@email.com\",\n  \"status\": \"valid\",\n  \"score\": 95,\n  \"type\": \"personal\",\n  \"source\": \"Hunter Domain Search\"\n}` }}",
+        "options": {
+          "systemMessage": "You are a Hunter.io specialist inside n8n.\n\nYou have tools for:\n- Domain Search (find emails on a domain)\n- Email Finder (find a likely email from name + domain)\n- Email Verifier (deliverability check; may return 202 then poll)\n- Email Count (free)\n- Account usage (free)\n- Enrichment (person/company/combined)\n- Discover (advanced filters)\n\nRules:\n- Always prefer Email Finder when you have a person name + domain.\n- Always verify emails before returning as final if user cares about deliverability.\n- If Domain Search returns many emails, filter by seniority/type as needed.\n- Return structured JSON: {inputs, actions_taken, emails_found, verified_emails, confidence_notes}.\n- Never reveal HUNTER_API_KEY.\n",
+          "maxIterations": 12,
+          "returnIntermediateSteps": true,
+          "enableStreaming": true,
+          "batching": {
+            "batchSize": 1,
+            "delayBetweenBatches": 0
+          }
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        816,
+        -16
+      ],
+      "id": "8fbd298a-77ec-43fb-a635-03058312147c",
+      "name": "Hunter Agent"
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "value": "gpt-4o-mini",
+          "mode": "list",
+          "cachedResultName": "gpt-4o-mini"
+        },
+        "builtInTools": {},
+        "options": {
+          "maxTokens": 1200,
+          "temperature": 0.2,
+          "timeout": 60000,
+          "maxRetries": 2
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [
+        560,
+        352
+      ],
+      "id": "2337c062-addf-45a8-82f3-ef6724a49cd3",
+      "name": "OpenAI Chat Model (Hunter)",
+      "credentials": {
+        "openAiApi": {
+          "id": "Lb7LQd5GQa1bZ9yX",
+          "name": "OpenAi account 4"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sessionIdType": "customKey",
+        "sessionKey": "sessionId"
+      },
+      "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
+      "typeVersion": 1.3,
+      "position": [
+        576,
+        192
+      ],
+      "id": "09ffb145-0a43-4bf2-b58d-fa66bb550fa5",
+      "name": "Simple Memory1"
+    },
+    {
+      "parameters": {
+        "toolDescription": "Get information regarding your Hunter account settings and usage/quota at any time.",
+        "url": "https://api.hunter.io/v2/account",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        704,
+        352
+      ],
+      "id": "c4cdd478-5416-437a-a29e-db541336b64b",
+      "name": "Hunter Tool — Account",
+      "credentials": {
+        "hunterApi": {
+          "id": "cXV2nhRFvBQDBd3t",
+          "name": "Jonah's Hunter.io"
+        },
+        "httpHeaderAuth": {
+          "id": "f2TKz53x8SLOc6qI",
+          "name": "Hunter.io Header AUth"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "toolDescription": "Know how many email addresses are available for one domain or company.",
+        "url": "https://api.hunter.io/v2/email-count",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "domain",
+              "value": "={{ $json.domain }}"
+            },
+            {
+              "name": "company",
+              "value": "={{ $json.company_name }}"
+            },
+            {
+              "name": "type",
+              "value": "={{ $fromAI.type }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        864,
+        352
+      ],
+      "id": "25917b36-e381-473c-9c47-978f7fcd59c0",
+      "name": "Hunter Tool — Email Count",
+      "credentials": {
+        "hunterApi": {
+          "id": "cXV2nhRFvBQDBd3t",
+          "name": "Jonah's Hunter.io"
+        },
+        "httpHeaderAuth": {
+          "id": "f2TKz53x8SLOc6qI",
+          "name": "Hunter.io Header AUth"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "toolDescription": "Search all email addresses corresponding to one website domain.",
+        "url": "https://api.hunter.io/v2/domain-search",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "domain",
+              "value": "={{ $json.domain }}"
+            },
+            {
+              "name": "company",
+              "value": "={{ $json.company_name }}"
+            },
+            {
+              "name": "limit",
+              "value": "={{ $fromAI.limit || 10 }}"
+            },
+            {
+              "name": "type",
+              "value": "={{ $fromAI.type }}"
+            },
+            {
+              "name": "seniority",
+              "value": "={{ $fromAI.seniority }}"
+            },
+            {
+              "name": "department",
+              "value": "={{ $fromAI.department }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        704,
+        192
+      ],
+      "id": "e4cc293b-f77e-4a96-9505-15e280ca9367",
+      "name": "Hunter Tool — Domain Search",
+      "credentials": {
+        "hunterApi": {
+          "id": "cXV2nhRFvBQDBd3t",
+          "name": "Jonah's Hunter.io"
+        },
+        "httpHeaderAuth": {
+          "id": "f2TKz53x8SLOc6qI",
+          "name": "Hunter.io Header AUth"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "toolDescription": "Find the most likely email address for a specific person at a company.",
+        "url": "https://api.hunter.io/v2/email-finder",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "domain",
+              "value": "={{ $('Prep Hunter.io Agent').item.json.clean_domain }}"
+            },
+            {
+              "name": "company",
+              "value": "={{ $json.company_name }}"
+            },
+            {
+              "name": "first_name",
+              "value": "={{ $fromAI.first_name || ($('Prep Hunter.io Agent').item.json.target_person ? $('Prep Hunter.io Agent').item.json.target_person.split(' ')[0] : undefined) }}"
+            },
+            {
+              "name": "last_name",
+              "value": "={{ $fromAI.last_name || ($('Prep Hunter.io Agent').item.json.target_person ? $('Prep Hunter.io Agent').item.json.target_person.split(' ').slice(1).join(' ') : undefined) }}"
+            },
+            {
+              "name": "full_name",
+              "value": "={{ $fromAI.full_name || $('Prep Hunter.io Agent').item.json.target_person }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        864,
+        192
+      ],
+      "id": "d11d9600-36a6-4482-a8da-fc9170c59e63",
+      "name": "Hunter Tool — Email Finder",
+      "credentials": {
+        "hunterApi": {
+          "id": "cXV2nhRFvBQDBd3t",
+          "name": "Jonah's Hunter.io"
+        },
+        "httpHeaderAuth": {
+          "id": "f2TKz53x8SLOc6qI",
+          "name": "Hunter.io Header AUth"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "toolDescription": "Verify the deliverability of an email address.",
+        "url": "https://api.hunter.io/v2/email-verifier",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "email",
+              "value": "={{ $fromAI.email }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        1024,
+        192
+      ],
+      "id": "cc4bbaa6-38bb-40b3-85bd-0ff596ce441f",
+      "name": "Hunter Tool — Email Verifier",
+      "credentials": {
+        "hunterApi": {
+          "id": "cXV2nhRFvBQDBd3t",
+          "name": "Jonah's Hunter.io"
+        },
+        "httpHeaderAuth": {
+          "id": "f2TKz53x8SLOc6qI",
+          "name": "Hunter.io Header AUth"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "toolDescription": "Combined Enrichment. Retrieves both person and company data from an email address.",
+        "url": "https://api.hunter.io/v2/combined/find",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "email",
+              "value": "={{ $fromAI.email }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        1184,
+        192
+      ],
+      "id": "03cf8f6e-6988-401f-865c-cc07139017f0",
+      "name": "Hunter Tool — Combined Enrichment",
+      "credentials": {
+        "hunterApi": {
+          "id": "cXV2nhRFvBQDBd3t",
+          "name": "Jonah's Hunter.io"
+        },
+        "httpHeaderAuth": {
+          "id": "f2TKz53x8SLOc6qI",
+          "name": "Hunter.io Header AUth"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "toolDescription": "Company Enrichment. Retrieves company data from a domain name.",
+        "url": "https://api.hunter.io/v2/companies/find",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "domain",
+              "value": "={{ $json.domain }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        1024,
+        352
+      ],
+      "id": "122ae83a-9fd1-48ed-92f0-1dde5e3f7267",
+      "name": "Hunter Tool — Company Enrichment",
+      "credentials": {
+        "hunterApi": {
+          "id": "cXV2nhRFvBQDBd3t",
+          "name": "Jonah's Hunter.io"
+        },
+        "httpHeaderAuth": {
+          "id": "f2TKz53x8SLOc6qI",
+          "name": "Hunter.io Header AUth"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "toolDescription": "Discover companies using specific filters (Advanced).",
+        "url": "https://api.hunter.io/v2/discover",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "industry",
+              "value": "={{ $fromAI.industry }}"
+            },
+            {
+              "name": "headcount",
+              "value": "={{ $fromAI.headcount }}"
+            },
+            {
+              "name": "location",
+              "value": "={{ $fromAI.location }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        1184,
+        352
+      ],
+      "id": "a43397dd-7804-481b-8230-c4071b393dcb",
+      "name": "Hunter Tool — Discover",
+      "credentials": {
+        "hunterApi": {
+          "id": "cXV2nhRFvBQDBd3t",
+          "name": "Jonah's Hunter.io"
+        },
+        "httpHeaderAuth": {
+          "id": "f2TKz53x8SLOc6qI",
+          "name": "Hunter.io Header AUth"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT COALESCE(context_jsonb, '{}'::jsonb) AS context_jsonb\nFROM company_contexts\nWHERE company_id = $1",
+        "options": {
+          "queryReplacement": "={{ [$json.company_id] }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        176,
+        96
+      ],
+      "id": "fbc09f87-a273-4c7e-9a71-f37c9f173088",
+      "name": "📥 DB — Read Context (Master)",
+      "credentials": {
+        "postgres": {
+          "id": "xogKD739Qe4gqWBU",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        368,
+        -16
+      ],
+      "id": "700352a1-bd28-4924-96e3-18b9ba6f9785",
+      "name": "🤝 Merge Context"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ⚙️ Prep Hunter.io Agent\n// Strips dirty URLs down to root domains so Hunter.io API doesn't error out.\n\nconst item = $input.first().json;\n\n// 1. Get Domain\nlet url = item.domain || item.search_domain || '';\nlet clean_domain = '';\n\ntry {\n  // Attempt to parse URL\n  const u = new URL(url.startsWith('http') ? url : `https://${url}`);\n  clean_domain = u.hostname.replace(/^www\\./, '');\n} catch (e) {\n  // Fallback simple regex\n  clean_domain = url.replace(/^(?:https?:\\/\\/)?(?:www\\.)?/i, \"\").split('/')[0];\n}\n\n// 2. Get Person Name (if available from previous context)\nconst ctx = item.context_jsonb || {};\nlet target_person = null;\n\nif (ctx.identity?.owner_name) target_person = ctx.identity.owner_name;\nelse if (ctx.identity?.ceo_name) target_person = ctx.identity.ceo_name;\nelse if (item.meta?.person_name) target_person = item.meta.person_name;\n\nreturn [{\n  json: {\n    ...item,\n    clean_domain,\n    target_person\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        576,
+        -16
+      ],
+      "id": "2d9936ae-72b9-4b81-abee-ddb5237d7cf4",
+      "name": "Prep Hunter.io Agent"
+    },
+    {
+      "parameters": {
+        "jsCode": "// 🧾 Build Hunter.io Log (Full Execution Trace)\n// Extracts the final result AND the full history of steps taken by the agent.\n\nconst agentInput = $items(\"Prep Hunter.io Agent\")[0].json;\nconst agentOutput = $input.first().json;\nconst rawOutput = agentOutput.output || agentOutput.text || \"{}\";\nconst steps = agentOutput.intermediateSteps || [];\n\n// --- 1. Parse Final Result ---\nlet result = {};\ntry {\n  const cleaned = rawOutput.replace(/```json/g, '').replace(/```/g, '').trim();\n  result = JSON.parse(cleaned);\n} catch (e) {\n  result = {\n    status: 'error_parsing_json',\n    raw_text: rawOutput\n  };\n}\n\n// --- 2. Build Execution Trace (The Clean-up) ---\nconst executionLog = steps.map((step, index) => {\n  const tool = step.action?.tool || 'unknown_tool';\n  const input = step.action?.toolInput || {};\n  \n  // Clean the observation (Agent output often comes as stringified JSON)\n  let output = step.observation;\n  if (typeof output === 'string' && (output.startsWith('{') || output.startsWith('['))) {\n    try {\n      output = JSON.parse(output);\n      // Simplify Hunter responses (they are nested deep: [ { data: { ... } } ])\n      if (Array.isArray(output) && output[0]?.data) {\n        output = output[0].data;\n      }\n    } catch (e) { /* keep as string if parse fails */ }\n  }\n\n  return {\n    step: index + 1,\n    tool: tool,\n    input: input,\n    result: output\n  };\n});\n\nconst success = result.email && result.email.includes('@');\n\nreturn [{\n  json: {\n    research_run_id: agentInput.research_run_id,\n    company_id: agentInput.company_id,\n    enrichment_id: agentInput.enrichment_id,\n    node_name: 'Hunter.io Agent',\n    node_id: 'tool_hunter_agent',\n    node_type: 'agent',\n    stage: 'Stage 2b',\n    status: success ? 'completed' : 'no_email_found',\n    \n    // 🚨 The Structured Data (With Full History) 🚨\n    output_data: {\n      // The final answer\n      email: result.email || null,\n      score: result.score || 0,\n      type: result.type || 'unknown',\n      source: result.source || 'hunter_agent',\n      clean_domain: agentInput.clean_domain,\n      \n      // The Full Story\n      execution_log: executionLog,\n      actions_count: executionLog.length\n    },\n    \n    // Metadata stats\n    metadata: {\n      model: 'gpt-4o-mini',\n      target_person: agentInput.target_person,\n      steps_taken: executionLog.length,\n      api_cost_estimated: 0.05 + (executionLog.length * 0.01)\n    }\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1168,
+        -16
+      ],
+      "id": "9ecdcf1a-3212-456b-8aea-6298ae80f294",
+      "name": "Prep - Log Hunter.io"
+    },
+    {
+      "parameters": {
+        "schema": {
+          "__rl": true,
+          "mode": "list",
+          "value": "public"
+        },
+        "table": {
+          "__rl": true,
+          "value": "workflow_step_logs",
+          "mode": "list",
+          "cachedResultName": "workflow_step_logs"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "duration_ms": 0,
+            "api_call_count": "={{ $json.output_data.actions_count }}",
+            "estimated_cost_usd": "={{ $json.metadata.api_cost_estimated }}",
+            "data_quality_score": 0,
+            "extracted_fields_count": 0,
+            "research_run_id": "={{ $json.research_run_id }}",
+            "company_id": "={{ $json.company_id }}",
+            "node_name": "={{ $json.node_name }}",
+            "node_id": "={{ $json.node_id }}",
+            "node_type": "={{ $json.node_type }}",
+            "stage": "={{ $json.stage }}",
+            "status": "={{ $json.status }}",
+            "output_data": "={{ $json.output_data }}",
+            "metadata": "={{ $json.metadata }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "log_id",
+              "displayName": "log_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "research_run_id",
+              "displayName": "research_run_id",
+              "required": true,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "company_id",
+              "displayName": "company_id",
+              "required": true,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "node_name",
+              "displayName": "node_name",
+              "required": true,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "node_id",
+              "displayName": "node_id",
+              "required": true,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "node_type",
+              "displayName": "node_type",
+              "required": true,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "stage",
+              "displayName": "stage",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "started_at",
+              "displayName": "started_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "dateTime",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "completed_at",
+              "displayName": "completed_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "dateTime",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "duration_ms",
+              "displayName": "duration_ms",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "input_data",
+              "displayName": "input_data",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "object",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "output_data",
+              "displayName": "output_data",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "object",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "error_details",
+              "displayName": "error_details",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "object",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "api_call_count",
+              "displayName": "api_call_count",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "estimated_cost_usd",
+              "displayName": "estimated_cost_usd",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "data_quality_score",
+              "displayName": "data_quality_score",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "extracted_fields_count",
+              "displayName": "extracted_fields_count",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "workflow_version",
+              "displayName": "workflow_version",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "instance_id",
+              "displayName": "instance_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "metadata",
+              "displayName": "metadata",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "object",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1376,
+        -16
+      ],
+      "id": "3717fbbb-7795-4fe7-92eb-e94fd46cff0c",
+      "name": "🗄️ Log — Hunter.io",
+      "credentials": {
+        "postgres": {
+          "id": "xogKD739Qe4gqWBU",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "A4-U5nCoP9WMSikDE3qdi",
+          "mode": "id",
+          "cachedResultUrl": "/workflow/A4-U5nCoP9WMSikDE3qdi",
+          "cachedResultName": "🧠 Context Updater — Company Dossier (workflow_step_logs → company_contexts)"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "company_id": "={{ $json.company_id }}",
+            "log_id": "={{ $json.log_id }}",
+            "research_run_id": "={{ $json.research_run_id }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "company_id",
+              "displayName": "company_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            },
+            {
+              "id": "log_id",
+              "displayName": "log_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            },
+            {
+              "id": "research_run_id",
+              "displayName": "research_run_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        1600,
+        -16
+      ],
+      "id": "4938a26b-95e6-4e7f-a920-324d6202685c",
+      "name": "📤 Update Context via AI"
+    },
+    {
+      "parameters": {
+        "jsCode": "// 📤 Return Result (Concise Summary)\n// Gives the parent orchestrator a clean 1-line summary of what happened.\n\n// 1. Get the data from the Log node (it has the most complete picture)\nconst logItem = $('🗄️ Log — Hunter.io').first().json;\nconst data = logItem.output_data || {};\n\n// 2. Extract key fields\nconst email = data.email || null;\nconst score = data.score || 0;\nconst type = data.type || 'unknown';\nconst status = logItem.status;\n\n// 3. Generate a human-readable summary string\nlet summary = \"No valid email found.\";\nif (email) {\n  const typeStr = type === 'personal' ? 'personal' : 'generic';\n  summary = `Found ${typeStr} email: ${email} (${score}% confidence)`;\n}\n\n// 4. Return clean object\nreturn [{\n  json: {\n    success: status === 'completed' && !!email,\n    stage: \"hunter_io\",\n    email: email,\n    score: score,\n    email_type: type,\n    run_summary: summary,\n    \n    // Pass back IDs for safety\n    company_id: logItem.company_id,\n    research_run_id: logItem.research_run_id\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1824,
+        -16
+      ],
+      "id": "e364d989-44ff-44f3-87fd-7e2d92e8106f",
+      "name": "📤 Return Result"
+    }
+  ],
+  "connections": {
+    "When Executed by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "🤝 Merge Context",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "📥 DB — Read Context (Master)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Hunter Agent": {
+      "main": [
+        [
+          {
+            "node": "Prep - Log Hunter.io",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model (Hunter)": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Hunter Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Simple Memory1": {
+      "ai_memory": [
+        [
+          {
+            "node": "Hunter Agent",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Hunter Tool — Account": {
+      "ai_tool": [
+        [
+          {
+            "node": "Hunter Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Hunter Tool — Email Count": {
+      "ai_tool": [
+        [
+          {
+            "node": "Hunter Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Hunter Tool — Domain Search": {
+      "ai_tool": [
+        [
+          {
+            "node": "Hunter Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Hunter Tool — Email Finder": {
+      "ai_tool": [
+        [
+          {
+            "node": "Hunter Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Hunter Tool — Email Verifier": {
+      "ai_tool": [
+        [
+          {
+            "node": "Hunter Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Hunter Tool — Combined Enrichment": {
+      "ai_tool": [
+        [
+          {
+            "node": "Hunter Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Hunter Tool — Company Enrichment": {
+      "ai_tool": [
+        [
+          {
+            "node": "Hunter Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Hunter Tool — Discover": {
+      "ai_tool": [
+        [
+          {
+            "node": "Hunter Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📥 DB — Read Context (Master)": {
+      "main": [
+        [
+          {
+            "node": "🤝 Merge Context",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "🤝 Merge Context": {
+      "main": [
+        [
+          {
+            "node": "Prep Hunter.io Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prep Hunter.io Agent": {
+      "main": [
+        [
+          {
+            "node": "Hunter Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prep - Log Hunter.io": {
+      "main": [
+        [
+          {
+            "node": "🗄️ Log — Hunter.io",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🗄️ Log — Hunter.io": {
+      "main": [
+        [
+          {
+            "node": "📤 Update Context via AI",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📤 Update Context via AI": {
+      "main": [
+        [
+          {
+            "node": "📤 Return Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "2d82e0d27c2a88970c7ba9693b6bad225f1d31f9cf0d392d33dd9cabf99f185f"
+  }
+}

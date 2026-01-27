@@ -1,0 +1,453 @@
+{
+  "name": "Contact Hunter Sub-Workflow",
+  "nodes": [
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            { "name": "company_id" },
+            { "name": "company_name" },
+            { "name": "domain" },
+            { "name": "search_domain" },
+            { "name": "research_run_id" },
+            { "name": "enrichment_id" },
+            { "name": "location" }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [-1872, -144],
+      "id": "97259f47-6829-43b3-a68c-a92bd42ed315",
+      "name": "When Executed by Another Workflow"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT context_jsonb FROM company_contexts WHERE company_id = $1",
+        "options": {
+          "queryReplacement": "={{ [$json.company_id] }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [-1664, -48],
+      "id": "a269ee87-2143-45d4-999e-7f1d574b8819",
+      "name": "📥 Read Context",
+      "credentials": {
+        "postgres": {
+          "id": "xogKD739Qe4gqWBU",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [-1456, -128],
+      "id": "aa961fdb-23b6-436f-8b04-0c868a120568",
+      "name": "🤝 Merge Context"
+    },
+    {
+      "parameters": {
+        "resource": "MapSearch",
+        "operation": "map",
+        "url": "={{ $json.plan?.map_url || $json.site_root || $json.website_url || $json.domain }}",
+        "includeSubdomains": true,
+        "limit": 50,
+        "requestOptions": {}
+      },
+      "type": "@mendable/n8n-nodes-firecrawl.firecrawl",
+      "typeVersion": 1,
+      "position": [-480, -32],
+      "id": "1e3bfcac-1825-48d4-b256-66d15b0dfd10",
+      "name": "🧭 Firecrawl - Map Site",
+      "credentials": {
+        "firecrawlApi": {
+          "id": "h7HuUbKWgCMkuZK8",
+          "name": "Firecrawl account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "batchScrape",
+        "urls": "={{ $json.batch_urls }}",
+        "parsers": ["pdf"],
+        "scrapeOptions": {
+          "options": {
+            "formats": { "format": [{}] },
+            "headers": {},
+            "waitFor": 2000
+          }
+        },
+        "requestOptions": {}
+      },
+      "type": "@mendable/n8n-nodes-firecrawl.firecrawl",
+      "typeVersion": 1,
+      "position": [368, -112],
+      "id": "bd7b5d5e-59e4-46d8-a76f-092b9fe509e7",
+      "name": "🔥 Firecrawl - Scrape Page",
+      "credentials": {
+        "firecrawlApi": {
+          "id": "h7HuUbKWgCMkuZK8",
+          "name": "Firecrawl account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ⚙️ Extract Contacts (Strict & Clean)\nconst batch = $input.first().json;\nconst pages = Array.isArray(batch.data) ? batch.data : [];\nconst results = [];\n\nfor (const page of pages) {\n  const meta = page.metadata || {};\n  const markdown = page.markdown || '';\n  const html = page.html || '';\n  \n  let content = (markdown + ' ' + html + ' ' + (meta.description || ''))\n    .replace(/\\n/g, ' ')\n    .replace(/data:image\\/[^\"\\s)]+/g, '')\n    .replace(/M\\d+(\\.\\d+)?/g, '');\n\n  const emailRegex = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\\\.[a-zA-Z]{2,}/g;\n  const rawEmails = content.match(emailRegex) || [];\n  \n  const validEmails = [...new Set(rawEmails)].filter(email => {\n    const lower = email.toLowerCase();\n    return !lower.includes('example.com') && \n           !lower.includes('sentry.io') && \n           !lower.includes('wix.com') &&\n           !lower.includes('noreply') &&\n           !lower.includes('domain.com') &&\n           !lower.endsWith('.png') &&\n           !lower.endsWith('.jpg') &&\n           email.length < 100;\n  });\n\n  const phoneRegexes = [\n    /(?:\\+?1\\s?)?\\(\\d{3}\\)\\s?\\d{3}[-.\\s]\\d{4}\\b/g,\n    /(?:\\+?1\\s?)?\\b\\d{3}-\\d{3}-\\d{4}\\b/g,\n    /(?:\\+?1\\s?)?\\b\\d{3}\\.\\d{3}\\.\\d{4}\\b/g,\n    /(?:\\+?1\\s?)?\\b\\d{3}\\s\\d{3}\\s\\d{4}\\b/g\n  ];\n\n  let foundPhones = [];\n  for (const regex of phoneRegexes) {\n    const matches = content.match(regex);\n    if (matches) foundPhones.push(...matches);\n  }\n\n  const validPhones = [...new Set(foundPhones)].filter(p => {\n    const digits = p.replace(/\\D/g, '');\n    return digits.length === 10 || (digits.length === 11 && digits.startsWith('1'));\n  });\n\n  const hasContactForm = (html.includes('<form') || markdown.includes('form')) && \n                         /contact|message|email|reach|inquiry/i.test(content);\n\n  results.push({\n    json: {\n      page_url: meta.sourceURL || meta.url || 'unknown',\n      page_title: meta.title || '',\n      emails_found: validEmails,\n      phones_found: validPhones,\n      has_contact_form: hasContactForm,\n      extraction_success: validEmails.length > 0 || validPhones.length > 0 || hasContactForm\n    }\n  });\n}\n\nif (results.length === 0) {\n  return [{\n    json: {\n      page_url: 'no_pages_found',\n      emails_found: [],\n      phones_found: [],\n      has_contact_form: false,\n      extraction_success: false\n    }\n  }];\n}\n\nreturn results;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1008, -112],
+      "id": "eb8d6dd5-2832-4e67-ab96-afb6d3611dbe",
+      "name": "⚙️ Extract Contacts"
+    },
+    {
+      "parameters": {
+        "jsCode": "const global = $('When Executed by Another Workflow').first().json;\nconst allExtractions = $input.all();\n\nconst allEmails = [];\nconst allPhones = [];\nlet hasForm = false;\nconst pagesScraped = [];\n\nfor (const item of allExtractions) {\n  const data = item.json;\n  if (Array.isArray(data.emails_found)) allEmails.push(...data.emails_found);\n  if (Array.isArray(data.phones_found)) allPhones.push(...data.phones_found);\n  if (data.has_contact_form) hasForm = true;\n  if (data.page_url && data.page_url !== 'no_pages_found') pagesScraped.push(data.page_url);\n}\n\nconst uniqueEmails = [...new Set(allEmails)];\nconst uniquePhones = [...new Set(allPhones)];\n\nreturn [{\n  json: {\n    ...global,\n    contact_hunt_results: {\n      success: uniqueEmails.length > 0 || uniquePhones.length > 0 || hasForm,\n      emails: uniqueEmails,\n      phones: uniquePhones,\n      has_contact_form: hasForm,\n      pages_scraped: pagesScraped,\n      total_emails: uniqueEmails.length,\n      total_phones: uniquePhones.length\n    }\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1232, -112],
+      "id": "9d0cbe2e-3181-4fc5-817d-ef78d06b3acf",
+      "name": "🏁 Aggregate Contact Findings"
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $input.first().json;\nconst results = data.contact_hunt_results || {};\n\nreturn [{\n  json: {\n    research_run_id: data.research_run_id,\n    company_id: data.company_id,\n    enrichment_id: data.enrichment_id,\n    node_name: 'Firecrawl - Contact Hunter',\n    node_id: 'firecrawl_contact_hunter',\n    node_type: 'tool_log',\n    stage: 'Stage 2',\n    status: results.success ? 'completed' : 'no_contacts_found',\n    output_data: {\n      emails: results.emails || [],\n      phones: results.phones || [],\n      has_contact_form: results.has_contact_form || false,\n      sources: results.pages_scraped || []\n    },\n    metadata: {\n      emails_count: results.total_emails || 0,\n      phones_count: results.total_phones || 0,\n      pages_scraped_count: results.pages_scraped?.length || 0,\n      estimated_cost_usd: (results.pages_scraped?.length || 0) * 0.01\n    }\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1424, -112],
+      "id": "7e900ab4-152c-46e8-98ba-1e770a1d75a8",
+      "name": "🧾 Build Contact Hunt Log"
+    },
+    {
+      "parameters": {
+        "schema": {
+          "__rl": true,
+          "mode": "list",
+          "value": "public"
+        },
+        "table": {
+          "__rl": true,
+          "value": "workflow_step_logs",
+          "mode": "list",
+          "cachedResultName": "workflow_step_logs"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "research_run_id": "={{ $json.research_run_id }}",
+            "company_id": "={{ $json.company_id }}",
+            "node_name": "={{ $json.node_name }}",
+            "node_id": "={{ $json.node_id }}",
+            "node_type": "={{ $json.node_type }}",
+            "stage": "={{ $json.stage }}",
+            "status": "={{ $json.status }}",
+            "output_data": "={{ $json.output_data }}",
+            "metadata": "={{ $json.metadata }}",
+            "duration_ms": 0,
+            "api_call_count": 0,
+            "estimated_cost_usd": "={{ $json.metadata.estimated_cost_usd }}",
+            "data_quality_score": 0,
+            "extracted_fields_count": 0
+          }
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [1616, -112],
+      "id": "e63d0e9c-3e4e-4de8-91ff-a40196135904",
+      "name": "🗄️ Log — Contact Hunt",
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "xogKD739Qe4gqWBU",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "A4-U5nCoP9WMSikDE3qdi",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "company_id": "={{ $json.company_id }}",
+            "research_run_id": "={{ $json.research_run_id }}",
+            "log_id": "={{ $json.log_id }}"
+          }
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [1824, -112],
+      "id": "7d4a6c92-a5ec-40a2-a2b0-10523dcd0ade",
+      "name": "📤 Update Context via AI"
+    },
+    {
+      "parameters": {
+        "operation": "batchScrapeStatus",
+        "batchId": "={{ $json.data.id }}",
+        "requestOptions": {}
+      },
+      "type": "@mendable/n8n-nodes-firecrawl.firecrawl",
+      "typeVersion": 1,
+      "position": [784, -112],
+      "id": "de87c085-2e4b-40f4-9d4b-31a76def1b4d",
+      "name": "Get batch scrape status",
+      "credentials": {
+        "firecrawlApi": {
+          "id": "h7HuUbKWgCMkuZK8",
+          "name": "Firecrawl account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "amount": 10
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [576, -112],
+      "id": "1f399752-7bd2-459f-b77d-e12a58eb9a5a",
+      "name": "Wait",
+      "webhookId": "b2ad5f31-6de3-41ab-884d-d545ccfc5ea1"
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "list",
+          "value": "claude-sonnet-4-5-20250929",
+          "cachedResultName": "Claude Sonnet 4.5"
+        },
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatAnthropic",
+      "typeVersion": 1.3,
+      "position": [-1024, 32],
+      "id": "da0e11c0-a312-4071-b040-0f31aeb959a7",
+      "name": "Anthropic Chat Model",
+      "credentials": {
+        "anthropicApi": {
+          "id": "IyZK9I1O1ZjOcw3Z",
+          "name": "Anthropic API Key"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Full Prep LLM Input code - see original for complete version"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-1248, -128],
+      "id": "3859b9ee-f019-48ec-b375-e3b5de0a2b7f",
+      "name": "🧾 Prep LLM Input (Contact Hunt Planner)"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ JSON.stringify($json.llm_input) }}",
+        "messages": {
+          "messageValues": [
+            {
+              "message": "You are the Contact Hunt Planner for a lead enrichment workflow.\n\nGoal: plan how to find emails + contact info for ONE specific business location.\n\nRules:\n- Prefer location-specific pages over brand-wide pages.\n- Avoid cross-location contamination (other cities/states/locations).\n- Do not invent URLs. Only choose from known base URLs and reasonable site roots derived from them.\n- If uncertain, still run the contact hunt.\n- Output MUST be strict JSON only (no markdown, no code fences)."
+            },
+            {
+              "type": "HumanMessagePromptTemplate",
+              "message": "Given the JSON input, output EXACTLY this JSON schema:\n\n{\n  \"run_contact_hunt\": boolean,\n  \"map_url\": string,\n  \"top_n_pages\": 5 | 10,\n  \"prefer_location_slug\": string,\n  \"avoid_patterns\": string[],\n  \"notes\": string\n}\n\nReturn JSON only."
+            }
+          ]
+        },
+        "batching": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.9,
+      "position": [-1024, -128],
+      "id": "a5ed4b80-a78d-427d-90ec-2d9a194e95c0",
+      "name": "🧠 Contact Hunt Planner (LLM)"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse Planner JSON - strips code fences, extracts JSON"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-688, -128],
+      "id": "18987196-ff7e-424e-bfc8-51f0f80e8fd6",
+      "name": "✅ Parse Planner JSON"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Filter & Rank Contact Pages - location-aware scoring"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-48, -112],
+      "id": "d4af177c-155e-4c06-adc9-7858fc15b1b8",
+      "name": "⚙️ Filter & Rank Contact Pages"
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [-256, -112],
+      "id": "c3679476-9ba8-442f-8d98-4d7952b4ad68",
+      "name": "🤝 Merge Plan + Map Results"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build Batch URL List - converts N items to single batch_urls array"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [160, -112],
+      "id": "7bcbc18d-7ac0-4022-a12a-a9d233465423",
+      "name": "🧺 Build Batch URL List"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Return Update to Primary WF"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2032, -112],
+      "id": "ce534da7-9d26-455d-b26c-e2a6d8a3430e",
+      "name": "Return Update to Primary WF"
+    }
+  ],
+  "connections": {
+    "When Executed by Another Workflow": {
+      "main": [
+        [
+          { "node": "📥 Read Context", "type": "main", "index": 0 },
+          { "node": "🤝 Merge Context", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "📥 Read Context": {
+      "main": [
+        [{ "node": "🤝 Merge Context", "type": "main", "index": 1 }]
+      ]
+    },
+    "🤝 Merge Context": {
+      "main": [
+        [{ "node": "🧾 Prep LLM Input (Contact Hunt Planner)", "type": "main", "index": 0 }]
+      ]
+    },
+    "🧭 Firecrawl - Map Site": {
+      "main": [
+        [{ "node": "🤝 Merge Plan + Map Results", "type": "main", "index": 1 }]
+      ]
+    },
+    "🔥 Firecrawl - Scrape Page": {
+      "main": [
+        [{ "node": "Wait", "type": "main", "index": 0 }]
+      ]
+    },
+    "⚙️ Extract Contacts": {
+      "main": [
+        [{ "node": "🏁 Aggregate Contact Findings", "type": "main", "index": 0 }]
+      ]
+    },
+    "🏁 Aggregate Contact Findings": {
+      "main": [
+        [{ "node": "🧾 Build Contact Hunt Log", "type": "main", "index": 0 }]
+      ]
+    },
+    "🧾 Build Contact Hunt Log": {
+      "main": [
+        [{ "node": "🗄️ Log — Contact Hunt", "type": "main", "index": 0 }]
+      ]
+    },
+    "🗄️ Log — Contact Hunt": {
+      "main": [
+        [{ "node": "📤 Update Context via AI", "type": "main", "index": 0 }]
+      ]
+    },
+    "📤 Update Context via AI": {
+      "main": [
+        [{ "node": "Return Update to Primary WF", "type": "main", "index": 0 }]
+      ]
+    },
+    "Get batch scrape status": {
+      "main": [
+        [{ "node": "⚙️ Extract Contacts", "type": "main", "index": 0 }]
+      ]
+    },
+    "Wait": {
+      "main": [
+        [{ "node": "Get batch scrape status", "type": "main", "index": 0 }]
+      ]
+    },
+    "Anthropic Chat Model": {
+      "ai_languageModel": [
+        [{ "node": "🧠 Contact Hunt Planner (LLM)", "type": "ai_languageModel", "index": 0 }]
+      ]
+    },
+    "🧾 Prep LLM Input (Contact Hunt Planner)": {
+      "main": [
+        [{ "node": "🧠 Contact Hunt Planner (LLM)", "type": "main", "index": 0 }]
+      ]
+    },
+    "🧠 Contact Hunt Planner (LLM)": {
+      "main": [
+        [{ "node": "✅ Parse Planner JSON", "type": "main", "index": 0 }]
+      ]
+    },
+    "✅ Parse Planner JSON": {
+      "main": [
+        [
+          { "node": "🧭 Firecrawl - Map Site", "type": "main", "index": 0 },
+          { "node": "🤝 Merge Plan + Map Results", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "⚙️ Filter & Rank Contact Pages": {
+      "main": [
+        [{ "node": "🧺 Build Batch URL List", "type": "main", "index": 0 }]
+      ]
+    },
+    "🤝 Merge Plan + Map Results": {
+      "main": [
+        [{ "node": "⚙️ Filter & Rank Contact Pages", "type": "main", "index": 0 }]
+      ]
+    },
+    "🧺 Build Batch URL List": {
+      "main": [
+        [{ "node": "🔥 Firecrawl - Scrape Page", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "2d82e0d27c2a88970c7ba9693b6bad225f1d31f9cf0d392d33dd9cabf99f185f"
+  }
+}

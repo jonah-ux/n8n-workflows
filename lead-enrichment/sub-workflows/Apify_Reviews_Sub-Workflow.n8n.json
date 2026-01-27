@@ -1,0 +1,260 @@
+{
+  "name": "Apify Reviews Sub-Workflow",
+  "nodes": [
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            { "name": "company_id" },
+            { "name": "company_name" },
+            { "name": "place_id" },
+            { "name": "research_run_id" },
+            { "name": "enrichment_id" }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [-896, 416],
+      "id": "8d98aa91-998c-479b-b22a-23a73e47b68b",
+      "name": "When Executed by Another Workflow"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 1 },
+          "conditions": [{ "leftValue": "={{ $json.flags.needs_search }}", "rightValue": true, "operator": { "type": "boolean", "operation": "equals" } }],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [-144, 432],
+      "id": "6add33f0-d2fe-4102-b754-2488fe4da729",
+      "name": "Need to Search ID?"
+    },
+    {
+      "parameters": {
+        "url": "https://serpapi.com/search.json",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpQueryAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            { "name": "engine", "value": "google_maps" },
+            { "name": "type", "value": "search" },
+            { "name": "q", "value": "={{ $json.company_name + ' ' + ($json.location || '') }}" },
+            { "name": "num", "value": "1" }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [80, 288],
+      "id": "7febd2b8-66d7-48c3-8f7e-3f26df8de05e",
+      "name": "🔍 SerpAPI - Find Place ID",
+      "credentials": {
+        "httpQueryAuth": {
+          "id": "etz3Bz1U05JSXpRB",
+          "name": "Query Auth SerpAPI API Key"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Update Place ID from Search Result\nconst search = $json.place_results || {};\nconst newId = search.place_id || null;\n\n// Pass along original context (using the \"nuclear\" option to be safe)\nconst global = $('When Executed by Another Workflow').first().json;\n\nreturn [{\n  json: {\n    ...global,\n    place_id: newId,\n    flags: {\n      needs_scraping: !!newId // Only scrape if we found an ID\n    }\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [272, 288],
+      "id": "efbdd153-1014-415b-a251-3b779808c586",
+      "name": "⚙️ Update Place ID"
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": { "includeUnpaired": true }
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [464, 432],
+      "id": "b79fd9dc-ce40-4ad5-a99c-8d3fc747d9a0",
+      "name": "Merge ID Paths"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 1 },
+          "conditions": [
+            { "leftValue": "={{ $json.flags.needs_scraping }}", "rightValue": true, "operator": { "type": "boolean", "operation": "equals" } },
+            { "leftValue": "={{ !!$json.place_id }}", "rightValue": true, "operator": { "type": "boolean", "operation": "equals" } }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [656, 432],
+      "id": "8aa4aa54-e7e6-47ef-ab64-ac23daa6a235",
+      "name": "Ready to Scrape?"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT context_jsonb FROM company_contexts WHERE company_id = $1",
+        "options": { "queryReplacement": "={{ [$json.company_id] }}" }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [-720, 544],
+      "id": "1d38d5b7-3ba2-4fac-88d2-78870c3fcc45",
+      "name": "📥 Read Context1",
+      "credentials": { "postgres": { "id": "xogKD739Qe4gqWBU", "name": "Postgres account" } }
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [-528, 432],
+      "id": "9753d0ae-9c9d-472b-9a7a-e4b4af7238a8",
+      "name": "🤝 Merge Context1"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $json;\nconst ctx = input.context_jsonb || {};\n\n// 1. Try to find Place ID\n// Priority: Input -> Context(SerpAPI) -> Context(Derived)\nconst placeId = input.place_id || ctx?.serpapi?.maps_business?.place_id || ctx?.derived?.place_id || null;\n\n// 2. Check Data Freshness\nconst existingReviews = ctx?.apify?.reviews || [];\nconst hasReviews = existingReviews.length > 0;\nconst lastScraped = ctx?.apify?.scraped_at ? new Date(ctx.apify.scraped_at) : null;\nconst daysOld = lastScraped ? Math.floor((Date.now() - lastScraped.getTime()) / (1000 * 60 * 60 * 24)) : 999;\n\n// 3. Decide\n// In Tier 1 parallel mode, if we lack a place_id, we MUST search for it.\nconst needsScraping = !hasReviews || daysOld > 30;\nconst needsSearch = !placeId && needsScraping;\n\nreturn [{\n  json: {\n    ...input,\n    place_id: placeId,\n    context_jsonb: ctx,\n    flags: {\n      has_place_id: !!placeId,\n      needs_search: needsSearch,\n      needs_scraping: needsScraping,\n      data_age_days: daysOld\n    }\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-336, 432],
+      "id": "5453d287-9501-4077-8d0b-e2de9a3d50e5",
+      "name": "⚙️ Check Need Scraping1"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ⚙️ Parse Apify Results (Native Actor Version)\n// Handles the direct output from the Apify Node\n\nconst global = $('When Executed by Another Workflow').first().json;\nconst raw = $input.all().map(i => i.json); // Get all items from the Apify array\n\n// 1. Detect if we have data\nconst reviews = raw;\nconst isSuccess = reviews.length > 0;\n\nif (!isSuccess) {\n  return [{\n    json: {\n      ...global,\n      apify_results: {\n        success: false,\n        error: 'Apify returned 0 reviews',\n        reviews: [],\n        metrics: { total_reviews: 0, avg_rating: 0 }\n      }\n    }\n  }];\n}\n\n// 2. Process Reviews (Map fields to our schema)\nconst processedReviews = reviews.map(r => ({\n  reviewer_name: r.name,\n  rating: r.stars,\n  text: r.text, // The review content\n  published_at: r.publishedAtDate,\n  response_from_owner: r.responseFromOwnerText || null, // Check if owner replied\n  review_url: r.reviewUrl,\n  likes: r.likesCount || 0\n}));\n\n// 3. Calculate Metrics\nconst totalReviews = reviews.length;\n// Calculate average (handle potential nulls)\nconst sumStars = reviews.reduce((sum, r) => sum + (r.stars || 0), 0);\nconst avgRating = totalReviews > 0 ? (sumStars / totalReviews) : 0;\n\nconst positiveReviews = reviews.filter(r => (r.stars || 0) >= 4).length;\nconst negativeReviews = reviews.filter(r => (r.stars || 0) <= 2).length;\nconst ownerResponses = reviews.filter(r => r.responseFromOwnerText).length;\n\n// Sentiment Score (% positive) & Response Rate\nconst sentimentScore = totalReviews > 0 ? ((positiveReviews / totalReviews) * 100).toFixed(1) : 0;\nconst responseRate = totalReviews > 0 ? ((ownerResponses / totalReviews) * 100).toFixed(1) : 0;\n\n// 4. Guess Owner Name (Look for signatures like \"- Matt, Owner\")\n// Filter for responses that contain a signature pattern\nconst potentialNames = reviews\n  .map(r => r.responseFromOwnerText)\n  .filter(t => t && (t.includes(',') || t.includes('-'))) // Look for separators\n  .map(t => {\n     // Try to extract first word before comma (e.g. \"Matt, thank you...\")\n     const firstWord = t.split(',')[0].trim().split(' ')[0];\n     // Basic check to avoid common words like \"Thank\", \"We\", \"Hello\"\n     if (['Thank', 'We', 'Hello', 'Hi', 'Dear'].includes(firstWord)) return null;\n     return firstWord;\n  })\n  .filter(Boolean); // Remove nulls\n\n// Use the most frequent name found (simple mode: just take the first valid guess)\nconst ownerNameGuess = potentialNames.length > 0 ? potentialNames[0] : null;\n\nreturn [{\n  json: {\n    ...global,\n    apify_results: {\n      success: true,\n      reviews: processedReviews,\n      metrics: {\n        total_reviews: totalReviews,\n        avg_rating: avgRating.toFixed(2),\n        positive_reviews: positiveReviews,\n        negative_reviews: negativeReviews,\n        sentiment_score: Number(sentimentScore),\n        owner_response_rate: Number(responseRate)\n      },\n      owner_name_guess: ownerNameGuess,\n      scraped_at: new Date().toISOString()\n    }\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1088, 416],
+      "id": "29fa74cd-c7ea-4057-8e4e-72705f48e9d2",
+      "name": "⚙️ Parse Apify Results1"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build log for Apify scraping\nconst data = $json;\nconst results = data.apify_results || {};\n\nreturn [{\n  json: {\n    // Nuclear ID Recovery\n    research_run_id: data.research_run_id,\n    company_id: data.company_id,\n    enrichment_id: data.enrichment_id,\n    \n    node_name: 'Apify Review Scraper (Social Proof)',\n    node_id: 'apify_review_scraper',\n    node_type: 'tool_log',\n    stage: 'Stage 3',\n    status: results.success ? 'completed' : 'failed',\n    output_data: {\n      reviews: results.reviews || [],\n      metrics: results.metrics || {},\n      owner_name: results.owner_name_guess,\n      scraped_at: results.scraped_at\n    },\n    metadata: {\n      place_id: data.place_id,\n      review_count: results.metrics?.total_reviews || 0,\n      avg_rating: results.metrics?.avg_rating || 0,\n      api_calls: 1,\n      estimated_cost_usd: 0.10\n    }\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1296, 416],
+      "id": "e5b37438-6277-43cb-92d8-dcc60efd429b",
+      "name": "🧾 Build Apify Log1"
+    },
+    {
+      "parameters": {
+        "schema": { "__rl": true, "mode": "list", "value": "public" },
+        "table": { "__rl": true, "value": "workflow_step_logs", "mode": "list", "cachedResultName": "workflow_step_logs" },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "research_run_id": "={{ $json.research_run_id }}",
+            "company_id": "={{ $json.company_id }}",
+            "node_name": "={{ $json.node_name }}",
+            "node_id": "={{ $json.node_id }}",
+            "node_type": "={{ $json.node_type }}",
+            "stage": "={{ $json.stage }}",
+            "status": "={{ $json.status }}",
+            "output_data": "={{ $json.output_data }}",
+            "metadata": "={{ $json.metadata }}",
+            "duration_ms": 0,
+            "api_call_count": "={{ $json.metadata.api_calls }}",
+            "estimated_cost_usd": "={{ $json.metadata.estimated_cost_usd }}",
+            "data_quality_score": 0,
+            "extracted_fields_count": 0
+          },
+          "matchingColumns": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [1488, 416],
+      "id": "aaa5905c-ebe8-4f7f-a14f-8e3d2c46080e",
+      "name": "🗄️ Log — Apify Reviews1",
+      "alwaysOutputData": true,
+      "credentials": { "postgres": { "id": "xogKD739Qe4gqWBU", "name": "Postgres account" } }
+    },
+    {
+      "parameters": {
+        "workflowId": { "__rl": true, "value": "A4-U5nCoP9WMSikDE3qdi", "mode": "id" },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "company_id": "={{ $json.company_id }}",
+            "log_id": "={{ $json.log_id }}",
+            "research_run_id": "={{ $json.research_run_id }}"
+          },
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": { "waitForSubWorkflow": false }
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [1712, 416],
+      "id": "bcd198c9-eeec-42ff-887b-469261695250",
+      "name": "📤 Update Context via AI1"
+    },
+    {
+      "parameters": {
+        "jsCode": "// 📤 Return Result (Concise Summary)\nconst logItem = $('🗄️ Log — Apify Reviews1').first().json;\nconst metrics = logItem.output_data?.metrics || {};\nconst success = logItem.status === 'completed';\n\nlet summary = \"No reviews found.\";\nif (success) {\n  summary = `Scraped ${metrics.total_reviews} reviews. Avg Rating: ${metrics.avg_rating}.`;\n}\n\nreturn [{\n  json: {\n    success,\n    stage: \"reviews\",\n    avg_rating: metrics.avg_rating,\n    review_count: metrics.total_reviews,\n    owner_name: logItem.output_data?.owner_name,\n    run_summary: summary,\n    company_id: logItem.company_id,\n    research_run_id: logItem.research_run_id\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1936, 416],
+      "id": "2b2013a2-1ade-4a5f-bac9-f9c9de80a36e",
+      "name": "📤 Return Result1"
+    },
+    {
+      "parameters": {
+        "operation": "Run actor and get dataset",
+        "actorId": { "__rl": true, "value": "Xb8osYTtOjlsgI6k9", "mode": "list", "cachedResultName": "Google Maps Reviews Scraper (compass/Google-Maps-Reviews-Scraper)" },
+        "customBody": "={\n  \"placeIds\": [\n    \"{{ $json.place_id }}\"\n  ],\n  \"maxReviews\": 50,\n  \"language\": \"en\",\n  \"sort\": \"newest\",\n  \"personalData\": true\n}",
+        "authentication": "apifyOAuth2Api"
+      },
+      "type": "@apify/n8n-nodes-apify.apify",
+      "typeVersion": 1,
+      "position": [864, 416],
+      "id": "18ca55d0-50ff-45ad-9f65-0075a4e4c6ec",
+      "name": "Run an Actor and get dataset1",
+      "credentials": { "apifyOAuth2Api": { "id": "ITZCpPI82PpVWGoo", "name": "Apify account" } }
+    }
+  ],
+  "connections": {
+    "When Executed by Another Workflow": { "main": [[{ "node": "📥 Read Context1", "type": "main", "index": 0 }, { "node": "🤝 Merge Context1", "type": "main", "index": 0 }]] },
+    "Need to Search ID?": { "main": [[{ "node": "🔍 SerpAPI - Find Place ID", "type": "main", "index": 0 }], [{ "node": "Merge ID Paths", "type": "main", "index": 0 }]] },
+    "🔍 SerpAPI - Find Place ID": { "main": [[{ "node": "⚙️ Update Place ID", "type": "main", "index": 0 }]] },
+    "⚙️ Update Place ID": { "main": [[{ "node": "Merge ID Paths", "type": "main", "index": 1 }]] },
+    "Merge ID Paths": { "main": [[{ "node": "Ready to Scrape?", "type": "main", "index": 0 }]] },
+    "Ready to Scrape?": { "main": [[{ "node": "Run an Actor and get dataset1", "type": "main", "index": 0 }]] },
+    "📥 Read Context1": { "main": [[{ "node": "🤝 Merge Context1", "type": "main", "index": 1 }]] },
+    "🤝 Merge Context1": { "main": [[{ "node": "⚙️ Check Need Scraping1", "type": "main", "index": 0 }]] },
+    "⚙️ Check Need Scraping1": { "main": [[{ "node": "Need to Search ID?", "type": "main", "index": 0 }]] },
+    "⚙️ Parse Apify Results1": { "main": [[{ "node": "🧾 Build Apify Log1", "type": "main", "index": 0 }]] },
+    "🧾 Build Apify Log1": { "main": [[{ "node": "🗄️ Log — Apify Reviews1", "type": "main", "index": 0 }]] },
+    "🗄️ Log — Apify Reviews1": { "main": [[{ "node": "📤 Update Context via AI1", "type": "main", "index": 0 }]] },
+    "📤 Update Context via AI1": { "main": [[{ "node": "📤 Return Result1", "type": "main", "index": 0 }]] },
+    "Run an Actor and get dataset1": { "main": [[{ "node": "⚙️ Parse Apify Results1", "type": "main", "index": 0 }]] }
+  },
+  "pinData": {},
+  "meta": { "templateCredsSetupCompleted": true, "instanceId": "2d82e0d27c2a88970c7ba9693b6bad225f1d31f9cf0d392d33dd9cabf99f185f" }
+}

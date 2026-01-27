@@ -1,0 +1,113 @@
+{
+  "name": "AI Agent - HubSpot Workflows (Enhanced)",
+  "nodes": [
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {"name": "request_id", "type": "string"},
+            {"name": "session_id", "type": "string"},
+            {"name": "user_id", "type": "string"},
+            {"name": "user_message", "type": "string"},
+            {"name": "workflow_id", "type": "string"},
+            {"name": "contact_id", "type": "string"},
+            {"name": "tool_name", "type": "string"},
+            {"name": "dry_run", "type": "boolean"},
+            {"name": "conversation_id", "type": "string"}
+          ]
+        }
+      },
+      "id": "trigger-1",
+      "name": "When Executed by Another Workflow",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [-800, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst tool_name = input.tool_name || 'hubspot.workflows';\nconst dry_run = input.dry_run ?? true;\nconst q = v => v == null || v === '' ? null : String(v);\nconst payload = {...input, tool_name, dry_run, _started_ms: Date.now()};\nconst log_sql = `INSERT INTO tool_execution_log (tool_name, input_data, success, conversation_id, user_id, required_approval) VALUES ($1, $2::jsonb, false, $3, $4, $5) RETURNING id;`;\nreturn [{json: {...payload, log_start_sql: log_sql, log_start_params: [tool_name, JSON.stringify(payload), q(input.conversation_id), q(input.user_id), !dry_run]}}];"
+      },
+      "id": "normalize-1",
+      "name": "Normalize + Build SQL",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-560, 0]
+    },
+    {"parameters": {"operation": "executeQuery", "query": "={{$json.log_start_sql}}", "options": {"queryReplacement": "={{ $json.log_start_params }}"}}, "id": "log-start-1", "name": "Log Start", "type": "n8n-nodes-base.postgres", "typeVersion": 2.5, "position": [-320, 0], "credentials": {"postgres": {"id": "BwXy2JHETe47vH1I", "name": "Postgres account 2"}}},
+    {"parameters": {"jsCode": "const base = $('Normalize + Build SQL').first().json;\nconst logStart = $('Log Start').first().json;\nreturn [{json: {...base, tool_execution_id: logStart?.id || null}}];"}, "id": "assemble-1", "name": "Assemble", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [-80, 0]},
+    {
+      "parameters": {
+        "text": "={{ ['USER_REQUEST:', $json.user_message, 'RUNTIME:', JSON.stringify({tool_name: $json.tool_name, dry_run: $json.dry_run, workflow_id: $json.workflow_id, contact_id: $json.contact_id})].join('\\n') }}",
+        "options": {
+          "maxIterations": 15,
+          "systemMessage": "You are the HubSpot WORKFLOWS Agent.\n\nYour job:\n- Manage HubSpot automation workflows\n- Enroll/unenroll contacts from workflows\n- Monitor workflow performance\n\nAVAILABLE TOOLS:\n\nREAD OPERATIONS:\n- List All Workflows - Get all workflows (paginated)\n- Get Workflow by ID - Get workflow details\n- Search Workflows - Search by name/type\n- Get Workflow Actions - Get action steps\n- Get Workflow Enrollments - Get enrolled contacts\n- Get Workflow History - Get execution history\n- Get Workflow Performance - Get performance stats\n- Get Workflow Revisions - Get version history\n\nWRITE OPERATIONS:\n- Create Workflow - Create new workflow (WRITE)\n- Update Workflow - Update configuration (WRITE)\n- Delete Workflow - Delete a workflow (WRITE)\n- Clone Workflow - Duplicate a workflow (WRITE)\n- Enable Workflow - Activate workflow (WRITE)\n- Disable Workflow - Deactivate workflow (WRITE)\n- Enroll Contact - Add contact to workflow (WRITE)\n- Unenroll Contact - Remove contact (WRITE)\n- Batch Enroll Contacts - Enroll multiple contacts (WRITE)\n\nWORKFLOW TYPES:\n- CONTACT_BASED - Triggered by contact actions\n- COMPANY_BASED - Triggered by company changes\n- DEAL_BASED - Triggered by deal stages\n- TICKET_BASED - Triggered by tickets\n- SCHEDULED - Time-based execution\n\nOUTPUT FORMAT:\n{\"summary\": \"...\", \"data\": {}, \"errors\": []}"
+        },
+        "promptType": "define"
+      },
+      "id": "agent-1",
+      "name": "AI Agent - Workflows",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [160, 0],
+      "alwaysOutputData": true,
+      "retryOnFail": true,
+      "waitBetweenTries": 3000,
+      "onError": "continueRegularOutput"
+    },
+    {"parameters": {"model": {"__rl": true, "mode": "list", "value": "gpt-4o"}, "options": {}}, "id": "llm-1", "name": "OpenAI Chat Model", "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi", "typeVersion": 1.3, "position": [-80, 200], "credentials": {"openAiApi": {"id": "Lb7LQd5GQa1bZ9yX", "name": "OpenAi account 4"}}},
+    {"parameters": {"sessionKey": "session_id", "sessionIdType": "customKey"}, "id": "memory-1", "name": "Memory", "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow", "typeVersion": 1.3, "position": [40, 200]},
+    {"parameters": {"url": "https://api.hubapi.com/automation/v4/flows", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "sendQuery": true, "specifyQuery": "json", "options": {}, "toolDescription": "List all workflows. Query: limit, after."}, "id": "tool-list-all", "name": "List All Workflows", "type": "n8n-nodes-base.httpRequestTool", "typeVersion": 4.3, "position": [160, 200], "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}},
+    {"parameters": {"url": "=https://api.hubapi.com/automation/v4/flows/{{ $json.workflowId }}", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "options": {}, "toolDescription": "Get workflow by ID with full configuration."}, "id": "tool-get-workflow", "name": "Get Workflow by ID", "type": "n8n-nodes-base.httpRequestTool", "typeVersion": 4.3, "position": [280, 200], "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}},
+    {"parameters": {"method": "POST", "url": "https://api.hubapi.com/automation/v4/flows/search", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "sendBody": true, "specifyBody": "json", "options": {}, "toolDescription": "Search workflows. Body: {query: 'name', types: ['CONTACT_BASED'], enabled: true/false}."}, "id": "tool-search", "name": "Search Workflows", "type": "n8n-nodes-base.httpRequestTool", "typeVersion": 4.3, "position": [400, 200], "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}},
+    {"parameters": {"url": "=https://api.hubapi.com/automation/v4/flows/{{ $json.workflowId }}/actions", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "options": {}, "toolDescription": "Get workflow action steps (DELAY, SEND_EMAIL, SET_PROPERTY, etc)."}, "id": "tool-actions", "name": "Get Workflow Actions", "type": "n8n-nodes-base.httpRequestTool", "typeVersion": 4.3, "position": [520, 200], "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}},
+    {"parameters": {"url": "=https://api.hubapi.com/automation/v4/flows/{{ $json.workflowId }}/enrollments", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "sendQuery": true, "specifyQuery": "json", "options": {}, "toolDescription": "Get contacts enrolled in workflow. Query: limit, after."}, "id": "tool-enrollments", "name": "Get Workflow Enrollments", "type": "n8n-nodes-base.httpRequestTool", "typeVersion": 4.3, "position": [640, 200], "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}},
+    {"parameters": {"url": "=https://api.hubapi.com/automation/v4/flows/{{ $json.workflowId }}/history", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "sendQuery": true, "specifyQuery": "json", "options": {}, "toolDescription": "Get workflow execution history and logs."}, "id": "tool-history", "name": "Get Workflow History", "type": "n8n-nodes-base.httpRequestTool", "typeVersion": 4.3, "position": [760, 200], "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}},
+    {"parameters": {"url": "=https://api.hubapi.com/automation/v4/flows/{{ $json.workflowId }}/performance", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "options": {}, "toolDescription": "Get workflow performance statistics (enrollments, completions, errors)."}, "id": "tool-performance", "name": "Get Workflow Performance", "type": "n8n-nodes-base.httpRequestTool", "typeVersion": 4.3, "position": [880, 200], "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}},
+    {"parameters": {"url": "=https://api.hubapi.com/automation/v4/flows/{{ $json.workflowId }}/revisions", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "options": {}, "toolDescription": "Get workflow version/revision history."}, "id": "tool-revisions", "name": "Get Workflow Revisions", "type": "n8n-nodes-base.httpRequestTool", "typeVersion": 4.3, "position": [1000, 200], "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}},
+    {"parameters": {"method": "POST", "url": "https://api.hubapi.com/automation/v4/flows", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "sendBody": true, "specifyBody": "json", "options": {}, "toolDescription": "Create workflow. Body: {name, type, enabled, enrollmentCriteria, actions}. WRITE."}, "id": "tool-create", "name": "Create Workflow", "type": "n8n-nodes-base.httpRequestTool", "typeVersion": 4.3, "position": [160, 360], "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}},
+    {"parameters": {"method": "PATCH", "url": "=https://api.hubapi.com/automation/v4/flows/{{ $json.workflowId }}", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "sendBody": true, "specifyBody": "json", "options": {}, "toolDescription": "Update workflow. Body: {name, enabled, enrollmentCriteria, actions}. WRITE."}, "id": "tool-update", "name": "Update Workflow", "type": "n8n-nodes-base.httpRequestTool", "typeVersion": 4.3, "position": [280, 360], "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}},
+    {"parameters": {"method": "DELETE", "url": "=https://api.hubapi.com/automation/v4/flows/{{ $json.workflowId }}", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "options": {}, "toolDescription": "Delete workflow. WRITE."}, "id": "tool-delete", "name": "Delete Workflow", "type": "n8n-nodes-base.httpRequestTool", "typeVersion": 4.3, "position": [400, 360], "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}},
+    {"parameters": {"method": "POST", "url": "=https://api.hubapi.com/automation/v4/flows/{{ $json.workflowId }}/clone", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "sendBody": true, "specifyBody": "json", "options": {}, "toolDescription": "Clone/duplicate a workflow. Body: {name: 'New Name'}. WRITE."}, "id": "tool-clone", "name": "Clone Workflow", "type": "n8n-nodes-base.httpRequestTool", "typeVersion": 4.3, "position": [520, 360], "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}},
+    {"parameters": {"method": "PATCH", "url": "=https://api.hubapi.com/automation/v4/flows/{{ $json.workflowId }}", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "sendBody": true, "specifyBody": "json", "jsonBody": "{\"enabled\": true}", "options": {}, "toolDescription": "Enable/activate a workflow. WRITE."}, "id": "tool-enable", "name": "Enable Workflow", "type": "n8n-nodes-base.httpRequestTool", "typeVersion": 4.3, "position": [640, 360], "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}},
+    {"parameters": {"method": "PATCH", "url": "=https://api.hubapi.com/automation/v4/flows/{{ $json.workflowId }}", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "sendBody": true, "specifyBody": "json", "jsonBody": "{\"enabled\": false}", "options": {}, "toolDescription": "Disable/pause a workflow. WRITE."}, "id": "tool-disable", "name": "Disable Workflow", "type": "n8n-nodes-base.httpRequestTool", "typeVersion": 4.3, "position": [760, 360], "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}},
+    {"parameters": {"method": "POST", "url": "=https://api.hubapi.com/automation/v4/flows/{{ $json.workflowId }}/enrollments/contacts/{{ $json.contactId }}", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "sendBody": true, "specifyBody": "json", "options": {}, "toolDescription": "Enroll single contact in workflow. WRITE."}, "id": "tool-enroll", "name": "Enroll Contact", "type": "n8n-nodes-base.httpRequestTool", "typeVersion": 4.3, "position": [880, 360], "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}},
+    {"parameters": {"method": "DELETE", "url": "=https://api.hubapi.com/automation/v4/flows/{{ $json.workflowId }}/enrollments/contacts/{{ $json.contactId }}", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "options": {}, "toolDescription": "Unenroll contact from workflow. WRITE."}, "id": "tool-unenroll", "name": "Unenroll Contact", "type": "n8n-nodes-base.httpRequestTool", "typeVersion": 4.3, "position": [1000, 360], "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}},
+    {"parameters": {"method": "POST", "url": "=https://api.hubapi.com/automation/v4/flows/{{ $json.workflowId }}/enrollments/batch", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "sendBody": true, "specifyBody": "json", "options": {}, "toolDescription": "Batch enroll multiple contacts. Body: {inputs: [{contactId}, ...]}. WRITE."}, "id": "tool-batch-enroll", "name": "Batch Enroll Contacts", "type": "n8n-nodes-base.httpRequestTool", "typeVersion": 4.3, "position": [1120, 360], "credentials": {"httpHeaderAuth": {"id": "3GlzU3rx0tDPWf6R", "name": "HubSpot Private App - Full Access"}}},
+    {"parameters": {"jsCode": "const base = $('Assemble').first().json;\nconst agentRaw = $('AI Agent - Workflows').first().json;\nlet agentOut = {};\ntry { agentOut = typeof agentRaw.output === 'object' ? agentRaw.output : JSON.parse((agentRaw.output||'{}').replace(/^```json|```$/g,'')); } catch {}\nconst ok = !agentOut?.errors?.length;\nconst esc = s => String(s??'').replace(/'/g,\"''\");\nconst final = {ok, summary: agentOut?.summary || 'done', data: agentOut?.data, errors: agentOut?.errors || []};\nfinal.log_end_sql = `UPDATE tool_execution_log SET output_data = '${esc(JSON.stringify(final))}'::jsonb, success = ${ok} WHERE id = '${esc(base.tool_execution_id)}'::uuid;`;\nreturn [{json: final}];"}, "id": "parse-1", "name": "Parse Output", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [400, 0]},
+    {"parameters": {"operation": "executeQuery", "query": "={{$json.log_end_sql}}", "options": {}}, "id": "log-end-1", "name": "Log End", "type": "n8n-nodes-base.postgres", "typeVersion": 2.5, "position": [640, 0], "credentials": {"postgres": {"id": "BwXy2JHETe47vH1I", "name": "Postgres account 2"}}, "onError": "continueRegularOutput"},
+    {"parameters": {"options": {}}, "type": "@n8n/n8n-nodes-langchain.chatTrigger", "typeVersion": 1.4, "position": [-800, -200], "id": "chat-trigger-1", "name": "Chat Trigger", "webhookId": "workflows-test"},
+    {"parameters": {"jsCode": "return [{json: {user_message: $input.first().json.chatInput || '', dry_run: true, tool_name: 'hubspot.workflows', session_id: 'test'}}];"}, "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [-560, -200], "id": "chat-norm", "name": "Normalize Chat"}
+  ],
+  "connections": {
+    "When Executed by Another Workflow": {"main": [[{"node": "Normalize + Build SQL", "type": "main", "index": 0}]]},
+    "Chat Trigger": {"main": [[{"node": "Normalize Chat", "type": "main", "index": 0}]]},
+    "Normalize Chat": {"main": [[{"node": "Normalize + Build SQL", "type": "main", "index": 0}]]},
+    "Normalize + Build SQL": {"main": [[{"node": "Log Start", "type": "main", "index": 0}]]},
+    "Log Start": {"main": [[{"node": "Assemble", "type": "main", "index": 0}]]},
+    "Assemble": {"main": [[{"node": "AI Agent - Workflows", "type": "main", "index": 0}]]},
+    "AI Agent - Workflows": {"main": [[{"node": "Parse Output", "type": "main", "index": 0}]]},
+    "Parse Output": {"main": [[{"node": "Log End", "type": "main", "index": 0}]]},
+    "OpenAI Chat Model": {"ai_languageModel": [[{"node": "AI Agent - Workflows", "type": "ai_languageModel", "index": 0}]]},
+    "Memory": {"ai_memory": [[{"node": "AI Agent - Workflows", "type": "ai_memory", "index": 0}]]},
+    "List All Workflows": {"ai_tool": [[{"node": "AI Agent - Workflows", "type": "ai_tool", "index": 0}]]},
+    "Get Workflow by ID": {"ai_tool": [[{"node": "AI Agent - Workflows", "type": "ai_tool", "index": 0}]]},
+    "Search Workflows": {"ai_tool": [[{"node": "AI Agent - Workflows", "type": "ai_tool", "index": 0}]]},
+    "Get Workflow Actions": {"ai_tool": [[{"node": "AI Agent - Workflows", "type": "ai_tool", "index": 0}]]},
+    "Get Workflow Enrollments": {"ai_tool": [[{"node": "AI Agent - Workflows", "type": "ai_tool", "index": 0}]]},
+    "Get Workflow History": {"ai_tool": [[{"node": "AI Agent - Workflows", "type": "ai_tool", "index": 0}]]},
+    "Get Workflow Performance": {"ai_tool": [[{"node": "AI Agent - Workflows", "type": "ai_tool", "index": 0}]]},
+    "Get Workflow Revisions": {"ai_tool": [[{"node": "AI Agent - Workflows", "type": "ai_tool", "index": 0}]]},
+    "Create Workflow": {"ai_tool": [[{"node": "AI Agent - Workflows", "type": "ai_tool", "index": 0}]]},
+    "Update Workflow": {"ai_tool": [[{"node": "AI Agent - Workflows", "type": "ai_tool", "index": 0}]]},
+    "Delete Workflow": {"ai_tool": [[{"node": "AI Agent - Workflows", "type": "ai_tool", "index": 0}]]},
+    "Clone Workflow": {"ai_tool": [[{"node": "AI Agent - Workflows", "type": "ai_tool", "index": 0}]]},
+    "Enable Workflow": {"ai_tool": [[{"node": "AI Agent - Workflows", "type": "ai_tool", "index": 0}]]},
+    "Disable Workflow": {"ai_tool": [[{"node": "AI Agent - Workflows", "type": "ai_tool", "index": 0}]]},
+    "Enroll Contact": {"ai_tool": [[{"node": "AI Agent - Workflows", "type": "ai_tool", "index": 0}]]},
+    "Unenroll Contact": {"ai_tool": [[{"node": "AI Agent - Workflows", "type": "ai_tool", "index": 0}]]},
+    "Batch Enroll Contacts": {"ai_tool": [[{"node": "AI Agent - Workflows", "type": "ai_tool", "index": 0}]]}
+  },
+  "settings": {"executionOrder": "v1"},
+  "tags": [],
+  "pinData": {}
+}

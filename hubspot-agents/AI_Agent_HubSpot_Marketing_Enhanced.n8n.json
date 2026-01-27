@@ -1,0 +1,909 @@
+{
+  "nodes": [
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            { "name": "request_id" },
+            { "name": "session_id" },
+            { "name": "chat_id" },
+            { "name": "user_id" },
+            { "name": "user_message" },
+            { "name": "caller_workflow_id" },
+            { "name": "caller_execution_id" },
+            { "name": "tool_name" },
+            { "name": "dry_run", "type": "boolean" },
+            { "name": "conversation_id" },
+            { "name": "hs_portal_id" },
+            { "name": "form_id" },
+            { "name": "marketing_event_id" },
+            { "name": "feedback_submission_id" },
+            { "name": "contact_id" }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [-800, -400],
+      "id": "trigger-1",
+      "name": "When Executed by Another Workflow"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.chatTrigger",
+      "typeVersion": 1.4,
+      "position": [-800, -200],
+      "id": "chat-trigger-1",
+      "name": "When chat message received",
+      "webhookId": "marketing-chat-test"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\n\nconst chatText =\n  input.chatInput ||\n  input.message?.text ||\n  input.text ||\n  input.body?.message ||\n  input.body?.text ||\n  '';\n\nreturn [{\n  json: {\n    user_message: String(chatText || ''),\n    dry_run: true,\n    tool_name: 'hubspot.marketing',\n    session_id: input.sessionId || input.session_id || 'chat_test',\n    conversation_id: input.conversationId || input.conversation_id || 'chat_test',\n    chat_id: input.chatId || input.chat_id || null,\n    user_id: input.userId || input.user_id || null,\n    request_id: input.request_id || null,\n    caller_workflow_id: input.caller_workflow_id || null,\n    caller_execution_id: input.caller_execution_id || null,\n    form_id: input.form_id || null,\n    marketing_event_id: input.marketing_event_id || null,\n    feedback_submission_id: input.feedback_submission_id || null,\n    contact_id: input.contact_id || null,\n    hs_portal_id: input.hs_portal_id || null,\n    object_type: 'marketing'\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-560, -200],
+      "id": "chat-normalize-1",
+      "name": "Normalize Chat Input"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\n\nconst nowIso = new Date().toISOString();\nconst startedMs = Date.now();\n\nconst tool_name = input.tool_name || 'hubspot.marketing';\nconst dry_run = (input.dry_run === undefined || input.dry_run === null) ? true : !!input.dry_run;\n\nconst safeJson = (obj) => {\n  const s = JSON.stringify(obj ?? {});\n  return s.replace(/'/g, \"''\");\n};\n\nconst q = (v) => (v === undefined || v === null || v === '') ? null : String(v);\n\nconst qSql = (v) => {\n  const s = q(v);\n  if (s === null) return 'null';\n  return `'${s.replace(/'/g, \"''\")}'`;\n};\n\nconst nSql = (v) => {\n  if (v === undefined || v === null || v === '') return 'null';\n  const num = Number(v);\n  return Number.isFinite(num) ? String(num) : 'null';\n};\n\nconst uuidSql = (v) => {\n  const s = (v ?? '').toString().trim();\n  const ok = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(s);\n  return ok ? `'${s}'::uuid` : 'null';\n};\n\nconst note_scope = 'hubspot';\nconst note_key = input.form_id ? `form.${input.form_id}` : (input.marketing_event_id ? `marketing_event.${input.marketing_event_id}` : 'marketing.general');\n\nconst payload_for_log = {\n  ...input,\n  tool_name,\n  dry_run,\n  note_scope,\n  note_key,\n  started_at: nowIso,\n  _started_ms: startedMs\n};\n\nconst log_start_sql = `\nINSERT INTO tool_execution_log (\n  tool_name,\n  input_data,\n  success,\n  conversation_id,\n  user_id,\n  required_approval\n)\nVALUES (\n  ${qSql(tool_name)},\n  '${safeJson(payload_for_log)}'::jsonb,\n  false,\n  ${uuidSql(input.conversation_id)},\n  ${nSql(input.user_id)},\n  ${dry_run ? 'false' : 'true'}\n)\nRETURNING id;\n`;\n\nconst ctx_sql = `\nSELECT jsonb_build_object(\n  'agent_notes', (\n    SELECT COALESCE(jsonb_agg(n ORDER BY n.updated_at DESC), '[]'::jsonb)\n    FROM agent_notes n\n    WHERE n.scope = ${qSql(note_scope)}\n      AND n.note_key = ${qSql(note_key)}\n    LIMIT 15\n  ),\n  'schema_cache', (\n    SELECT to_jsonb(s)\n    FROM hubspot_schema_cache s\n    WHERE s.portal_id = ${nSql(input.hs_portal_id)}\n    ORDER BY s.fetched_at DESC\n    LIMIT 1\n  )\n) AS context;\n`;\n\nreturn [{\n  json: {\n    ...payload_for_log,\n    log_start_sql,\n    ctx_sql\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-320, -320],
+      "id": "normalize-1",
+      "name": "Normalize + Build SQL"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{$json.log_start_sql}}",
+        "options": {}
+      },
+      "id": "log-start-1",
+      "name": "Log Start (tool_execution_log)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [-80, -400],
+      "credentials": {
+        "postgres": {
+          "id": "BwXy2JHETe47vH1I",
+          "name": "Postgres account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{$json.ctx_sql}}",
+        "options": {}
+      },
+      "id": "load-ctx-1",
+      "name": "Load Context",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [-80, -240],
+      "credentials": {
+        "postgres": {
+          "id": "BwXy2JHETe47vH1I",
+          "name": "Postgres account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const base = $('Normalize + Build SQL').first().json;\n\nconst logStart = $('Log Start (tool_execution_log)').first().json;\nconst tool_execution_id = (logStart && logStart.id) ? logStart.id : null;\n\nconst ctxRows = $('Load Context').first().json;\nconst context_pack = (ctxRows && ctxRows.context) ? ctxRows.context : {};\n\nreturn [{\n  json: {\n    ...base,\n    tool_execution_id,\n    context_pack\n  }\n}];"
+      },
+      "id": "assemble-1",
+      "name": "Assemble Context Pack",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [160, -320]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ \n[\n  \"USER_REQUEST:\",\n  ($json.user_message || \"\").toString(),\n  \"\",\n  \"RUNTIME:\",\n  JSON.stringify({\n    tool_name: $json.tool_name || \"hubspot.marketing\",\n    dry_run: $json.dry_run ?? false,\n    session_id: $json.session_id,\n    request_id: $json.request_id,\n    conversation_id: $json.conversation_id,\n    form_id: $json.form_id,\n    marketing_event_id: $json.marketing_event_id,\n    feedback_submission_id: $json.feedback_submission_id,\n    contact_id: $json.contact_id\n  }, null, 2),\n  \"\",\n  \"CONTEXT_PACK:\",\n  JSON.stringify($json.context_pack ?? {}, null, 2)\n].join(\"\\n\")\n}}\n",
+        "options": {
+          "systemMessage": "You are the HubSpot MARKETING Agent. You manage Forms, Marketing Events, Feedback Submissions, and Goals.\n\nGoal: reliably answer marketing-related questions by calling the correct HubSpot API tools.\n\nYou receive:\n- USER_REQUEST (text)\n- RUNTIME (json): { tool_name, dry_run, ids... }\n- CONTEXT_PACK (json): { agent_notes, schema_cache }\n\nNON-NEGOTIABLE RULES\n1) TOOL-FIRST FACTS:\n   - If the answer depends on HubSpot data, you MUST call a tool.\n   - Never guess totals, property names, IDs.\n\n2) DRY RUN ENFORCEMENT:\n   - If runtime.dry_run === true: DO NOT call write tools.\n\nTOOL CATEGORIES:\n\nFORMS:\n- List Forms, Get Form by ID, Create Form, Update Form, Archive Form\n- Get Form Submissions, Get Form Fields\n\nMARKETING EVENTS:\n- List Marketing Events, Get Marketing Event by ID\n- Create Marketing Event, Update Marketing Event\n- Get Event Participations, Add Participation, Update Participation\n\nFEEDBACK SUBMISSIONS:\n- List Feedback Submissions, Get Feedback by ID\n- Search Feedback Submissions\n\nGOALS:\n- List Goals, Get Goal by ID\n- Create Goal, Update Goal\n\nOUTPUT REQUIREMENTS (JSON ONLY)\nReturn exactly:\n{\n  \"summary\": \"short human summary\",\n  \"data\": { \"any\": \"tool results\" },\n  \"tool_calls\": [\n    { \"tool\": \"Tool Name\", \"arguments\": { } }\n  ],\n  \"errors\": [\n    { \"code\": \"MISSING_ARG|DRY_RUN_BLOCK|TOOL_ERROR\", \"message\": \"...\" }\n  ],\n  \"notes_to_save\": \"optional short learning string or null\"\n}\n",
+          "maxIterations": 25
+        }
+      },
+      "id": "agent-1",
+      "name": "AI Agent - Marketing",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [400, -320],
+      "alwaysOutputData": true,
+      "retryOnFail": true,
+      "waitBetweenTries": 3000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "list",
+          "value": "gpt-4o",
+          "cachedResultName": "gpt-4o"
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [160, -120],
+      "id": "llm-1",
+      "name": "OpenAI Chat Model",
+      "credentials": {
+        "openAiApi": {
+          "id": "Lb7LQd5GQa1bZ9yX",
+          "name": "OpenAi account 4"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sessionKey": "session_id",
+        "sessionIdType": "customKey"
+      },
+      "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
+      "typeVersion": 1.3,
+      "position": [280, -120],
+      "id": "memory-1",
+      "name": "Memory"
+    },
+    {
+      "parameters": {
+        "toolDescription": "List all forms.",
+        "url": "https://api.hubapi.com/marketing/v3/forms",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [-200, 100],
+      "id": "tool-1",
+      "name": "List Forms",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "toolDescription": "Get a form by ID. Args: formId.",
+        "url": "={{ (() => { const a = $json.params?.arguments || {}; const id = a.formId || a.id; return id ? `https://api.hubapi.com/marketing/v3/forms/${id}` : 'https://api.hubapi.com/marketing/v3/forms/0'; })() }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [-40, 100],
+      "id": "tool-2",
+      "name": "Get Form by ID",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "toolDescription": "Create a form. Body: { name, formType, fieldGroups, ... }.",
+        "method": "POST",
+        "url": "https://api.hubapi.com/marketing/v3/forms",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $fromAI('form_data', 'Form creation body', 'json') }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [120, 100],
+      "id": "tool-3",
+      "name": "Create Form",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "toolDescription": "Update a form. Args: formId. Body: form updates.",
+        "method": "PATCH",
+        "url": "={{ (() => { const a = $json.params?.arguments || {}; const id = a.formId || a.id; return id ? `https://api.hubapi.com/marketing/v3/forms/${id}` : 'https://api.hubapi.com/marketing/v3/forms/0'; })() }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $fromAI('form_update', 'Form update body', 'json') }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [280, 100],
+      "id": "tool-4",
+      "name": "Update Form",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "toolDescription": "Archive a form. Args: formId.",
+        "method": "DELETE",
+        "url": "={{ (() => { const a = $json.params?.arguments || {}; const id = a.formId || a.id; return id ? `https://api.hubapi.com/marketing/v3/forms/${id}` : 'https://api.hubapi.com/marketing/v3/forms/0'; })() }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [440, 100],
+      "id": "tool-5",
+      "name": "Archive Form",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "toolDescription": "Get form submissions. Args: formId. Optional: after, limit.",
+        "url": "={{ (() => { const a = $json.params?.arguments || {}; const id = a.formId || a.id; const base = id ? `https://api.hubapi.com/form-integrations/v1/submissions/forms/${id}` : 'https://api.hubapi.com/form-integrations/v1/submissions/forms/0'; const q = []; if (a.after) q.push(`after=${a.after}`); if (a.limit) q.push(`limit=${a.limit}`); return q.length ? `${base}?${q.join('&')}` : base; })() }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [600, 100],
+      "id": "tool-6",
+      "name": "Get Form Submissions",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "toolDescription": "List all marketing events with pagination.",
+        "url": "={{ (() => { const a = $json.params?.arguments || {}; const base = 'https://api.hubapi.com/marketing/v3/marketing-events/events'; const q = []; if (a.limit) q.push(`limit=${a.limit}`); if (a.after) q.push(`after=${a.after}`); return q.length ? `${base}?${q.join('&')}` : base; })() }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [-200, 260],
+      "id": "tool-7",
+      "name": "List Marketing Events",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "toolDescription": "Get a marketing event by ID. Args: eventId, externalAccountId.",
+        "url": "={{ (() => { const a = $json.params?.arguments || {}; const eventId = a.eventId || a.id; const extAcct = a.externalAccountId || 'default'; return eventId ? `https://api.hubapi.com/marketing/v3/marketing-events/events/${extAcct}/${eventId}` : 'https://api.hubapi.com/marketing/v3/marketing-events/events/default/0'; })() }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [-40, 260],
+      "id": "tool-8",
+      "name": "Get Marketing Event by ID",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "toolDescription": "Create a marketing event. Body: { externalAccountId, externalEventId, eventName, eventType, startDateTime, ... }.",
+        "method": "POST",
+        "url": "https://api.hubapi.com/marketing/v3/marketing-events/events",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $fromAI('marketing_event_data', 'Marketing event creation body', 'json') }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [120, 260],
+      "id": "tool-9",
+      "name": "Create Marketing Event",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "toolDescription": "Update a marketing event. Args: eventId, externalAccountId. Body: updates.",
+        "method": "PATCH",
+        "url": "={{ (() => { const a = $json.params?.arguments || {}; const eventId = a.eventId || a.id; const extAcct = a.externalAccountId || 'default'; return eventId ? `https://api.hubapi.com/marketing/v3/marketing-events/events/${extAcct}/${eventId}` : 'https://api.hubapi.com/marketing/v3/marketing-events/events/default/0'; })() }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $fromAI('marketing_event_update', 'Marketing event update body', 'json') }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [280, 260],
+      "id": "tool-10",
+      "name": "Update Marketing Event",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "toolDescription": "List all feedback submissions with pagination.",
+        "url": "={{ (() => { const a = $json.params?.arguments || {}; const base = 'https://api.hubapi.com/crm/v3/objects/feedback_submissions'; const q = []; if (a.limit) q.push(`limit=${a.limit}`); if (a.after) q.push(`after=${a.after}`); return q.length ? `${base}?${q.join('&')}` : base; })() }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [440, 260],
+      "id": "tool-11",
+      "name": "List Feedback Submissions",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "toolDescription": "Get a feedback submission by ID. Args: feedbackId.",
+        "url": "={{ (() => { const a = $json.params?.arguments || {}; const id = a.feedbackId || a.id; return id ? `https://api.hubapi.com/crm/v3/objects/feedback_submissions/${id}` : 'https://api.hubapi.com/crm/v3/objects/feedback_submissions/0'; })() }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [600, 260],
+      "id": "tool-12",
+      "name": "Get Feedback by ID",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "toolDescription": "Search feedback submissions. Body: { filterGroups, limit, properties }.",
+        "method": "POST",
+        "url": "https://api.hubapi.com/crm/v3/objects/feedback_submissions/search",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ (() => { const a = $json.params?.arguments || {}; return { filterGroups: a.filterGroups || [], limit: a.limit || 100, properties: a.properties || [] }; })() }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [-200, 420],
+      "id": "tool-13",
+      "name": "Search Feedback Submissions",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "toolDescription": "List all goals with pagination.",
+        "url": "={{ (() => { const a = $json.params?.arguments || {}; const base = 'https://api.hubapi.com/crm/v3/objects/goal_targets'; const q = []; if (a.limit) q.push(`limit=${a.limit}`); if (a.after) q.push(`after=${a.after}`); return q.length ? `${base}?${q.join('&')}` : base; })() }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [-40, 420],
+      "id": "tool-14",
+      "name": "List Goals",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "toolDescription": "Get a goal by ID. Args: goalId.",
+        "url": "={{ (() => { const a = $json.params?.arguments || {}; const id = a.goalId || a.id; return id ? `https://api.hubapi.com/crm/v3/objects/goal_targets/${id}` : 'https://api.hubapi.com/crm/v3/objects/goal_targets/0'; })() }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [120, 420],
+      "id": "tool-15",
+      "name": "Get Goal by ID",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "toolDescription": "Search goals. Body: { filterGroups, limit, properties }.",
+        "method": "POST",
+        "url": "https://api.hubapi.com/crm/v3/objects/goal_targets/search",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ (() => { const a = $json.params?.arguments || {}; return { filterGroups: a.filterGroups || [], limit: a.limit || 100, properties: a.properties || [] }; })() }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [280, 420],
+      "id": "tool-16",
+      "name": "Search Goals",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const base = $('Assemble Context Pack').first().json;\n\nconst started = Number(base._started_ms || Date.now());\nconst duration_ms = Math.max(0, Date.now() - started);\n\nlet agentRaw = $('AI Agent - Marketing').first().json;\n\nconst coerceJson = (val) => {\n  if (val === null || val === undefined) return null;\n  if (typeof val === 'object') return val;\n  if (typeof val !== 'string') return { value: val };\n  const s = val.trim().replace(/^```json\\s*/i, '').replace(/```$/,'').trim();\n  try { return JSON.parse(s); } catch { return { raw: val }; }\n};\n\nconst agentOut = coerceJson(agentRaw.output ?? agentRaw.text ?? agentRaw);\n\nconst ok = !(agentOut?.errors && agentOut.errors.length);\n\nconst esc = (s) => String(s ?? '').replace(/'/g, \"''\");\n\nconst final = {\n  ok,\n  tool_name: base.tool_name,\n  tool_execution_id: base.tool_execution_id,\n  session_id: base.session_id,\n  conversation_id: base.conversation_id,\n  dry_run: base.dry_run,\n  summary: agentOut?.summary ?? (ok ? 'ok' : 'error'),\n  data: agentOut?.data ?? null,\n  tool_calls: agentOut?.tool_calls ?? [],\n  errors: agentOut?.errors ?? [],\n  notes_to_save: agentOut?.notes_to_save ?? null,\n  context_used: base.context_pack ?? {},\n  duration_ms\n};\n\nconst outJson = esc(JSON.stringify(final));\nconst errText = final.errors?.length ? esc(JSON.stringify(final.errors)) : null;\n\nfinal.log_end_sql = `\nUPDATE tool_execution_log\nSET\n  output_data = '${outJson}'::jsonb,\n  success = ${final.ok ? 'true' : 'false'},\n  error = ${errText ? `'${errText}'` : 'null'},\n  duration_ms = ${Number.isFinite(final.duration_ms) ? final.duration_ms : 'null'}\nWHERE id = '${esc(base.tool_execution_id)}'::uuid;\n`;\n\nconst note_scope = base.note_scope || 'hubspot';\nconst note_key = base.note_key || 'marketing.general';\n\nif (final.notes_to_save && typeof final.notes_to_save === 'string' && final.notes_to_save.trim() !== '') {\n  const noteObj = { text: final.notes_to_save.trim() };\n  const noteJson = esc(JSON.stringify(noteObj));\n  final.save_notes_sql = `\nINSERT INTO agent_notes (scope, note_key, note)\nVALUES ('${esc(note_scope)}', '${esc(note_key)}', '${noteJson}'::jsonb);\n`;\n}\n\nreturn [{ json: final }];"
+      },
+      "id": "parse-output-1",
+      "name": "Parse + Finalize Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [640, -320]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{$json.log_end_sql}}",
+        "options": {}
+      },
+      "id": "log-end-1",
+      "name": "Log End (tool_execution_log)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [880, -320],
+      "credentials": {
+        "postgres": {
+          "id": "BwXy2JHETe47vH1I",
+          "name": "Postgres account 2"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "has_notes",
+              "leftValue": "={{ $json.save_notes_sql }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [880, -440],
+      "id": "has-notes-1",
+      "name": "Has Notes to Save?",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{$json.save_notes_sql}}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1120, -480],
+      "id": "save-notes-1",
+      "name": "Save Agent Notes",
+      "credentials": {
+        "postgres": {
+          "id": "BwXy2JHETe47vH1I",
+          "name": "Postgres account 2"
+        }
+      },
+      "onError": "continueRegularOutput"
+    }
+  ],
+  "connections": {
+    "When Executed by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "Normalize + Build SQL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "When chat message received": {
+      "main": [
+        [
+          {
+            "node": "Normalize Chat Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Chat Input": {
+      "main": [
+        [
+          {
+            "node": "Normalize + Build SQL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize + Build SQL": {
+      "main": [
+        [
+          {
+            "node": "Log Start (tool_execution_log)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Load Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Start (tool_execution_log)": {
+      "main": [
+        [
+          {
+            "node": "Assemble Context Pack",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Context": {
+      "main": [
+        [
+          {
+            "node": "Assemble Context Pack",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Assemble Context Pack": {
+      "main": [
+        [
+          {
+            "node": "AI Agent - Marketing",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent - Marketing": {
+      "main": [
+        [
+          {
+            "node": "Parse + Finalize Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse + Finalize Output": {
+      "main": [
+        [
+          {
+            "node": "Log End (tool_execution_log)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Has Notes to Save?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Notes to Save?": {
+      "main": [
+        [
+          {
+            "node": "Save Agent Notes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent - Marketing",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Memory": {
+      "ai_memory": [
+        [
+          {
+            "node": "AI Agent - Marketing",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "List Forms": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Marketing",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Form by ID": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Marketing",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Form": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Marketing",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Form": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Marketing",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Archive Form": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Marketing",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Form Submissions": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Marketing",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "List Marketing Events": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Marketing",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Marketing Event by ID": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Marketing",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Marketing Event": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Marketing",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Marketing Event": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Marketing",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "List Feedback Submissions": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Marketing",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Feedback by ID": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Marketing",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Search Feedback Submissions": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Marketing",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "List Goals": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Marketing",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Goal by ID": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Marketing",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Search Goals": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Marketing",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "2d82e0d27c2a88970c7ba9693b6bad225f1d31f9cf0d392d33dd9cabf99f185f"
+  }
+}

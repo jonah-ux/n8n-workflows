@@ -1,0 +1,984 @@
+{
+  "name": "AI Agent - HubSpot Engagements (Enhanced)",
+  "nodes": [
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "request_id",
+              "type": "string"
+            },
+            {
+              "name": "session_id",
+              "type": "string"
+            },
+            {
+              "name": "chat_id",
+              "type": "string"
+            },
+            {
+              "name": "user_id",
+              "type": "string"
+            },
+            {
+              "name": "user_message",
+              "type": "string"
+            },
+            {
+              "name": "object_type",
+              "type": "string"
+            },
+            {
+              "name": "object_id",
+              "type": "string"
+            },
+            {
+              "name": "engagement_id",
+              "type": "string"
+            },
+            {
+              "name": "company_id",
+              "type": "string"
+            },
+            {
+              "name": "contact_id",
+              "type": "string"
+            },
+            {
+              "name": "deal_id",
+              "type": "string"
+            },
+            {
+              "name": "caller_workflow_id",
+              "type": "string"
+            },
+            {
+              "name": "caller_execution_id",
+              "type": "string"
+            },
+            {
+              "name": "tool_name",
+              "type": "string"
+            },
+            {
+              "name": "dry_run",
+              "type": "boolean"
+            },
+            {
+              "name": "conversation_id",
+              "type": "string"
+            },
+            {
+              "name": "hs_portal_id",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "id": "trigger-1",
+      "name": "When Executed by Another Workflow",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        -800,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "id": "chat-trigger-1",
+      "name": "Chat Trigger (Testing)",
+      "type": "@n8n/n8n-nodes-langchain.chatTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        -800,
+        200
+      ],
+      "webhookId": "engagements-test-chat"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\n\nconst nowIso = new Date().toISOString();\nconst startedMs = Date.now();\n\nconst tool_name = input.tool_name || 'hubspot.engagements';\nconst dry_run = (input.dry_run === undefined || input.dry_run === null) ? true : !!input.dry_run;\n\nconst q = (v) => (v === undefined || v === null || v === '') ? null : String(v);\n\nconst note_scope = 'hubspot';\nconst note_key = input.engagement_id \n  ? `engagement.${input.engagement_id}` \n  : (input.object_type && input.object_id ? `${input.object_type}.${input.object_id}` : 'engagements.unknown');\n\nconst payload_for_log = {\n  ...input,\n  tool_name,\n  dry_run,\n  note_scope,\n  note_key,\n  started_at: nowIso,\n  _started_ms: startedMs\n};\n\n// Parameterized SQL for log_start\nconst log_start_sql = `\nINSERT INTO tool_execution_log (\n  tool_name,\n  input_data,\n  success,\n  conversation_id,\n  user_id,\n  required_approval\n)\nVALUES ($1, $2::jsonb, false, $3, $4, $5)\nRETURNING id;\n`;\n\n// Parameters for log_start: tool_name, input_data, conversation_id, user_id, required_approval\nconst log_start_params = [\n  tool_name,\n  JSON.stringify(payload_for_log),\n  q(input.conversation_id),\n  q(input.user_id),\n  !dry_run\n];\n\n// Parameterized SQL for context loading\nconst ctx_sql = `\nSELECT jsonb_build_object(\n  'hubspot_contact', (\n    SELECT to_jsonb(ct)\n    FROM hubspot_contacts ct\n    WHERE ct.id = $1\n    LIMIT 1\n  ),\n  'associated_company', (\n    SELECT to_jsonb(c)\n    FROM hubspot_companies c\n    WHERE c.id = $2\n    LIMIT 1\n  ),\n  'associated_deal', (\n    SELECT to_jsonb(d)\n    FROM hubspot_deals d\n    WHERE d.id = $3\n    LIMIT 1\n  ),\n  'agent_notes', (\n    SELECT COALESCE(jsonb_agg(n ORDER BY n.updated_at DESC), '[]'::jsonb)\n    FROM agent_notes n\n    WHERE n.scope = $4\n      AND n.note_key = $5\n    LIMIT 10\n  ),\n  'recent_engagements', (\n    SELECT COALESCE(jsonb_agg(e ORDER BY e.created_at DESC), '[]'::jsonb)\n    FROM hubspot_engagements e\n    WHERE (e.contact_id = $1 OR e.company_id = $2 OR e.deal_id = $3)\n    LIMIT 10\n  )\n) AS context;\n`;\n\n// Parameters for ctx: contact_id, company_id, deal_id, note_scope, note_key\nconst ctx_params = [\n  q(input.contact_id),\n  q(input.company_id),\n  q(input.deal_id),\n  note_scope,\n  note_key\n];\n\nreturn [{\n  json: {\n    ...payload_for_log,\n    log_start_sql,\n    log_start_params,\n    ctx_sql,\n    ctx_params\n  }\n}];"
+      },
+      "id": "normalize-1",
+      "name": "Normalize + Build SQL",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -560,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{$json.log_start_sql}}",
+        "options": {
+          "queryReplacement": "={{ $json.log_start_params }}"
+        }
+      },
+      "id": "log-start-1",
+      "name": "Log Start (tool_execution_log)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        -320,
+        -80
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "BwXy2JHETe47vH1I",
+          "name": "Postgres account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{$json.ctx_sql}}",
+        "options": {
+          "queryReplacement": "={{ $json.ctx_params }}"
+        }
+      },
+      "id": "load-context-1",
+      "name": "Load Context",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        -320,
+        80
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "BwXy2JHETe47vH1I",
+          "name": "Postgres account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const base = $('Normalize + Build SQL').first().json;\n\nconst logStart = $('Log Start (tool_execution_log)').first().json;\nconst tool_execution_id = (logStart && logStart.id) ? logStart.id : null;\n\nconst ctxRows = $('Load Context').first().json;\nconst context_pack = (ctxRows && ctxRows.context) ? ctxRows.context : {};\n\nreturn [{\n  json: {\n    ...base,\n    tool_execution_id,\n    context_pack\n  }\n}];"
+      },
+      "id": "assemble-1",
+      "name": "Assemble Context Pack",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -80,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "text": "={{ \n[\n  \"USER_REQUEST:\",\n  ($json.user_message || \"\").toString(),\n  \"\",\n  \"RUNTIME:\",\n  JSON.stringify({\n    tool_name: $json.tool_name || \"hubspot.engagements\",\n    dry_run: $json.dry_run ?? true,\n    session_id: $json.session_id,\n    request_id: $json.request_id,\n    conversation_id: $json.conversation_id,\n    engagement_id: $json.engagement_id,\n    contact_id: $json.contact_id,\n    company_id: $json.company_id,\n    deal_id: $json.deal_id,\n    user_id: $json.user_id,\n    caller_workflow_id: $json.caller_workflow_id,\n    caller_execution_id: $json.caller_execution_id\n  }, null, 2),\n  \"\",\n  \"CONTEXT_PACK (DB):\",\n  JSON.stringify($json.context_pack ?? {}, null, 2)\n].join(\"\\n\")\n}}\n",
+        "options": {
+          "maxIterations": 15,
+          "systemMessage": "You are the HubSpot ENGAGEMENTS Agent.\n\nYour job:\n- Manage HubSpot engagements: calls, emails, meetings, notes, and tasks.\n- Log activities, create follow-ups, and track communication history.\n- Return ONLY valid JSON in the specified output schema.\n\nINPUTS YOU RECEIVE:\n- USER_REQUEST (plain text)\n- RUNTIME (json): includes tool_name, dry_run, ids (engagement_id, contact_id, company_id, deal_id)\n- CONTEXT_PACK (json): database context if available\n\nHARD RULES:\n1) Always use tools for factual data. Do NOT guess.\n2) DRY RUN ENFORCEMENT:\n   - If runtime.dry_run is true: DO NOT call ANY write tools (Create, Update, Delete).\n   - If the user requests a write and dry_run=true: return a proposed plan + exact tool + payload, but do not execute.\n3) If a required argument is missing (ex: engagementId, contactId), ask for it in errors[] and do not call the tool.\n\nENGAGEMENT TYPES:\n- NOTE: Internal notes/comments on records\n- EMAIL: Email activities (sent/received tracking)\n- CALL: Phone call logs with duration, outcome, recording\n- MEETING: Scheduled meetings with attendees, time, location\n- TASK: To-do items with due dates, priority, status\n\nAVAILABLE TOOLS (USE THESE NAMES EXACTLY):\n\nREAD OPERATIONS:\n- List All Engagements - Get paginated list of all engagements\n- Get Engagement by ID - Get a specific engagement by ID\n- Get Engagement Associations - Get objects associated with an engagement\n\nWRITE OPERATIONS (ONLY IF dry_run=false AND user explicitly requested):\n- Create Engagement - Create a generic engagement with type and metadata\n- Update Engagement - Update an existing engagement\n- Delete Engagement - Delete an engagement permanently\n\nTYPE-SPECIFIC CREATION (ONLY IF dry_run=false):\n- Create Note - Create a note engagement on a record\n- Create Email - Log an email activity\n- Create Meeting - Create a meeting engagement\n- Create Call - Log a phone call\n- Create Task - Create a task/to-do item\n\nASSOCIATION OPERATIONS (ONLY IF dry_run=false):\n- Associate Engagement - Link engagement to contact/company/deal\n- Remove Engagement Association - Unlink engagement from object\n\nENGAGEMENT STRUCTURE:\n{\n  \"engagement\": {\n    \"type\": \"NOTE|EMAIL|CALL|MEETING|TASK\",\n    \"timestamp\": 1234567890000,  // Unix ms\n    \"ownerId\": 12345\n  },\n  \"associations\": {\n    \"contactIds\": [123],\n    \"companyIds\": [456],\n    \"dealIds\": [789]\n  },\n  \"metadata\": {\n    // Type-specific fields\n  }\n}\n\nMETADATA BY TYPE:\n\nNOTE:\n- body: \"Note content here\"\n\nEMAIL:\n- from: { email, firstName, lastName }\n- to: [{ email, firstName, lastName }]\n- cc: [], bcc: []\n- subject: \"Email subject\"\n- html: \"<p>Email body</p>\"\n- text: \"Plain text body\"\n\nCALL:\n- toNumber: \"+1234567890\"\n- fromNumber: \"+0987654321\"\n- status: \"COMPLETED|BUSY|NO_ANSWER|FAILED|CANCELED\"\n- durationMilliseconds: 300000\n- recordingUrl: \"https://...\"\n- body: \"Call notes\"\n- disposition: \"Connected|Left voicemail|No answer|Busy\"\n\nMEETING:\n- title: \"Meeting title\"\n- body: \"Meeting description/agenda\"\n- startTime: 1234567890000\n- endTime: 1234567890000\n- internalMeetingNotes: \"Private notes\"\n- externalUrl: \"https://zoom.us/...\"\n\nTASK:\n- subject: \"Task title\"\n- body: \"Task description\"\n- status: \"NOT_STARTED|IN_PROGRESS|COMPLETED|WAITING|DEFERRED\"\n- forObjectType: \"CONTACT|COMPANY|DEAL\"\n- priority: \"LOW|MEDIUM|HIGH\"\n- taskType: \"TODO|CALL|EMAIL\"\n- timestamp: 1234567890000  // Due date\n- reminders: [1234567890000]  // Reminder timestamps\n\nCOMMON PATTERNS:\n\n1. Log a call:\n   - Use \"Create Call\" with toNumber, status, durationMilliseconds, body\n   - Associate with contact/company/deal IDs\n\n2. Create a follow-up task:\n   - Use \"Create Task\" with subject, due date (timestamp), priority\n   - Associate with the relevant record\n\n3. Add a note to a contact:\n   - Use \"Create Note\" with body text\n   - Include contactIds in associations\n\n4. Log a meeting:\n   - Use \"Create Meeting\" with title, startTime, endTime\n   - Include attendee IDs in associations\n\nOUTPUT FORMAT (RETURN JSON ONLY):\n{\n  \"summary\": \"short human summary\",\n  \"data\": { \"any\": \"tool results or extracted fields\" },\n  \"tool_calls\": [\n    { \"tool\": \"Tool Name\", \"arguments\": { } }\n  ],\n  \"errors\": [\n    { \"code\": \"MISSING_ARG|DRY_RUN_BLOCK|TOOL_ERROR\", \"message\": \"...\" }\n  ],\n  \"notes_to_save\": null\n}"
+        },
+        "promptType": "define"
+      },
+      "id": "agent-1",
+      "name": "AI Agent - Engagements",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        160,
+        0
+      ],
+      "alwaysOutputData": true,
+      "retryOnFail": true,
+      "waitBetweenTries": 3000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "list",
+          "value": "gpt-4o",
+          "cachedResultName": "gpt-4o"
+        },
+        "options": {}
+      },
+      "id": "llm-1",
+      "name": "OpenAI Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [
+        -80,
+        200
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "Lb7LQd5GQa1bZ9yX",
+          "name": "OpenAi account 4"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sessionKey": "session_id",
+        "sessionIdType": "customKey"
+      },
+      "id": "memory-1",
+      "name": "Memory",
+      "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
+      "typeVersion": 1.3,
+      "position": [
+        40,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://api.hubapi.com/engagements/v1/engagements/paged",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "specifyQuery": "json",
+        "options": {},
+        "toolDescription": "List all engagements from HubSpot. Returns paginated results. Use query params: limit (max 250), offset (pagination), includeAssociations (true/false to include linked contact/company/deal IDs)."
+      },
+      "id": "tool-list-engagements",
+      "name": "List All Engagements",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        160,
+        200
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "=https://api.hubapi.com/engagements/v1/engagements/{{ $json.engagementId || $json.id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {},
+        "toolDescription": "Get a specific engagement by ID. Returns engagement details including type, metadata, associations, and timestamps."
+      },
+      "id": "tool-get-engagement",
+      "name": "Get Engagement by ID",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        280,
+        200
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.hubapi.com/engagements/v1/engagements",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "contentType": "json",
+        "options": {},
+        "toolDescription": "CREATE a new engagement. Body: {engagement: {type, timestamp, ownerId}, associations: {contactIds, companyIds, dealIds}, metadata: {...}}. Type must be NOTE, EMAIL, CALL, MEETING, or TASK. WRITE OPERATION - respect dry_run."
+      },
+      "id": "tool-create-engagement",
+      "name": "Create Engagement",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        400,
+        200
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://api.hubapi.com/engagements/v1/engagements/{{ $json.engagementId || $json.id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "contentType": "json",
+        "options": {},
+        "toolDescription": "UPDATE an existing engagement by ID. Body: {engagement: {...}, metadata: {...}}. Can update timestamp, ownerId, metadata fields. WRITE OPERATION - respect dry_run."
+      },
+      "id": "tool-update-engagement",
+      "name": "Update Engagement",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        520,
+        200
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "DELETE",
+        "url": "=https://api.hubapi.com/engagements/v1/engagements/{{ $json.engagementId || $json.id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {},
+        "toolDescription": "DELETE an engagement by ID. This permanently removes the engagement. DESTRUCTIVE WRITE OPERATION - respect dry_run."
+      },
+      "id": "tool-delete-engagement",
+      "name": "Delete Engagement",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        640,
+        200
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.hubapi.com/engagements/v1/engagements",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "contentType": "json",
+        "options": {},
+        "toolDescription": "CREATE a NOTE engagement. Body: {engagement: {type: 'NOTE', timestamp: Date.now(), ownerId}, associations: {contactIds: [], companyIds: [], dealIds: []}, metadata: {body: 'Note content'}}. WRITE OPERATION - respect dry_run."
+      },
+      "id": "tool-create-note",
+      "name": "Create Note",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        160,
+        360
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.hubapi.com/engagements/v1/engagements",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "contentType": "json",
+        "options": {},
+        "toolDescription": "CREATE an EMAIL engagement. Body: {engagement: {type: 'EMAIL', timestamp, ownerId}, associations: {...}, metadata: {from: {email, firstName, lastName}, to: [{email}], cc: [], bcc: [], subject: '', html: '', text: ''}}. WRITE OPERATION - respect dry_run."
+      },
+      "id": "tool-create-email",
+      "name": "Create Email",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        280,
+        360
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.hubapi.com/engagements/v1/engagements",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "contentType": "json",
+        "options": {},
+        "toolDescription": "CREATE a MEETING engagement. Body: {engagement: {type: 'MEETING', timestamp, ownerId}, associations: {...}, metadata: {title: '', body: '', startTime: ms, endTime: ms, internalMeetingNotes: '', externalUrl: ''}}. WRITE OPERATION - respect dry_run."
+      },
+      "id": "tool-create-meeting",
+      "name": "Create Meeting",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        400,
+        360
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.hubapi.com/engagements/v1/engagements",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "contentType": "json",
+        "options": {},
+        "toolDescription": "CREATE a CALL engagement. Body: {engagement: {type: 'CALL', timestamp, ownerId}, associations: {...}, metadata: {toNumber: '', fromNumber: '', status: 'COMPLETED|BUSY|NO_ANSWER|FAILED|CANCELED', durationMilliseconds: 0, body: '', disposition: '', recordingUrl: ''}}. WRITE OPERATION - respect dry_run."
+      },
+      "id": "tool-create-call",
+      "name": "Create Call",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        520,
+        360
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.hubapi.com/engagements/v1/engagements",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "contentType": "json",
+        "options": {},
+        "toolDescription": "CREATE a TASK engagement. Body: {engagement: {type: 'TASK', timestamp: dueDate, ownerId}, associations: {...}, metadata: {subject: '', body: '', status: 'NOT_STARTED|IN_PROGRESS|COMPLETED|WAITING|DEFERRED', forObjectType: 'CONTACT|COMPANY|DEAL', priority: 'LOW|MEDIUM|HIGH', taskType: 'TODO|CALL|EMAIL', reminders: []}}. WRITE OPERATION - respect dry_run."
+      },
+      "id": "tool-create-task",
+      "name": "Create Task",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        640,
+        360
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "=https://api.hubapi.com/engagements/v1/engagements/{{ $json.engagementId || $json.id }}/associations/{{ $json.objectType || 'CONTACT' }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {},
+        "toolDescription": "Get associations for an engagement. Specify engagementId and objectType (CONTACT, COMPANY, DEAL, TICKET). Returns list of associated object IDs."
+      },
+      "id": "tool-get-associations",
+      "name": "Get Engagement Associations",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        760,
+        200
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "=https://api.hubapi.com/engagements/v1/engagements/{{ $json.engagementId }}/associations/{{ $json.objectType }}/{{ $json.objectId }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {},
+        "toolDescription": "Associate an engagement with an object. Specify engagementId, objectType (CONTACT, COMPANY, DEAL, TICKET), and objectId. WRITE OPERATION - respect dry_run."
+      },
+      "id": "tool-associate",
+      "name": "Associate Engagement",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        760,
+        360
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "DELETE",
+        "url": "=https://api.hubapi.com/engagements/v1/engagements/{{ $json.engagementId }}/associations/{{ $json.objectType }}/{{ $json.objectId }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {},
+        "toolDescription": "Remove association between an engagement and an object. Specify engagementId, objectType, and objectId. WRITE OPERATION - respect dry_run."
+      },
+      "id": "tool-remove-association",
+      "name": "Remove Engagement Association",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        880,
+        360
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "https://api.hubapi.com/crm/v3/owners",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "specifyQuery": "json",
+        "options": {},
+        "toolDescription": "List all HubSpot owners (users) that can be assigned as engagement owners. Returns id, email, firstName, lastName. Use for ownerId assignments when creating engagements."
+      },
+      "id": "tool-list-owners",
+      "name": "List Owners",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        880,
+        200
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const base = $('Assemble Context Pack').first().json;\n\nconst started = Number(base._started_ms || Date.now());\nconst duration_ms = Math.max(0, Date.now() - started);\n\nlet agentRaw = $('AI Agent - Engagements').first().json;\n\nconst coerceJson = (val) => {\n  if (val === null || val === undefined) return null;\n  if (typeof val === 'object') return val;\n  if (typeof val !== 'string') return { value: val };\n  const s = val.trim().replace(/^```json\\s*/i, '').replace(/```$/,'').trim();\n  try { return JSON.parse(s); } catch { return { raw: val }; }\n};\n\nconst agentOut = coerceJson(agentRaw.output ?? agentRaw.text ?? agentRaw);\n\nconst ok = !(agentOut?.errors && agentOut.errors.length);\n\nconst final = {\n  ok,\n  tool_name: base.tool_name,\n  tool_execution_id: base.tool_execution_id,\n  session_id: base.session_id,\n  conversation_id: base.conversation_id,\n  dry_run: base.dry_run,\n  summary: agentOut?.summary ?? (ok ? 'ok' : 'error'),\n  data: agentOut?.data ?? null,\n  tool_calls: agentOut?.tool_calls ?? [],\n  errors: agentOut?.errors ?? [],\n  notes_to_save: agentOut?.notes_to_save ?? null,\n  context_used: base.context_pack ?? {},\n  duration_ms,\n  note_scope: base.note_scope,\n  note_key: base.note_key\n};\n\n// Parameterized SQL for log_end\nfinal.log_end_sql = `\nUPDATE tool_execution_log\nSET\n  output_data = $1::jsonb,\n  success = $2,\n  error = $3,\n  duration_ms = $4\nWHERE id = $5::uuid\nRETURNING *;\n`;\n\n// Parameters for log_end: output_data, success, error, duration_ms, id\nfinal.log_end_params = [\n  JSON.stringify(final),\n  final.ok,\n  (final.errors && final.errors.length) ? JSON.stringify(final.errors) : null,\n  Number.isFinite(final.duration_ms) ? final.duration_ms : null,\n  base.tool_execution_id\n];\n\n// Parameterized SQL for saving agent notes\nif (final.notes_to_save) {\n  final.save_notes_sql = `\nINSERT INTO agent_notes (scope, note_key, content, created_by, metadata)\nVALUES ($1, $2, $3, $4, $5::jsonb)\nON CONFLICT (scope, note_key) DO UPDATE SET\n  content = EXCLUDED.content,\n  metadata = EXCLUDED.metadata,\n  updated_at = NOW()\nRETURNING *;\n`;\n  final.save_notes_params = [\n    base.note_scope || 'hubspot',\n    base.note_key || 'engagements.unknown',\n    typeof final.notes_to_save === 'string' ? final.notes_to_save : JSON.stringify(final.notes_to_save),\n    base.user_id || 'system',\n    JSON.stringify({\n      tool_execution_id: base.tool_execution_id,\n      conversation_id: base.conversation_id,\n      engagement_id: base.engagement_id\n    })\n  ];\n}\n\nreturn [{ json: final }];"
+      },
+      "id": "parse-output-1",
+      "name": "Parse + Finalize Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        400,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{$json.log_end_sql}}",
+        "options": {
+          "queryReplacement": "={{ $json.log_end_params }}"
+        }
+      },
+      "id": "log-end-1",
+      "name": "Log End (tool_execution_log)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        640,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "BwXy2JHETe47vH1I",
+          "name": "Postgres account 2"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "notes-check",
+              "leftValue": "={{ $json.notes_to_save }}",
+              "rightValue": "",
+              "operator": {
+                "type": "object",
+                "operation": "notEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-notes-1",
+      "name": "Has Notes to Save?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.1,
+      "position": [
+        880,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{$json.save_notes_sql}}",
+        "options": {
+          "queryReplacement": "={{ $json.save_notes_params }}"
+        }
+      },
+      "id": "save-notes-1",
+      "name": "Save Agent Notes",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1120,
+        -80
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "BwXy2JHETe47vH1I",
+          "name": "Postgres account 2"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "When Executed by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "Normalize + Build SQL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Chat Trigger (Testing)": {
+      "main": [
+        [
+          {
+            "node": "Normalize + Build SQL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize + Build SQL": {
+      "main": [
+        [
+          {
+            "node": "Log Start (tool_execution_log)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Load Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Start (tool_execution_log)": {
+      "main": [
+        [
+          {
+            "node": "Assemble Context Pack",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Context": {
+      "main": [
+        [
+          {
+            "node": "Assemble Context Pack",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Assemble Context Pack": {
+      "main": [
+        [
+          {
+            "node": "AI Agent - Engagements",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent - Engagements": {
+      "main": [
+        [
+          {
+            "node": "Parse + Finalize Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse + Finalize Output": {
+      "main": [
+        [
+          {
+            "node": "Log End (tool_execution_log)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log End (tool_execution_log)": {
+      "main": [
+        [
+          {
+            "node": "Has Notes to Save?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Notes to Save?": {
+      "main": [
+        [
+          {
+            "node": "Save Agent Notes",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "OpenAI Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent - Engagements",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Memory": {
+      "ai_memory": [
+        [
+          {
+            "node": "AI Agent - Engagements",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "List All Engagements": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Engagements",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Engagement by ID": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Engagements",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Engagement": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Engagements",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Engagement": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Engagements",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Delete Engagement": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Engagements",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Note": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Engagements",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Email": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Engagements",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Meeting": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Engagements",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Call": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Engagements",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Task": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Engagements",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Engagement Associations": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Engagements",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Associate Engagement": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Engagements",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Remove Engagement Association": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Engagements",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "List Owners": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Engagements",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": [],
+  "pinData": {}
+}

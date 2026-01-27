@@ -1,0 +1,979 @@
+{
+  "nodes": [
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            { "name": "request_id" },
+            { "name": "session_id" },
+            { "name": "chat_id" },
+            { "name": "user_id" },
+            { "name": "user_message" },
+            { "name": "caller_workflow_id" },
+            { "name": "caller_execution_id" },
+            { "name": "tool_name" },
+            { "name": "dry_run", "type": "boolean" },
+            { "name": "conversation_id" },
+            { "name": "hs_portal_id" },
+            { "name": "object_type" },
+            { "name": "custom_object_id" },
+            { "name": "property_name" }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [-800, -400],
+      "id": "trigger-1",
+      "name": "When Executed by Another Workflow"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.chatTrigger",
+      "typeVersion": 1.4,
+      "position": [-800, -200],
+      "id": "chat-trigger-1",
+      "name": "When chat message received",
+      "webhookId": "schema-chat-test"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\n\nconst chatText =\n  input.chatInput ||\n  input.message?.text ||\n  input.text ||\n  input.body?.message ||\n  input.body?.text ||\n  '';\n\nreturn [{\n  json: {\n    user_message: String(chatText || ''),\n    dry_run: true,\n    tool_name: 'hubspot.schema',\n    session_id: input.sessionId || input.session_id || 'chat_test',\n    conversation_id: input.conversationId || input.conversation_id || 'chat_test',\n    chat_id: input.chatId || input.chat_id || null,\n    user_id: input.userId || input.user_id || null,\n    request_id: input.request_id || null,\n    caller_workflow_id: input.caller_workflow_id || null,\n    caller_execution_id: input.caller_execution_id || null,\n    object_type: input.object_type || null,\n    custom_object_id: input.custom_object_id || null,\n    property_name: input.property_name || null,\n    hs_portal_id: input.hs_portal_id || null\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-560, -200],
+      "id": "chat-normalize-1",
+      "name": "Normalize Chat Input"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\n\nconst nowIso = new Date().toISOString();\nconst startedMs = Date.now();\n\nconst tool_name = input.tool_name || 'hubspot.schema';\nconst dry_run = (input.dry_run === undefined || input.dry_run === null) ? true : !!input.dry_run;\n\nconst safeJson = (obj) => {\n  const s = JSON.stringify(obj ?? {});\n  return s.replace(/'/g, \"''\");\n};\n\nconst q = (v) => (v === undefined || v === null || v === '') ? null : String(v);\n\nconst qSql = (v) => {\n  const s = q(v);\n  if (s === null) return 'null';\n  return `'${s.replace(/'/g, \"''\")}'`;\n};\n\nconst nSql = (v) => {\n  if (v === undefined || v === null || v === '') return 'null';\n  const num = Number(v);\n  return Number.isFinite(num) ? String(num) : 'null';\n};\n\nconst uuidSql = (v) => {\n  const s = (v ?? '').toString().trim();\n  const ok = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(s);\n  return ok ? `'${s}'::uuid` : 'null';\n};\n\nconst note_scope = 'hubspot';\nconst note_key = input.object_type ? `schema.${input.object_type}` : 'schema.general';\n\nconst payload_for_log = {\n  ...input,\n  tool_name,\n  dry_run,\n  note_scope,\n  note_key,\n  started_at: nowIso,\n  _started_ms: startedMs\n};\n\nconst log_start_sql = `\nINSERT INTO tool_execution_log (\n  tool_name,\n  input_data,\n  success,\n  conversation_id,\n  user_id,\n  required_approval\n)\nVALUES (\n  ${qSql(tool_name)},\n  '${safeJson(payload_for_log)}'::jsonb,\n  false,\n  ${uuidSql(input.conversation_id)},\n  ${nSql(input.user_id)},\n  ${dry_run ? 'false' : 'true'}\n)\nRETURNING id;\n`;\n\nconst ctx_sql = `\nSELECT jsonb_build_object(\n  'agent_notes', (\n    SELECT COALESCE(jsonb_agg(n ORDER BY n.updated_at DESC), '[]'::jsonb)\n    FROM agent_notes n\n    WHERE n.scope = ${qSql(note_scope)}\n      AND n.note_key = ${qSql(note_key)}\n    LIMIT 15\n  ),\n  'schema_cache', (\n    SELECT to_jsonb(s)\n    FROM hubspot_schema_cache s\n    WHERE s.portal_id = ${nSql(input.hs_portal_id)}\n    ORDER BY s.fetched_at DESC\n    LIMIT 1\n  )\n) AS context;\n`;\n\nreturn [{\n  json: {\n    ...payload_for_log,\n    log_start_sql,\n    ctx_sql\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-320, -320],
+      "id": "normalize-1",
+      "name": "Normalize + Build SQL"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{$json.log_start_sql}}",
+        "options": {}
+      },
+      "id": "log-start-1",
+      "name": "Log Start (tool_execution_log)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [-80, -400],
+      "credentials": {
+        "postgres": {
+          "id": "BwXy2JHETe47vH1I",
+          "name": "Postgres account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{$json.ctx_sql}}",
+        "options": {}
+      },
+      "id": "load-ctx-1",
+      "name": "Load Context",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [-80, -240],
+      "credentials": {
+        "postgres": {
+          "id": "BwXy2JHETe47vH1I",
+          "name": "Postgres account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const base = $('Normalize + Build SQL').first().json;\n\nconst logStart = $('Log Start (tool_execution_log)').first().json;\nconst tool_execution_id = (logStart && logStart.id) ? logStart.id : null;\n\nconst ctxRows = $('Load Context').first().json;\nconst context_pack = (ctxRows && ctxRows.context) ? ctxRows.context : {};\n\nreturn [{\n  json: {\n    ...base,\n    tool_execution_id,\n    context_pack\n  }\n}];"
+      },
+      "id": "assemble-1",
+      "name": "Assemble Context Pack",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [160, -320]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ \n[\n  \"USER_REQUEST:\",\n  ($json.user_message || \"\").toString(),\n  \"\",\n  \"RUNTIME:\",\n  JSON.stringify({\n    tool_name: $json.tool_name || \"hubspot.schema\",\n    dry_run: $json.dry_run ?? false,\n    session_id: $json.session_id,\n    request_id: $json.request_id,\n    conversation_id: $json.conversation_id,\n    object_type: $json.object_type,\n    custom_object_id: $json.custom_object_id,\n    property_name: $json.property_name\n  }, null, 2),\n  \"\",\n  \"CONTEXT_PACK:\",\n  JSON.stringify($json.context_pack ?? {}, null, 2)\n].join(\"\\n\")\n}}\n",
+        "options": {
+          "systemMessage": "You are the HubSpot SCHEMA Agent. You manage Custom Objects, Properties, Property Groups, and Schema definitions.\n\nGoal: reliably answer schema-related questions by calling the correct HubSpot API tools.\n\nYou receive:\n- USER_REQUEST (text)\n- RUNTIME (json): { tool_name, dry_run, ids... }\n- CONTEXT_PACK (json): { agent_notes, schema_cache }\n\nNON-NEGOTIABLE RULES\n1) TOOL-FIRST FACTS:\n   - If the answer depends on HubSpot schema, you MUST call a tool.\n   - Never guess property names, types, or custom object definitions.\n\n2) DRY RUN ENFORCEMENT:\n   - If runtime.dry_run === true: DO NOT call write tools (create/update/archive).\n\nTOOL CATEGORIES:\n\nCUSTOM OBJECTS (CRM Schemas):\n- List Custom Object Schemas, Get Schema by Object Type\n- Create Custom Object Schema, Update Custom Object Schema, Archive Schema\n- List Custom Object Records, Get Record by ID, Create Record, Update Record, Archive Record\n- Search Custom Object Records\n\nPROPERTIES:\n- List Properties (for any object type), Get Property\n- Create Property, Update Property, Archive Property\n- Batch Create Properties, Batch Archive Properties\n\nPROPERTY GROUPS:\n- List Property Groups, Get Property Group\n- Create Property Group, Update Property Group, Archive Property Group\n\nASSOCIATION SCHEMAS:\n- List Association Types, Get Association Labels\n- Create Association Type, Update Association Type\n\nOUTPUT REQUIREMENTS (JSON ONLY)\nReturn exactly:\n{\n  \"summary\": \"short human summary\",\n  \"data\": { \"any\": \"tool results\" },\n  \"tool_calls\": [\n    { \"tool\": \"Tool Name\", \"arguments\": { } }\n  ],\n  \"errors\": [\n    { \"code\": \"MISSING_ARG|DRY_RUN_BLOCK|TOOL_ERROR\", \"message\": \"...\" }\n  ],\n  \"notes_to_save\": \"optional short learning string or null\"\n}\n",
+          "maxIterations": 25
+        }
+      },
+      "id": "agent-1",
+      "name": "AI Agent - Schema",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [400, -320],
+      "alwaysOutputData": true,
+      "retryOnFail": true,
+      "waitBetweenTries": 3000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "list",
+          "value": "gpt-4o",
+          "cachedResultName": "gpt-4o"
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [160, -120],
+      "id": "llm-1",
+      "name": "OpenAI Chat Model",
+      "credentials": {
+        "openAiApi": {
+          "id": "Lb7LQd5GQa1bZ9yX",
+          "name": "OpenAi account 4"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sessionKey": "session_id",
+        "sessionIdType": "customKey"
+      },
+      "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
+      "typeVersion": 1.3,
+      "position": [280, -120],
+      "id": "memory-1",
+      "name": "Memory"
+    },
+    {
+      "parameters": {
+        "toolDescription": "List all custom object schemas (CRM object definitions).",
+        "url": "https://api.hubapi.com/crm/v3/schemas",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [-200, 100],
+      "id": "tool-1",
+      "name": "List Custom Object Schemas",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "toolDescription": "Get a custom object schema by objectType. Args: objectType (e.g. '2-123456' or 'cars').",
+        "url": "={{ (() => { const a = $json.params?.arguments || {}; const ot = a.objectType || a.object_type; return ot ? `https://api.hubapi.com/crm/v3/schemas/${ot}` : 'https://api.hubapi.com/crm/v3/schemas/0'; })() }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [-40, 100],
+      "id": "tool-2",
+      "name": "Get Schema by Object Type",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "toolDescription": "Create a custom object schema. Body: { name, labels, primaryDisplayProperty, secondaryDisplayProperties, properties, associatedObjects }.",
+        "method": "POST",
+        "url": "https://api.hubapi.com/crm/v3/schemas",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $fromAI('schema_data', 'Custom object schema definition', 'json') }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [120, 100],
+      "id": "tool-3",
+      "name": "Create Custom Object Schema",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "toolDescription": "Update a custom object schema. Args: objectType. Body: schema updates.",
+        "method": "PATCH",
+        "url": "={{ (() => { const a = $json.params?.arguments || {}; const ot = a.objectType || a.object_type; return ot ? `https://api.hubapi.com/crm/v3/schemas/${ot}` : 'https://api.hubapi.com/crm/v3/schemas/0'; })() }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $fromAI('schema_update', 'Schema update body', 'json') }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [280, 100],
+      "id": "tool-4",
+      "name": "Update Custom Object Schema",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "toolDescription": "Archive (soft delete) a custom object schema. Args: objectType.",
+        "method": "DELETE",
+        "url": "={{ (() => { const a = $json.params?.arguments || {}; const ot = a.objectType || a.object_type; return ot ? `https://api.hubapi.com/crm/v3/schemas/${ot}` : 'https://api.hubapi.com/crm/v3/schemas/0'; })() }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [440, 100],
+      "id": "tool-5",
+      "name": "Archive Custom Object Schema",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "toolDescription": "List records of a custom object. Args: objectType. Optional: limit, after, properties.",
+        "url": "={{ (() => { const a = $json.params?.arguments || {}; const ot = a.objectType || a.object_type || '2-0'; const base = `https://api.hubapi.com/crm/v3/objects/${ot}`; const q = []; if (a.limit) q.push(`limit=${a.limit}`); if (a.after) q.push(`after=${a.after}`); if (a.properties) q.push(`properties=${Array.isArray(a.properties) ? a.properties.join(',') : a.properties}`); return q.length ? `${base}?${q.join('&')}` : base; })() }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [600, 100],
+      "id": "tool-6",
+      "name": "List Custom Object Records",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "toolDescription": "Get a custom object record by ID. Args: objectType, recordId.",
+        "url": "={{ (() => { const a = $json.params?.arguments || {}; const ot = a.objectType || a.object_type || '2-0'; const id = a.recordId || a.id; return id ? `https://api.hubapi.com/crm/v3/objects/${ot}/${id}` : `https://api.hubapi.com/crm/v3/objects/${ot}/0`; })() }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [760, 100],
+      "id": "tool-7",
+      "name": "Get Custom Object Record",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "toolDescription": "Create a custom object record. Args: objectType. Body: { properties: {...} }.",
+        "method": "POST",
+        "url": "={{ (() => { const a = $json.params?.arguments || {}; const ot = a.objectType || a.object_type || '2-0'; return `https://api.hubapi.com/crm/v3/objects/${ot}`; })() }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $fromAI('record_data', 'Custom object record with properties', 'json') }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [-200, 260],
+      "id": "tool-8",
+      "name": "Create Custom Object Record",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "toolDescription": "Update a custom object record. Args: objectType, recordId. Body: { properties: {...} }.",
+        "method": "PATCH",
+        "url": "={{ (() => { const a = $json.params?.arguments || {}; const ot = a.objectType || a.object_type || '2-0'; const id = a.recordId || a.id; return id ? `https://api.hubapi.com/crm/v3/objects/${ot}/${id}` : `https://api.hubapi.com/crm/v3/objects/${ot}/0`; })() }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $fromAI('record_update', 'Record update with properties', 'json') }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [-40, 260],
+      "id": "tool-9",
+      "name": "Update Custom Object Record",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "toolDescription": "Search custom object records. Args: objectType. Body: { filterGroups, limit, properties }.",
+        "method": "POST",
+        "url": "={{ (() => { const a = $json.params?.arguments || {}; const ot = a.objectType || a.object_type || '2-0'; return `https://api.hubapi.com/crm/v3/objects/${ot}/search`; })() }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ (() => { const a = $json.params?.arguments || {}; return { filterGroups: a.filterGroups || [], limit: a.limit || 100, properties: a.properties || [] }; })() }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [120, 260],
+      "id": "tool-10",
+      "name": "Search Custom Object Records",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "toolDescription": "List properties for any object type. Args: objectType (contacts|companies|deals|tickets|or custom).",
+        "url": "={{ (() => { const a = $json.params?.arguments || {}; const ot = a.objectType || a.object_type || 'contacts'; return `https://api.hubapi.com/crm/v3/properties/${ot}`; })() }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [280, 260],
+      "id": "tool-11",
+      "name": "List Properties",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "toolDescription": "Get a property definition. Args: objectType, propertyName.",
+        "url": "={{ (() => { const a = $json.params?.arguments || {}; const ot = a.objectType || a.object_type || 'contacts'; const pn = a.propertyName || a.property_name; return pn ? `https://api.hubapi.com/crm/v3/properties/${ot}/${pn}` : `https://api.hubapi.com/crm/v3/properties/${ot}/`; })() }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [440, 260],
+      "id": "tool-12",
+      "name": "Get Property",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "toolDescription": "Create a property. Args: objectType. Body: { name, label, type, fieldType, groupName, description, options }.",
+        "method": "POST",
+        "url": "={{ (() => { const a = $json.params?.arguments || {}; const ot = a.objectType || a.object_type || 'contacts'; return `https://api.hubapi.com/crm/v3/properties/${ot}`; })() }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $fromAI('property_data', 'Property definition with name, label, type, fieldType, groupName', 'json') }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [600, 260],
+      "id": "tool-13",
+      "name": "Create Property",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "toolDescription": "Update a property. Args: objectType, propertyName. Body: property updates.",
+        "method": "PATCH",
+        "url": "={{ (() => { const a = $json.params?.arguments || {}; const ot = a.objectType || a.object_type || 'contacts'; const pn = a.propertyName || a.property_name; return pn ? `https://api.hubapi.com/crm/v3/properties/${ot}/${pn}` : `https://api.hubapi.com/crm/v3/properties/${ot}/`; })() }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $fromAI('property_update', 'Property update body', 'json') }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [760, 260],
+      "id": "tool-14",
+      "name": "Update Property",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "toolDescription": "Archive a property. Args: objectType, propertyName.",
+        "method": "DELETE",
+        "url": "={{ (() => { const a = $json.params?.arguments || {}; const ot = a.objectType || a.object_type || 'contacts'; const pn = a.propertyName || a.property_name; return pn ? `https://api.hubapi.com/crm/v3/properties/${ot}/${pn}` : `https://api.hubapi.com/crm/v3/properties/${ot}/`; })() }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [-200, 420],
+      "id": "tool-15",
+      "name": "Archive Property",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "toolDescription": "List property groups for an object type. Args: objectType.",
+        "url": "={{ (() => { const a = $json.params?.arguments || {}; const ot = a.objectType || a.object_type || 'contacts'; return `https://api.hubapi.com/crm/v3/properties/${ot}/groups`; })() }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [-40, 420],
+      "id": "tool-16",
+      "name": "List Property Groups",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "toolDescription": "Create a property group. Args: objectType. Body: { name, label, displayOrder }.",
+        "method": "POST",
+        "url": "={{ (() => { const a = $json.params?.arguments || {}; const ot = a.objectType || a.object_type || 'contacts'; return `https://api.hubapi.com/crm/v3/properties/${ot}/groups`; })() }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $fromAI('group_data', 'Property group definition with name, label', 'json') }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [120, 420],
+      "id": "tool-17",
+      "name": "Create Property Group",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "toolDescription": "List association types between two object types. Args: fromObjectType, toObjectType.",
+        "url": "={{ (() => { const a = $json.params?.arguments || {}; const from = a.fromObjectType || 'contacts'; const to = a.toObjectType || 'companies'; return `https://api.hubapi.com/crm/v4/associations/${from}/${to}/labels`; })() }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [280, 420],
+      "id": "tool-18",
+      "name": "List Association Labels",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "3GlzU3rx0tDPWf6R",
+          "name": "HubSpot Private App - Full Access"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const base = $('Assemble Context Pack').first().json;\n\nconst started = Number(base._started_ms || Date.now());\nconst duration_ms = Math.max(0, Date.now() - started);\n\nlet agentRaw = $('AI Agent - Schema').first().json;\n\nconst coerceJson = (val) => {\n  if (val === null || val === undefined) return null;\n  if (typeof val === 'object') return val;\n  if (typeof val !== 'string') return { value: val };\n  const s = val.trim().replace(/^```json\\s*/i, '').replace(/```$/,'').trim();\n  try { return JSON.parse(s); } catch { return { raw: val }; }\n};\n\nconst agentOut = coerceJson(agentRaw.output ?? agentRaw.text ?? agentRaw);\n\nconst ok = !(agentOut?.errors && agentOut.errors.length);\n\nconst esc = (s) => String(s ?? '').replace(/'/g, \"''\");\n\nconst final = {\n  ok,\n  tool_name: base.tool_name,\n  tool_execution_id: base.tool_execution_id,\n  session_id: base.session_id,\n  conversation_id: base.conversation_id,\n  dry_run: base.dry_run,\n  summary: agentOut?.summary ?? (ok ? 'ok' : 'error'),\n  data: agentOut?.data ?? null,\n  tool_calls: agentOut?.tool_calls ?? [],\n  errors: agentOut?.errors ?? [],\n  notes_to_save: agentOut?.notes_to_save ?? null,\n  context_used: base.context_pack ?? {},\n  duration_ms\n};\n\nconst outJson = esc(JSON.stringify(final));\nconst errText = final.errors?.length ? esc(JSON.stringify(final.errors)) : null;\n\nfinal.log_end_sql = `\nUPDATE tool_execution_log\nSET\n  output_data = '${outJson}'::jsonb,\n  success = ${final.ok ? 'true' : 'false'},\n  error = ${errText ? `'${errText}'` : 'null'},\n  duration_ms = ${Number.isFinite(final.duration_ms) ? final.duration_ms : 'null'}\nWHERE id = '${esc(base.tool_execution_id)}'::uuid;\n`;\n\nconst note_scope = base.note_scope || 'hubspot';\nconst note_key = base.note_key || 'schema.general';\n\nif (final.notes_to_save && typeof final.notes_to_save === 'string' && final.notes_to_save.trim() !== '') {\n  const noteObj = { text: final.notes_to_save.trim() };\n  const noteJson = esc(JSON.stringify(noteObj));\n  final.save_notes_sql = `\nINSERT INTO agent_notes (scope, note_key, note)\nVALUES ('${esc(note_scope)}', '${esc(note_key)}', '${noteJson}'::jsonb);\n`;\n}\n\nreturn [{ json: final }];"
+      },
+      "id": "parse-output-1",
+      "name": "Parse + Finalize Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [640, -320]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{$json.log_end_sql}}",
+        "options": {}
+      },
+      "id": "log-end-1",
+      "name": "Log End (tool_execution_log)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [880, -320],
+      "credentials": {
+        "postgres": {
+          "id": "BwXy2JHETe47vH1I",
+          "name": "Postgres account 2"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "has_notes",
+              "leftValue": "={{ $json.save_notes_sql }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [880, -440],
+      "id": "has-notes-1",
+      "name": "Has Notes to Save?",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{$json.save_notes_sql}}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1120, -480],
+      "id": "save-notes-1",
+      "name": "Save Agent Notes",
+      "credentials": {
+        "postgres": {
+          "id": "BwXy2JHETe47vH1I",
+          "name": "Postgres account 2"
+        }
+      },
+      "onError": "continueRegularOutput"
+    }
+  ],
+  "connections": {
+    "When Executed by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "Normalize + Build SQL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "When chat message received": {
+      "main": [
+        [
+          {
+            "node": "Normalize Chat Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Chat Input": {
+      "main": [
+        [
+          {
+            "node": "Normalize + Build SQL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize + Build SQL": {
+      "main": [
+        [
+          {
+            "node": "Log Start (tool_execution_log)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Load Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Start (tool_execution_log)": {
+      "main": [
+        [
+          {
+            "node": "Assemble Context Pack",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Context": {
+      "main": [
+        [
+          {
+            "node": "Assemble Context Pack",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Assemble Context Pack": {
+      "main": [
+        [
+          {
+            "node": "AI Agent - Schema",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent - Schema": {
+      "main": [
+        [
+          {
+            "node": "Parse + Finalize Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse + Finalize Output": {
+      "main": [
+        [
+          {
+            "node": "Log End (tool_execution_log)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Has Notes to Save?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Notes to Save?": {
+      "main": [
+        [
+          {
+            "node": "Save Agent Notes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent - Schema",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Memory": {
+      "ai_memory": [
+        [
+          {
+            "node": "AI Agent - Schema",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "List Custom Object Schemas": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Schema",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Schema by Object Type": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Schema",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Custom Object Schema": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Schema",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Custom Object Schema": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Schema",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Archive Custom Object Schema": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Schema",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "List Custom Object Records": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Schema",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Custom Object Record": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Schema",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Custom Object Record": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Schema",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Custom Object Record": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Schema",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Search Custom Object Records": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Schema",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "List Properties": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Schema",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Property": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Schema",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Property": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Schema",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Property": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Schema",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Archive Property": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Schema",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "List Property Groups": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Schema",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Property Group": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Schema",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "List Association Labels": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Schema",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "2d82e0d27c2a88970c7ba9693b6bad225f1d31f9cf0d392d33dd9cabf99f185f"
+  }
+}
